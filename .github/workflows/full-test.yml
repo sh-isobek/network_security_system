@@ -36,8 +36,18 @@ jobs:
 
       - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort)
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort
+          set +e
+          sudo apt-get update > /tmp/apt_output.txt 2>&1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort >> /tmp/apt_output.txt 2>&1
+          EXIT_CODE=$?
+          cat /tmp/apt_output.txt
+          if [ $EXIT_CODE -ne 0 ]; then
+            tail -30 /tmp/apt_output.txt | while read -r line; do
+              escaped=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+              echo "::error::${escaped}"
+            done
+          fi
+          exit $EXIT_CODE
 
       - name: Python kutubxonalari
         run: |
