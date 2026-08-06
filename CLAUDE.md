@@ -77,6 +77,27 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 
 **Joriy: 18/18 test o'tadi (`run_full_test.py`).**
 
+## GitHub va CI
+
+Loyiha `https://github.com/sh-isobek/network_security_system` manziliga
+push qilingan (`main` branch). Har bir push'da GitHub Actions
+(`.github/workflows/full-test.yml`) `run_full_test.py`ni **ham
+SQLite'da, ham PostgreSQL'da** avtomatik ishga tushiradi (haqiqiy
+GitHub'ning `ubuntu-latest` runner'ida, mening lokal sandbox'imdan
+mustaqil muhitda).
+
+**MUHIM (haqiqiy topilgan va tuzatilgan xato):** CI birinchi push'da
+`sqlite3.OperationalError: unable to open database file` bilan
+muvaffaqiyatsiz bo'ldi - sabab: `logs/` papkasi Git'da bo'sh bo'lgani
+uchun (Git bo'sh papkalarni saqlamaydi) yangi `git clone`da umuman
+mavjud emas edi. Bu mening doimiy ishlab turgan lokal sandbox'imda
+"yashiringan" edi, chunki papka u yerda fizik jihatdan doim mavjud edi.
+Tuzatildi: `db/database.py`ga `_ensure_sqlite_dir_exists()` qo'shildi
+(SQLite yo'lidan papkani avtomatik yaratadi) + `logs/.gitkeep` qo'shildi.
+**Xulosa**: yangi katta o'zgarish qilinganda, `git clone` qilib, toza
+muhitda test qilish kerak - lokal ishlagan narsa har doim ham CI/production'da
+ishlayvermaydi.
+
 ## Bilib turish kerak bo'lgan cheklovlar (halol)
 
 - **Docker**: `docker-compose.yml`/`Dockerfile` yozilgan, YAML tekshirilgan,
