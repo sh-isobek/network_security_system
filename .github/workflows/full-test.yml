@@ -55,11 +55,11 @@ jobs:
           set +e
           python3 run_full_test.py > /tmp/test_output_sqlite.txt 2>&1
           EXIT_CODE=$?
-          echo "## SQLite test natijasi" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat /tmp/test_output_sqlite.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
           cat /tmp/test_output_sqlite.txt
+          grep -E "❌|Error|Traceback|AssertionError" /tmp/test_output_sqlite.txt | while read -r line; do
+            escaped=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error::${escaped}"
+          done
           exit $EXIT_CODE
 
       - name: To'liq test suite (PostgreSQL)
@@ -69,11 +69,11 @@ jobs:
           set +e
           python3 run_full_test.py > /tmp/test_output_postgres.txt 2>&1
           EXIT_CODE=$?
-          echo "## PostgreSQL test natijasi" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat /tmp/test_output_postgres.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
           cat /tmp/test_output_postgres.txt
+          grep -E "❌|Error|Traceback|AssertionError" /tmp/test_output_postgres.txt | while read -r line; do
+            escaped=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error::${escaped}"
+          done
           exit $EXIT_CODE
 
       - name: Docker Compose YAML sintaksisini tekshirish
