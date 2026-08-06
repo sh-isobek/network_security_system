@@ -35,11 +35,9 @@ jobs:
           python-version: "3.12"
 
       - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort)
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav clamav-freshclam snmp libreoffice snort
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort
 
       - name: Python kutubxonalari
         run: |
