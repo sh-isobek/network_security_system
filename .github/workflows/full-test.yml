@@ -34,16 +34,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice)
+      - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort)
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y clamav clamav-freshclam snmp libreoffice
+          sudo apt-get install -y clamav clamav-freshclam snmp libreoffice snort
 
       - name: Python kutubxonalari
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-          pip install psycopg2-binary pypdf
+          pip install psycopg2-binary pypdf scapy
 
       - name: Mahalliy ClamAV test-signatura bazasi (freshclam tarmoq talab qilmasligi uchun)
         run: |

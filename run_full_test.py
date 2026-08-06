@@ -905,6 +905,144 @@ def _test_pdf_excel_reports():
 check("PDF/Excel hisobotlar (real fayl, LibreOffice recalc, dashboard)", _test_pdf_excel_reports)
 
 # ---------------------------------------------------------------------------
+print("\n=== 17) SNORT INTEGRATSIYASI (real Snort chiqishi, pcap orqali) ===")
+
+
+def _test_snort_integration():
+    import subprocess
+    import shutil
+
+    if subprocess.run(["which", "snort"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - snort o'rnatilmagan bu muhitda)")
+        return
+
+    from collectors.snort_reader import parse_alert_line, read_existing
+
+    # 1) parse_alert_line birlik testi (haqiqiy Snort formatiga mos)
+    sample = "08/06-08:39:01.972343  [**] [1:1000001:1] TEST Suspicious port 4444 (C2-like) [**] [Priority: 1] {TCP} 10.0.0.5:51234 -> 10.0.0.99:4444"
+    parsed = parse_alert_line(sample)
+    assert parsed is not None
+    assert parsed["dst_port"] == 4444
+    assert parsed["priority"] == 1
+
+    # 2) Haqiqiy Snort'ni pcap fayl orqali ishga tushirib, chiqishini tekshirish
+    work_dir = "/tmp/_test_snort_e2e"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+
+    try:
+        from scapy.all import IP, TCP, Ether, wrpcap
+    except ImportError:
+        print("   (scapy yo'q - faqat parser birlik testi bajarildi)")
+        return
+
+    pkt = Ether() / IP(src="10.0.0.7", dst="10.0.0.98") / TCP(sport=55000, dport=4444, flags="S")
+    pcap_path = os.path.join(work_dir, "test.pcap")
+    wrpcap(pcap_path, [pkt])
+
+    rules_path = os.path.join(work_dir, "test.rules")
+    with open(rules_path, "w") as f:
+        f.write('alert tcp any any -> any 4444 (msg:"CI Suspicious port 4444"; sid:1000099; rev:1; priority:1;)\n')
+
+    conf_path = os.path.join(work_dir, "snort.conf")
+    with open(conf_path, "w") as f:
+        f.write(f"var HOME_NET any\nvar EXTERNAL_NET any\ninclude {rules_path}\n")
+
+    result = subprocess.run(
+        ["snort", "-c", conf_path, "-r", pcap_path, "-A", "fast", "-l", work_dir, "-q"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, f"Snort xatolik bilan chiqdi: {result.stderr}"
+
+    alert_file = os.path.join(work_dir, "alert")
+    assert os.path.isfile(alert_file), "Snort alert fayli yaratilmadi"
+
+    n = read_existing(alert_file)
+    assert n >= 1, "Kamida 1 ta Snort alert qayta ishlanishi kerak edi"
+
+    s = get_session()
+    device = s.query(Device).filter(Device.ip_address == "10.0.0.7").first()
+    assert device is not None, "Snort orqali kelgan qurilma bazada topilmadi"
+    alert = s.query(Alert).filter(Alert.reason.like("%CI Suspicious port 4444%")).first()
+    assert alert is not None, "Snort alert bazada topilmadi"
+    assert alert.severity == "critical", f"Priority=1 critical bo'lishi kerak edi, {alert.severity} keldi"
+    s.close()
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Snort integratsiyasi (real Snort binary, pcap orqali)", _test_snort_integration)
+
+# ---------------------------------------------------------------------------
+print("\n=== 18) ZEEK INTEGRATSIYASI (sxemaga mos sintetik JSON loglar) ===")
+
+
+def _test_zeek_integration():
+    import shutil
+    from collectors.zeek_reader import read_existing as zeek_read_existing
+
+    log_dir = "/tmp/_test_zeek_logs"
+    if os.path.exists(log_dir):
+        shutil.rmtree(log_dir)
+    os.makedirs(log_dir)
+
+    with open(os.path.join(log_dir, "notice.log"), "w") as f:
+        f.write('{"ts":1754470800.1,"note":"Scan::Port_Scan","msg":"test port scan","src":"172.16.6.10","dst":"172.16.6.20"}\n')
+
+    with open(os.path.join(log_dir, "dns.log"), "w") as f:
+        f.write('{"ts":1754470801.1,"id.orig_h":"172.16.6.11","query":"zeek-test-blacklist-domain.com","qtype_name":"A"}\n')
+
+    with open(os.path.join(log_dir, "conn.log"), "w") as f:
+        f.write('{"ts":1754470802.1,"id.orig_h":"172.16.6.12","id.resp_h":"1.2.3.4","id.resp_p":443,"proto":"tcp"}\n')
+
+    file_sha = "2222222222222222222222222222222222222222222222222222222222222222"[:64]
+    with open(os.path.join(log_dir, "files.log"), "w") as f:
+        f.write(
+            '{"ts":1754470803.1,"fuid":"Ftest1","tx_hosts":["172.16.6.13"],"rx_hosts":["5.6.7.8"],'
+            f'"source":"HTTP","filename":"zeek_payload.exe","mime_type":"application/x-dosexec",'
+            f'"seen_bytes":1000,"sha256":"{file_sha}","md5":"bbbb"}}\n'
+        )
+
+    s = get_session()
+    s.add(BlacklistEntry(value="zeek-test-blacklist-domain.com", source="manual", reason="ci-test"))
+    s.commit()
+    s.close()
+
+    results = zeek_read_existing(log_dir)
+    assert results["notice.log"] == 1
+    assert results["dns.log"] == 1
+    assert results["conn.log"] == 1
+    assert results["files.log"] == 1
+
+    s = get_session()
+    assert s.query(Device).filter(Device.ip_address == "172.16.6.10").first() is not None
+    dns_alert = s.query(Alert).filter(Alert.reason.like("%zeek-test-blacklist-domain.com%")).first()
+    assert dns_alert is not None, "Zeek DNS blacklist alert yaratilmadi"
+
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == file_sha).first()
+    assert fe is not None, "Zeek files.log orqali FileEvent yaratilmadi"
+    assert fe.channel == "zeek"
+    assert fe.checked is False
+    s.close()
+
+    # MUHIM: Zeek orqali kelgan fayl mavjud file_analysis_engine pipeline'iga
+    # avtomatik o'tishini tasdiqlash (alohida kod yozilmagan, qayta ishlatilgan)
+    from engine.file_analysis_engine import run_once as file_analysis_run
+    n = file_analysis_run()
+    assert n >= 1
+
+    s = get_session()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == file_sha).first()
+    assert fe.checked is True, "Zeek fayli file_analysis_engine orqali tekshirilmadi"
+    s.close()
+
+    shutil.rmtree(log_dir, ignore_errors=True)
+
+
+check("Zeek integratsiyasi (4 log turi + mavjud file-pipeline bilan)", _test_zeek_integration)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

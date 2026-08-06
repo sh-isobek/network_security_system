@@ -39,6 +39,10 @@ _RULES: List[tuple] = [
     ("Zararli fayl aniqlandi", MitreMapping("T1204.002", "User Execution: Malicious File", "Execution")),
     ("Endpoint Agent zararli faylni aniqladi", MitreMapping("T1204.002", "User Execution: Malicious File", "Execution")),
     ("Blacklist'dagi domenga so'rov", MitreMapping("T1071.004", "Application Layer Protocol: DNS", "Command and Control")),
+    ("Scan::Port_Scan", MitreMapping("T1595.001", "Active Scanning: Scanning IP Blocks", "Reconnaissance")),
+    ("Scan::Address_Scan", MitreMapping("T1595.001", "Active Scanning: Scanning IP Blocks", "Reconnaissance")),
+    ("SQL_Injection", MitreMapping("T1190", "Exploit Public-Facing Application", "Initial Access")),
+    ("Trojan::Detected", MitreMapping("T1204.002", "User Execution: Malicious File", "Execution")),
 ]
 
 _DEFAULT = MitreMapping("T1204", "User Execution", "Execution")

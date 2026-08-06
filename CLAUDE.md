@@ -74,8 +74,10 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Mac Agent | ✅ kod yozilgan, launchd, LEKIN haqiqiy macOS'da SINALMAGAN |
 | — | RBAC (User jadvali, flask-login, 3 rol, acknowledge huquqi) | ✅ |
 | — | PDF/Excel hisobotlar (`reports/report_generator.py`: `export_summary_pdf`, `export_alerts_excel`) | ✅ real fayl + LibreOffice recalc bilan tasdiqlangan |
+| — | Snort integratsiyasi (`collectors/snort_reader.py`) | ✅ HAQIQIY Snort binary bilan (pcap orqali, scapy sintetik paketlar) |
+| — | Zeek integratsiyasi (`collectors/zeek_reader.py`) | ⚠️ kod yozilgan, sxemaga mos sintetik JSON bilan test qilingan, LEKIN haqiqiy Zeek binary bilan SINALMAGAN (OBS/Docker Hub domenlari ruxsat etilmagan) |
 
-**Joriy: 18/18 test o'tadi (`run_full_test.py`).**
+**Joriy: 20/20 test o'tadi (`run_full_test.py`).**
 
 ## GitHub va CI
 
@@ -124,8 +126,6 @@ ishlayvermaydi.
 ## Keyingi navbatdagi (foydalanuvchi so'ragan, hali qurilmagan)
 
 Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
-- **Zeek/Snort** — Suricata'ga muqobil/qo'shimcha IDS (docs_SURICATA_SETUP.md
-  namunasida hujjat + integratsiya kod yozilishi kerak).
 - **MFA/LDAP** — RBAC'ni kengaytirish (`dashboard/auth.py`), TOTP
   (`pyotp`) yoki LDAP bind orqali.
 - **Kafka/RabbitMQ** — hozirgi polling-asosli enginelarni queue-asosga
