@@ -12,6 +12,25 @@ from sqlalchemy.orm import sessionmaker
 from db.models import init_db
 from config.settings import DATABASE_URL
 
+
+def _ensure_sqlite_dir_exists(database_url: str):
+    """
+    Agar DATABASE_URL SQLite fayl yo'liga ishora qilsa, uning papkasi
+    mavjudligini ta'minlaydi. Bu MUHIM: Git bo'sh papkalarni saqlamaydi,
+    shuning uchun yangi `git clone`dan keyin `logs/` papkasi mavjud
+    bo'lmasligi mumkin - shu holatda SQLite "unable to open database
+    file" xatoligini beradi (bu xato aynan shu sabab bilan CI'da
+    aniqlangan, lekin doimiy ishlab turgan lokal muhitda "yashiringan" edi).
+    """
+    if not database_url.startswith("sqlite:///"):
+        return
+    db_path = database_url.replace("sqlite:///", "", 1)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+
+_ensure_sqlite_dir_exists(DATABASE_URL)
 _engine = init_db(DATABASE_URL)
 SessionLocal = sessionmaker(bind=_engine)
 
