@@ -34,6 +34,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Xizmatlarning avtomatik ishga tushishini to'sish (policy-rc.d)
+        run: |
+          # Snort kabi paketlarning post-install skripti xizmatni avtomatik
+          # ishga tushirishga urinadi - bizga esa faqat CLI vositasi kerak
+          # (pcap fayl orqali ishlatamiz, systemd xizmati sifatida emas).
+          # policy-rc.d orqali bu urinishni xavfsiz rad etamiz (Docker
+          # konteynerlarida standart xatti-harakat shu).
+          echo -e '#!/bin/sh\nexit 101' | sudo tee /usr/sbin/policy-rc.d
+          sudo chmod +x /usr/sbin/policy-rc.d
+
       - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort)
         run: |
           set +e
