@@ -51,12 +51,30 @@ jobs:
           echo "0000000000000000000000000000000000000000000000000000000000000000:10:CI.Test.Signature" > /tmp/clamav_ci_db/ci.hdb
 
       - name: To'liq test suite (SQLite)
-        run: python3 run_full_test.py
+        run: |
+          set +e
+          python3 run_full_test.py > /tmp/test_output_sqlite.txt 2>&1
+          EXIT_CODE=$?
+          echo "## SQLite test natijasi" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/test_output_sqlite.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/test_output_sqlite.txt
+          exit $EXIT_CODE
 
       - name: To'liq test suite (PostgreSQL)
         env:
           DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/security_system_ci
-        run: python3 run_full_test.py
+        run: |
+          set +e
+          python3 run_full_test.py > /tmp/test_output_postgres.txt 2>&1
+          EXIT_CODE=$?
+          echo "## PostgreSQL test natijasi" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/test_output_postgres.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/test_output_postgres.txt
+          exit $EXIT_CODE
 
       - name: Docker Compose YAML sintaksisini tekshirish
         run: |
