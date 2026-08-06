@@ -96,9 +96,24 @@ mavjud emas edi. Bu mening doimiy ishlab turgan lokal sandbox'imda
 "yashiringan" edi, chunki papka u yerda fizik jihatdan doim mavjud edi.
 Tuzatildi: `db/database.py`ga `_ensure_sqlite_dir_exists()` qo'shildi
 (SQLite yo'lidan papkani avtomatik yaratadi) + `logs/.gitkeep` qo'shildi.
-**Xulosa**: yangi katta o'zgarish qilinganda, `git clone` qilib, toza
-muhitda test qilish kerak - lokal ishlagan narsa har doim ham CI/production'da
-ishlayvermaydi.
+
+**MUHIM (ikkinchi topilgan va tuzatilgan xato, Snort/Zeek bosqichida):**
+`apt-get install snort` GitHub'ning haqiqiy `systemd`li runner'ida
+muvaffaqiyatsiz bo'ldi - sabab: Snort'ning post-install skripti
+xizmatni **avtomatik ishga tushirishga** urinadi, bu esa runner'da
+muvaffaqiyatsiz tugaydi (interfeys yo'q/noto'g'ri sozlangan). Bu ham
+mening lokal sandbox'imda "yashiringan" edi - u yerda `policy-rc.d`
+xizmatlarni avtomatik ishga tushirishni allaqachon bloklagani uchun
+(konteynerlarning standart xatti-harakati). Tuzatildi: CI workflow'iga
+paket o'rnatishdan OLDIN `policy-rc.d` skripti qo'shildi (xizmatlar
+avtomatik ishga tushishini rad etadi - Docker konteynerlaridagi kabi).
+
+**Xulosa (ikkinchi marta tasdiqlandi)**: yangi katta o'zgarish
+qilinganda, `git clone` qilib, toza muhitda test qilish kerak - lokal
+ishlagan narsa har doim ham CI/production'da ishlayvermaydi. Ayniqsa
+"konteyner ichida systemd/service-management cheklangan" kabi
+sandbox-specific xususiyatlar tashqi (haqiqiy VM) muhitda boshqacha
+xatti-harakat qilishi mumkin.
 
 ## Bilib turish kerak bo'lgan cheklovlar (halol)
 
