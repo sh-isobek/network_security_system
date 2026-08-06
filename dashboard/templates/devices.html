@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Qurilmalar - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Barcha qurilmalar ({{ devices | length }})</h1>
+
+{% if devices %}
+<table>
+    <tr>
+        <th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
+        <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Alertlar</th>
+    </tr>
+    {% for d in devices %}
+    <tr>
+        <td class="mono">{{ d.ip_address }}</td>
+        <td class="mono">{{ d.mac_address or '-' }}</td>
+        <td>{{ d.hostname or '-' }}</td>
+        <td>{{ {'wifi': 'Wi-Fi', 'cable': 'Kabel'}.get(d.connection_type, d.connection_type or 'Nomalum') }}</td>
+        <td class="mono">{{ d.source or '-' }}</td>
+        <td class="mono">{{ d.last_seen.strftime('%Y-%m-%d %H:%M:%S') if d.last_seen else '-' }}</td>
+        <td>
+            {% if d.alert_count > 0 %}
+            <span class="badge" style="background: #c0392b;">{{ d.alert_count }}</span>
+            {% else %}0{% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hech qanday qurilma topilmadi</div>
+{% endif %}
+{% endblock %}

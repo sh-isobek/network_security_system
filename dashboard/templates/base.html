@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Xavfsizlik Dashboard{% endblock %}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #f4f6f8; color: #2c3e50; }
+        nav { background: #1a2634; padding: 0 24px; display: flex; align-items: center; height: 56px; }
+        nav a { color: #cfd8dc; text-decoration: none; padding: 0 16px; font-size: 14px; height: 56px; display: flex; align-items: center; }
+        nav a:hover, nav a.active { color: #fff; background: #263544; }
+        nav .brand { font-weight: 700; color: #fff; padding-right: 24px; font-size: 15px; }
+        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 20px; margin-bottom: 16px; color: #1a2634; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        th, td { text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #eef1f3; }
+        th { background: #f8f9fb; font-weight: 600; color: #5a6673; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #fafbfc; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; color: #fff; }
+        .mono { font-family: "SF Mono", Consolas, monospace; font-size: 12px; color: #5a6673; }
+        .filters { margin-bottom: 14px; }
+        .filters a { display: inline-block; padding: 5px 12px; margin-right: 6px; border-radius: 4px; background: #eef1f3; color: #5a6673; text-decoration: none; font-size: 12px; }
+        .filters a.active { background: #1a2634; color: #fff; }
+        .empty { padding: 32px; text-align: center; color: #95a5a6; }
+    </style>
+</head>
+<body>
+    <nav>
+        <span class="brand">🛡 Xavfsizlik Monitoring</span>
+        <a href="/" class="{% if request.path == '/' %}active{% endif %}">Umumiy</a>
+        <a href="/alerts" class="{% if request.path == '/alerts' %}active{% endif %}">Alertlar</a>
+        <a href="/devices" class="{% if request.path == '/devices' %}active{% endif %}">Qurilmalar</a>
+        <a href="/files" class="{% if request.path == '/files' %}active{% endif %}">Fayllar</a>
+        {% if current_user.is_authenticated and current_user.role == 'admin' %}
+        <a href="/users" class="{% if request.path == '/users' %}active{% endif %}">Foydalanuvchilar</a>
+        {% endif %}
+        {% if current_user.is_authenticated %}
+        <span style="margin-left: auto; color: #95a5a6; font-size: 12px; display: flex; align-items: center; gap: 10px;">
+            {{ current_user.username }} ({{ current_user.role }})
+            <a href="/logout" style="color: #e74c3c;">Chiqish</a>
+        </span>
+        {% endif %}
+    </nav>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

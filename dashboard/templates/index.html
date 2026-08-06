@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Umumiy - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Umumiy holat</h1>
+
+<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px;">
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700;">{{ stats.device_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Qurilmalar</div>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.critical_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Critical alertlar</div>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #e67e22;">{{ stats.high_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">High alertlar</div>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.malicious_files }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Zararli fayllar / {{ stats.clean_files }} toza</div>
+    </div>
+</div>
+
+<h1>Oxirgi 10 ta alert</h1>
+{% if recent_alerts %}
+<table>
+    <tr>
+        <th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
+    </tr>
+    {% for a in recent_alerts %}
+    <tr>
+        <td class="mono">{{ a.timestamp.strftime('%Y-%m-%d %H:%M:%S') if a.timestamp else '' }}</td>
+        <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
+        <td>{{ a.hostname or a.ip_address or 'Nomalum' }}</td>
+        <td>{{ (a.reason or '')[:80] }}{% if (a.reason or '')|length > 80 %}...{% endif %}</td>
+        <td class="mono">{% if a.mitre_technique_id %}{{ a.mitre_technique_id }}{% endif %}</td>
+        <td>{{ (a.action_taken or '')[:50] }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hozircha hech qanday alert yo'q</div>
+{% endif %}
+{% endblock %}

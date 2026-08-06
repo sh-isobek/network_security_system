@@ -1,0 +1,5 @@
+# Windows va Linux Endpoint Agent uchun umumiy (agent_core/) kutubxonalar
+requests>=2.31
+watchdog>=4.0
+psutil>=6.0
+pywin32>=306; sys_platform == 'win32'

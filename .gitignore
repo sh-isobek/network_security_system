@@ -1,0 +1,33 @@
+# Vaqtinchalik/generatsiya qilingan fayllar
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Baza va loglar (har bir muhitda o'zi yaratiladi)
+logs/*.db
+logs/*.log
+*.db
+*.sqlite3
+
+# Agent runtime fayllari
+agent_hash_cache.json
+agent.log
+
+# Muhit sozlamalari (maxfiy ma'lumot - .env.example commit qilinadi, .env emas)
+.env
+.env.local
+
+# Hisobot chiqishlari
+report_output/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Zip arxivlar
+*.zip

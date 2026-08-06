@@ -1,0 +1,23 @@
+[Unit]
+Description=Network Security Endpoint Agent (Linux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/network-security-agent
+EnvironmentFile=/opt/network-security-agent/.env
+ExecStart=/usr/bin/python3 -m linux_agent.agent
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/network-security-agent.log
+StandardError=append:/var/log/network-security-agent.log
+
+# Xavfsizlik cheklovlari (kerak bo'lganda yumshating - masalan agent
+# /home papkalarini kuzatishi uchun ProtectHome=false qilish kerak bo'lishi mumkin)
+NoNewPrivileges=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

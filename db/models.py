@@ -1,0 +1,200 @@
+"""
+Ma'lumotlar bazasi strukturasi (ORM modellar).
+
+Jadvallar:
+  - raw_logs   : kelgan har bir syslog xabarining xom nusxasi (audit uchun)
+  - devices    : tarmoqdagi har bir qurilma (IP, MAC, hostname, manba)
+  - events     : parsing qilingan tarmoq hodisalari (kim, qayerga, qaysi port)
+  - alerts     : xavfli deb topilgan hodisalar va ko'rilgan choralar
+  - whitelist  : hech qachon bloklanmaydigan IP/domenlar (masalan 1C serverlar)
+  - blacklist  : ma'lum zararli IP/domenlar ro'yxati
+"""
+from datetime import datetime, timezone
+from sqlalchemy import (
+    create_engine, Column, Integer, String, DateTime, Text,
+    ForeignKey, Boolean, Index
+)
+from sqlalchemy.orm import declarative_base, relationship
+
+Base = declarative_base()
+
+
+def utcnow() -> datetime:
+    """
+    datetime.utcnow() Python 3.12+ da deprecated (kelajakda olib
+    tashlanadi). Buning o'rniga timezone-aware UTC vaqt olib, keyin
+    tzinfo'ni tashlaymiz - natija oldingi kod bilan bir xil (naive UTC
+    datetime), lekin DeprecationWarning bermaydi va SQLite bilan
+    mavjud ustunlar formatiga mos keladi.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+
+class RawLog(Base):
+    """Har bir kelgan syslog paketining xom matni - hech narsa yo'qolmasligi uchun."""
+    __tablename__ = "raw_logs"
+
+    id = Column(Integer, primary_key=True)
+    received_at = Column(DateTime, default=utcnow, nullable=False)
+    source_ip = Column(String(45), nullable=False)   # syslog'ni yuborgan qurilma (Kerio/switch/UniFi)
+    raw_message = Column(Text, nullable=False)
+    processed = Column(Boolean, default=False)        # parser bu yozuvni qayta ishladimi
+
+    __table_args__ = (
+        Index("ix_raw_logs_processed", "processed"),
+        Index("ix_raw_logs_received_at", "received_at"),
+    )
+
+
+class Device(Base):
+    """Tarmoqda ko'rilgan har bir qurilma - IP/MAC/hostname bog'lanishi."""
+    __tablename__ = "devices"
+
+    id = Column(Integer, primary_key=True)
+    ip_address = Column(String(45), nullable=False, unique=True)
+    mac_address = Column(String(17))                  # keyingi bosqichda switch/UniFi'dan to'ldiriladi
+    hostname = Column(String(255))
+    connection_type = Column(String(20))               # "wifi" | "cable" | "unknown"
+    source = Column(String(50))                         # ma'lumot qayerdan kelgani: "kerio_dhcp" | "unifi" | "switch"
+    first_seen = Column(DateTime, default=utcnow)
+    last_seen = Column(DateTime, default=utcnow)
+
+    events = relationship("Event", back_populates="device")
+
+
+class Event(Base):
+    """Parsing qilingan tarmoq so'rovi (kim -> qayerga -> qaysi port/protokol)."""
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
+    device_id = Column(Integer, ForeignKey("devices.id"))
+    source_ip = Column(String(45), nullable=False)
+    dest_ip = Column(String(45))
+    dest_domain = Column(String(255))
+    dest_port = Column(Integer)
+    protocol = Column(String(10))                        # HTTP / HTTPS / DNS / FTP / ...
+    raw_log_id = Column(Integer, ForeignKey("raw_logs.id"))
+
+    device = relationship("Device", back_populates="events")
+
+    __table_args__ = (
+        Index("ix_events_timestamp", "timestamp"),
+        Index("ix_events_dest_ip", "dest_ip"),
+    )
+
+
+class Alert(Base):
+    """Xavfli deb topilgan hodisa va unga nisbatan ko'rilgan chora."""
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
+    event_id = Column(Integer, ForeignKey("events.id"))
+    file_event_id = Column(Integer, ForeignKey("file_events.id"))
+    device_id = Column(Integer, ForeignKey("devices.id"))
+    severity = Column(String(20))                         # low / medium / high / critical
+    reason = Column(Text)                                    # nima uchun xavfli deb topildi (uzun bo'lishi mumkin - ko'p qatorli topilmalar)
+    action_taken = Column(Text)                               # masalan: "IP bloklandi (firewall)"
+    notified = Column(Boolean, default=False)                # admin xabar oldimi
+
+    # --- MITRE ATT&CK belgilash ---
+    mitre_technique_id = Column(String(20))                   # masalan "T1204.002"
+    mitre_technique_name = Column(String(255))
+    mitre_tactic = Column(String(100))                         # masalan "Execution"
+
+    # --- RBAC: alertni tasdiqlash (faqat analyst/admin huquqi bilan) ---
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by = Column(String(100))                        # username
+    acknowledged_at = Column(DateTime)
+
+    event = relationship("Event")
+
+
+class WhitelistEntry(Base):
+    """Hech qachon bloklanmaydigan IP/CIDR/domen (masalan 1C serverlar)."""
+    __tablename__ = "whitelist"
+
+    id = Column(Integer, primary_key=True)
+    value = Column(String(255), nullable=False, unique=True)   # IP, CIDR yoki domen
+    description = Column(String(255))
+    added_at = Column(DateTime, default=utcnow)
+
+
+class BlacklistEntry(Base):
+    """Ma'lum zararli IP/domenlar ro'yxati (mahalliy yoki threat-intel'dan yuklangan)."""
+    __tablename__ = "blacklist"
+
+    id = Column(Integer, primary_key=True)
+    value = Column(String(255), nullable=False, unique=True)
+    source = Column(String(100))                              # "manual" | "abuse.ch" | "virustotal" ...
+    reason = Column(String(255))
+    added_at = Column(DateTime, default=utcnow)
+
+
+class FileEvent(Base):
+    """Suricata (SPAN port orqali) aniqlagan har bir fayl transferi."""
+    __tablename__ = "file_events"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
+    src_ip = Column(String(45), nullable=False)
+    dest_ip = Column(String(45))
+    filename = Column(String(500))
+    file_ext = Column(String(20))
+    magic = Column(String(255))                # Suricata aniqlagan fayl turi (masalan "PE32")
+    size = Column(Integer)
+    sha256 = Column(String(64), index=True)
+    md5 = Column(String(32))
+    protocol = Column(String(20))               # HTTP / SMTP / FTP
+    channel = Column(String(50))                 # masalan "telegram" | "email" | "web" (URL/header asosida taxmin)
+    checked = Column(Boolean, default=False)     # hash tekshiruvidan o'tdimi
+    verdict = Column(String(20))                  # "clean" | "malicious" | "unknown"
+    threat_score = Column(Integer, default=0)     # 0-100
+    checked_sources = Column(String(255))          # qaysi manbalar tekshirildi (vergul bilan)
+
+    # --- 4-bosqich: chuqur skanerlash (YARA / makro / PDF / arxiv) ---
+    stored_path = Column(String(1000))             # Suricata file-store'dagi haqiqiy fayl yo'li (agar mavjud)
+    deep_scanned = Column(Boolean, default=False)
+    deep_scan_findings = Column(Text)               # topilgan shubhali belgilar (matn ko'rinishida)
+    parent_file_event_id = Column(Integer, ForeignKey("file_events.id"), nullable=True)  # ZIP ichidan chiqqan fayl
+
+    __table_args__ = (
+        Index("ix_file_events_checked", "checked"),
+        Index("ix_file_events_deep_scanned", "deep_scanned"),
+    )
+
+
+class HashBlacklist(Base):
+    """Ma'lum zararli fayl hash'lari (mahalliy yoki MalwareBazaar/VT'dan tasdiqlangan)."""
+    __tablename__ = "hash_blacklist"
+
+    id = Column(Integer, primary_key=True)
+    sha256 = Column(String(64), nullable=False, unique=True, index=True)
+    threat_name = Column(String(255))             # masalan "Trojan.GenericKD"
+    source = Column(String(100))                    # "manual" | "malwarebazaar" | "virustotal"
+    added_at = Column(DateTime, default=utcnow)
+
+
+class User(Base):
+    """Dashboard'ga kirish uchun foydalanuvchi (RBAC - yangi TZ 20-bo'lim)."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(100), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    # Rollar: "admin" (to'liq huquq + foydalanuvchi boshqaruvi),
+    # "analyst" (ko'rish + alertlarni tasdiqlash/qayd etish),
+    # "viewer" (faqat ko'rish)
+    role = Column(String(20), nullable=False, default="viewer")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+    last_login = Column(DateTime)
+
+
+def init_db(database_url: str):
+    """Bazani va barcha jadvallarni yaratadi (agar mavjud bo'lmasa)."""
+    engine = create_engine(database_url, echo=False)
+    Base.metadata.create_all(engine)
+    return engine

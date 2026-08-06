@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Alertlar - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Barcha alertlar ({{ alerts | length }})</h1>
+
+<div class="filters">
+    <a href="/alerts" class="{% if not severity_filter %}active{% endif %}">Hammasi</a>
+    <a href="/alerts?severity=critical" class="{% if severity_filter == 'critical' %}active{% endif %}">Critical</a>
+    <a href="/alerts?severity=high" class="{% if severity_filter == 'high' %}active{% endif %}">High</a>
+    <a href="/alerts?severity=medium" class="{% if severity_filter == 'medium' %}active{% endif %}">Medium</a>
+    <a href="/alerts?severity=low" class="{% if severity_filter == 'low' %}active{% endif %}">Low</a>
+    <span style="float: right;">
+        <a href="/reports/download?period_days=7&format=csv">📥 CSV (7 kun)</a>
+        <a href="/reports/download?period_days=7&format=json">📥 JSON (7 kun)</a>
+        <a href="/reports/download?period_days=7&format=pdf">📥 PDF (7 kun)</a>
+        <a href="/reports/download?period_days=30&format=excel">📥 Excel (30 kun)</a>
+    </span>
+</div>
+
+{% if alerts %}
+<table>
+    <tr>
+        <th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>IP</th><th>Tafsilot</th>
+        <th>MITRE</th><th>Chora</th><th>Xabar berildi</th><th>Tasdiqlash</th>
+    </tr>
+    {% for a in alerts %}
+    <tr>
+        <td class="mono">{{ a.timestamp.strftime('%Y-%m-%d %H:%M:%S') if a.timestamp else '' }}</td>
+        <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
+        <td>{{ a.hostname or 'Nomalum' }}</td>
+        <td class="mono">{{ a.ip_address or '-' }}</td>
+        <td style="max-width: 320px; white-space: pre-line;">{{ a.reason }}</td>
+        <td class="mono" title="{{ a.mitre_technique_name }} ({{ a.mitre_tactic }})">
+            {% if a.mitre_technique_id %}{{ a.mitre_technique_id }}{% else %}-{% endif %}
+        </td>
+        <td>{{ a.action_taken }}</td>
+        <td>{% if a.notified %}✅{% else %}⏳{% endif %}</td>
+        <td>
+            {% if a.acknowledged %}
+            <span style="color:#27ae60; font-size:12px;">✅ {{ a.acknowledged_by }}</span>
+            {% elif current_user.role in ('analyst', 'admin') %}
+            <form method="POST" action="/alerts/{{ a.id }}/acknowledge">
+                <button type="submit" style="font-size:11px; padding:4px 8px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tasdiqlash</button>
+            </form>
+            {% else %}
+            <span style="color:#95a5a6; font-size:12px;">⏳ Kutilmoqda</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hech qanday alert topilmadi</div>
+{% endif %}
+{% endblock %}

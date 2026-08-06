@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.company.network-security-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-m</string>
+        <string>mac_agent.agent</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/network-security-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>API_SERVER_URL</key>
+        <string>https://172.16.0.5:8443</string>
+        <key>AGENT_API_KEY</key>
+        <string>__AGENT_API_KEY__</string>
+        <key>AGENT_LOG_FILE</key>
+        <string>/usr/local/var/log/network-security-agent.log</string>
+        <key>AGENT_CACHE_FILE</key>
+        <string>/usr/local/var/network-security-agent/hash_cache.json</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/network-security-agent-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/network-security-agent-stderr.log</string>
+</dict>
+</plist>

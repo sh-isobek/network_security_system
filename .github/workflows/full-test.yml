@@ -1,0 +1,65 @@
+name: Full Test Suite
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  full-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: security_system_ci
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav clamav-freshclam snmp libreoffice
+
+      - name: Python kutubxonalari
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install psycopg2-binary pypdf
+
+      - name: Mahalliy ClamAV test-signatura bazasi (freshclam tarmoq talab qilmasligi uchun)
+        run: |
+          mkdir -p /tmp/clamav_ci_db
+          echo "0000000000000000000000000000000000000000000000000000000000000000:10:CI.Test.Signature" > /tmp/clamav_ci_db/ci.hdb
+
+      - name: To'liq test suite (SQLite)
+        run: python3 run_full_test.py
+
+      - name: To'liq test suite (PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/security_system_ci
+        run: python3 run_full_test.py
+
+      - name: Docker Compose YAML sintaksisini tekshirish
+        run: |
+          pip install pyyaml
+          python3 -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
+          echo "docker-compose.yml sintaksisi to'g'ri"

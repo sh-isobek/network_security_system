@@ -1,0 +1,151 @@
+# Tarmoq Xavfsizligi Monitoring Tizimi — Loyiha Xotirasi
+
+Bu fayl Claude Code tomonidan har bir sessiya boshida avtomatik o'qiladi.
+Loyiha claude.ai chat orqali bosqichma-bosqich qurilgan; bu yerda butun
+tarix, arxitektura qarorlari va joriy holat qisqacha yozilgan - shunda
+yangi sessiya noldan boshlamaydi.
+
+## Loyiha nima
+
+Korxona tarmog'ini (172.16.0.0/22) monitoring qiladigan, tahdidlarni
+aniqlaydigan, avtomatik javob beradigan va hisobot beruvchi xavfsizlik
+tizimi. Dastlabki TZ oddiy ichki skript sifatida boshlangan, keyin
+foydalanuvchi uni "korporativ SIEM/XDR platformasi" darajasidagi TZ'ga
+(24 bo'lim: Kafka, Kubernetes, AI/UEBA, RBAC/MFA va h.k.) kengaytirdi.
+**Qaror: hammasini bir yo'la qurish real emas - har safar bitta aniq,
+to'liq test qilinadigan bosqichni tanlab, uni oxirigacha qurib, keyin
+navbatdagisiga o'tish strategiyasi tanlandi.**
+
+## MUHIM QOIDA: har doim real test bilan tasdiqlash
+
+Bu loyihaning eng muhim printsipi: **hech qanday kod "ishlashi kerak"
+degan taxmin bilan qoldirilmaydi**. Har bir yangi modul:
+1. Real ma'lumot/jarayon/server bilan qo'lda sinaladi (mock emas, haqiqiy).
+2. `run_full_test.py`ga alohida `check(...)` bandi sifatida qo'shiladi.
+3. Test **ham SQLite'da, ham PostgreSQL'da** ishga tushiriladi
+   (`export DATABASE_URL="postgresql://postgres:testpass123@localhost:5432/<db>"`).
+
+Yangi sessiya boshlaganda birinchi qadam:
+```bash
+cd network-security-system
+pip install -r requirements.txt --break-system-packages
+python3 run_full_test.py
+```
+Agar 17/17 "✅ BARCHA TESTLAR MUVAFFAQIYATLI O'TDI" chiqmasa - avval
+buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
+
+## Arxitektura (yakuniy qarorlar)
+
+- **Kerio Control** — FAQAT DHCP manba sifatida ishlatiladi (foydalanuvchi
+  talabi). DNS — alohida Windows AD DNS Server'dan (NXLog orqali
+  forward qilinadi). Bloklash — Kerio orqali EMAS, alohida
+  firewall/gateway (hali tanlanmagan) yoki switch/UniFi orqali.
+- **Baza**: SQLAlchemy ORM, `DATABASE_URL` orqali SQLite (dev) yoki
+  PostgreSQL (production/Docker) - kod o'zgarmaydi.
+- **Enginelar** (`engine/*.py`) — barchasi bir xil pattern: `run_once()`
+  (bitta tsikl) + `run_loop(interval)` (doimiy ishlash uchun CLI).
+  Navbat-asosida ishlaydi (`checked=False`/`notified=False` kabi
+  bayroqlar) - shuning uchun bir nechta nusxada parallel ishga tushirish
+  xavfsiz (SQL orqali tabiiy tanlash).
+- **Agentlar**: Windows/Linux/macOS uchun BITTA umumiy yadro
+  (`agent_core/`) - `windows_agent/`, `linux_agent/`, `mac_agent/` faqat
+  yupqa kirish nuqtalari (standart papkalar + OS-specific service
+  wrapper). Kodni ikki marta yozmaslik uchun shunday qilingan.
+- **Dashboard**: Flask + Jinja2 (server-rendered, React/build vositasi
+  yo'q). RBAC: `flask-login` + 3 rol (admin/analyst/viewer).
+
+## Bosqichlar tarixi (0 dan hozirgacha)
+
+| # | Nima qurildi | Holat |
+|---|---|---|
+| 0 | Syslog collector (UDP) + DB skeleti | ✅ test qilingan |
+| 1 | Parser (Kerio DHCP/Connection, Windows DNS JSON) | ✅ |
+| 2-3 | Suricata integratsiyasi (eve.json reader) + hash tekshiruv (local/VT/MalwareBazaar) | ✅ |
+| 4 | Deep scan: YARA + Office makro (oletools) + ZIP rekursiya | ✅ |
+| 5 | Response engine: UniFi/Switch(SNMP) adapterlari, pluggable arxitektura | ✅ (switch_port CAM-table orqali avtomatik aniqlash hali YO'Q - bilib turing) |
+| 6 | Windows Endpoint Agent + markaziy API (Flask) | ✅ to'liq E2E (fayl o'chirish, jarayon o'ldirish) |
+| 7 | Email/Telegram bildirishnoma | ✅ real SMTP bilan test qilingan |
+| — | ClamAV (clamscan CLI, YARA'ga qo'shimcha) | ✅ |
+| — | MITRE ATT&CK avtomatik belgilash (`intel/mitre_attack.py`) | ✅ |
+| — | Web Dashboard (keyinroq RBAC bilan almashtirildi) | ✅ |
+| — | Docker Compose (11 xizmat) + PostgreSQL | ✅ (Docker o'zi sandbox'da yo'q, lekin Postgres'da to'liq test qilingan) |
+| — | CSV/JSON hisobotlar (`reports/report_generator.py`) | ✅ |
+| — | Linux Agent (`agent_core/` orqali) | ✅ to'liq E2E |
+| — | Mac Agent | ✅ kod yozilgan, launchd, LEKIN haqiqiy macOS'da SINALMAGAN |
+| — | RBAC (User jadvali, flask-login, 3 rol, acknowledge huquqi) | ✅ |
+| — | PDF/Excel hisobotlar (`reports/report_generator.py`: `export_summary_pdf`, `export_alerts_excel`) | ✅ real fayl + LibreOffice recalc bilan tasdiqlangan |
+
+**Joriy: 18/18 test o'tadi (`run_full_test.py`).**
+
+## Bilib turish kerak bo'lgan cheklovlar (halol)
+
+- **Docker**: `docker-compose.yml`/`Dockerfile` yozilgan, YAML tekshirilgan,
+  lekin `docker compose up` haqiqiy Docker'da HECH QACHON ishga
+  tushirilmagan (sandbox'da Docker yo'q). Ishonch darajasi yuqori,
+  chunki butun tizim PostgreSQL'da (Compose'dagi bilan bir xil DB) to'liq
+  sinalgan.
+- **Mac Agent**: kod to'g'ri (agent_core allaqachon Darwin-mos), lekin
+  haqiqiy macOS'da hech qachon ishga tushirilmagan.
+- **Switch port avtomatik aniqlash**: `response/switch_adapter.py` port
+  raqamini `TargetDevice.switch_port` orqali kutadi, lekin buni MAC
+  manzildan avtomatik topish (CAM-table SNMP so'rovi) hali yozilmagan -
+  demak `cable` ulanishli qurilmalar uchun response_engine hozircha
+  "adapter topilmadi" deb to'g'ri xabar beradi, lekin real bloklamaydi.
+- **VirusTotal/MalwareBazaar/Telegram API**: sandbox tarmoq siyosati
+  bu domenlarni bloklaydi (`api.telegram.org`, `virustotal.com` va h.k.
+  ruxsat etilgan domenlar ro'yxatida yo'q) - kod to'g'ri yozilgan va
+  xatoni to'g'ri boshqaradi (test qilingan), lekin haqiqiy tashqi
+  javobni hech qachon olmagan.
+- **pysnmp** Python 3.12 bilan mos kelmaydi (eskirgan loyiha) - shuning
+  uchun `switch_adapter.py` `pysnmp` o'rniga `snmpset`/`snmpget` CLI
+  (net-snmp) orqali ishlaydi.
+
+## Keyingi navbatdagi (foydalanuvchi so'ragan, hali qurilmagan)
+
+Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
+- **Zeek/Snort** — Suricata'ga muqobil/qo'shimcha IDS (docs_SURICATA_SETUP.md
+  namunasida hujjat + integratsiya kod yozilishi kerak).
+- **MFA/LDAP** — RBAC'ni kengaytirish (`dashboard/auth.py`), TOTP
+  (`pyotp`) yoki LDAP bind orqali.
+- **Kafka/RabbitMQ** — hozirgi polling-asosli enginelarni queue-asosga
+  o'tkazish (katta refaktoring, `docs_DOCKER_DEPLOYMENT.md`da eslatma bor).
+- **Kubernetes** — `docker-compose.yml`dagi 11 xizmatni K8s
+  Deployment/Service manifestlariga aylantirish.
+- **AI/UEBA** — eng noaniq bo'lim; "AI" deb signature-based/threshold
+  qoidalarni sotmaslik kerak - agar qurilsa, aniq statistik/ML yondashuv
+  tanlab, ishlashini haqiqiy ma'lumotda ko'rsatish kerak.
+
+## MUHIM: sandbox'da "ghost" fayllar haqida
+
+Bir necha marta shu loyihada sandbox sessiyasi qulagan/tiklangan paytda,
+oldingi (chatda ko'rinmagan) urinishlardan qolgan fayllar diskda topilgan
+- masalan `actions/` papkasi (ishlatilmagan, o'chirilgan) va
+  `reports/report_generator.py` ichidagi `export_summary_pdf`/
+  `export_alerts_excel` funksiyalari (sifatli, ishlatilgan holda topildi).
+**Yangi narsa qurishdan oldin har doim mavjud fayllarni tekshiring**
+(`grep -n "^def \|^class "` yoki `view` orqali) - ehtimol allaqachon
+yozilgan bo'lishi mumkin, ikki marta ish qilmang.
+
+## Ishga tushirish (tezkor eslatma)
+
+```bash
+# Kutubxonalar
+pip install -r requirements.txt --break-system-packages
+
+# OS darajasidagi bog'liqliklar (Suricata/ClamAV/SNMP uchun)
+apt install clamav clamav-freshclam snmp
+
+# Test
+python3 run_full_test.py
+
+# Xizmatlarni alohida ishga tushirish (misol)
+python -m collectors.syslog_server
+python -m engine.parser_engine --loop
+python -m dashboard.app          # http://localhost:8080
+python -m dashboard.create_user --username admin --password '...' --role admin
+python -m reports.report_generator --period-days 7 --format csv,json,pdf,excel
+```
+
+To'liq hujjatlar: `README.md` va `docs_*.md` fayllarga qarang (har bir
+katta qism uchun alohida yo'riqnoma bor: SURICATA, WINDOWS_AGENT,
+LINUX_AGENT, MAC_AGENT, DOCKER_DEPLOYMENT, NXLOG_SETUP).

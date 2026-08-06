@@ -1,0 +1,264 @@
+"""
+Web Dashboard - RBAC bilan (yangi TZ 12 va 20-bo'limlar).
+
+Server-rendered Jinja2 shablonlar ishlatiladi (React/JS build vositalari
+shart emas - ichki SOC vositasi uchun eng sodda va barqaror yechim).
+
+Autentifikatsiya: flask_login orqali sessiya-asosli login (Basic Auth
+o'rniga - foydalanuvchilarni alohida ko'rish/boshqarish imkonini beradi).
+
+RBAC: 3 rol (admin/analyst/viewer) - dashboard/auth.py'da to'liq
+tavsiflangan. Boshlang'ich admin foydalanuvchini yaratish:
+
+    python -m dashboard.create_user --username admin --password '...' --role admin
+
+Ishga tushirish:
+    python -m dashboard.app
+"""
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash
+from flask_login import login_user, logout_user, login_required, current_user
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from db.database import get_session
+from db.models import Device, Alert, Event, FileEvent, User, utcnow
+from dashboard.auth import login_manager, UserWrapper, role_required
+
+app = Flask(__name__)
+app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
+login_manager.init_app(app)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        session = get_session()
+        try:
+            user = session.query(User).filter(User.username == username).first()
+            if user and user.is_active and check_password_hash(user.password_hash, password):
+                user.last_login = utcnow()
+                session.commit()
+                login_user(UserWrapper(user))
+                next_url = request.args.get("next") or url_for("index")
+                return redirect(next_url)
+            flash("Login yoki parol noto'g'ri", "error")
+        finally:
+            session.close()
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
+@app.route("/")
+@login_required
+def index():
+    session = get_session()
+    try:
+        stats = {
+            "device_count": session.query(Device).count(),
+            "alert_count": session.query(Alert).count(),
+            "critical_count": session.query(Alert).filter(Alert.severity == "critical").count(),
+            "high_count": session.query(Alert).filter(Alert.severity == "high").count(),
+            "malicious_files": session.query(FileEvent).filter(FileEvent.verdict == "malicious").count(),
+            "clean_files": session.query(FileEvent).filter(FileEvent.verdict == "clean").count(),
+            "event_count": session.query(Event).count(),
+        }
+        recent_alerts = session.query(Alert).order_by(Alert.timestamp.desc()).limit(10).all()
+        recent_alerts_data = [_alert_to_dict(session, a) for a in recent_alerts]
+        return render_template("index.html", stats=stats, recent_alerts=recent_alerts_data)
+    finally:
+        session.close()
+
+
+@app.route("/alerts")
+@login_required
+def alerts():
+    session = get_session()
+    try:
+        severity_filter = request.args.get("severity", "")
+        query = session.query(Alert)
+        if severity_filter:
+            query = query.filter(Alert.severity == severity_filter)
+        all_alerts = query.order_by(Alert.timestamp.desc()).limit(200).all()
+        alerts_data = [_alert_to_dict(session, a) for a in all_alerts]
+        return render_template("alerts.html", alerts=alerts_data, severity_filter=severity_filter)
+    finally:
+        session.close()
+
+
+@app.route("/alerts/<int:alert_id>/acknowledge", methods=["POST"])
+@role_required("analyst")
+def acknowledge_alert(alert_id):
+    session = get_session()
+    try:
+        alert = session.query(Alert).filter(Alert.id == alert_id).first()
+        if alert:
+            alert.acknowledged = True
+            alert.acknowledged_by = current_user.username
+            alert.acknowledged_at = utcnow()
+            session.commit()
+            flash(f"Alert #{alert_id} tasdiqlandi", "success")
+        return redirect(request.referrer or url_for("alerts"))
+    finally:
+        session.close()
+
+
+@app.route("/devices")
+@login_required
+def devices():
+    session = get_session()
+    try:
+        all_devices = session.query(Device).order_by(Device.last_seen.desc()).limit(200).all()
+        devices_data = []
+        for d in all_devices:
+            alert_count = session.query(Alert).filter(Alert.device_id == d.id).count()
+            devices_data.append({
+                "id": d.id, "ip_address": d.ip_address, "mac_address": d.mac_address,
+                "hostname": d.hostname, "connection_type": d.connection_type,
+                "source": d.source, "last_seen": d.last_seen, "alert_count": alert_count,
+            })
+        return render_template("devices.html", devices=devices_data)
+    finally:
+        session.close()
+
+
+@app.route("/files")
+@login_required
+def files():
+    session = get_session()
+    try:
+        verdict_filter = request.args.get("verdict", "")
+        query = session.query(FileEvent)
+        if verdict_filter:
+            query = query.filter(FileEvent.verdict == verdict_filter)
+        all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
+        return render_template("files.html", files=all_files, verdict_filter=verdict_filter)
+    finally:
+        session.close()
+
+
+@app.route("/reports/download")
+@login_required
+def download_report():
+    import tempfile
+    from reports.report_generator import generate_report
+
+    period_days = int(request.args.get("period_days", "7"))
+    fmt = request.args.get("format", "csv")
+    if fmt not in ("csv", "json", "pdf", "excel"):
+        return Response("Noto'g'ri format - csv/json/pdf/excel bo'lishi kerak", 400)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result = generate_report(period_days, [fmt], tmp_dir)
+        filepath = result[fmt]
+        if not filepath:
+            return Response("Hisobot yaratilmadi", 500)
+        return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
+
+
+# --- Foydalanuvchi boshqaruvi (faqat admin) ---
+
+@app.route("/users")
+@role_required("admin")
+def users():
+    session = get_session()
+    try:
+        all_users = session.query(User).order_by(User.username).all()
+        return render_template("users.html", users=all_users)
+    finally:
+        session.close()
+
+
+@app.route("/users/create", methods=["POST"])
+@role_required("admin")
+def create_user_route():
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    role = request.form.get("role", "viewer")
+
+    if not username or not password or role not in ("admin", "analyst", "viewer"):
+        flash("Noto'g'ri ma'lumot kiritildi", "error")
+        return redirect(url_for("users"))
+
+    session = get_session()
+    try:
+        if session.query(User).filter(User.username == username).first():
+            flash(f"'{username}' allaqachon mavjud", "error")
+            return redirect(url_for("users"))
+        user = User(username=username, password_hash=generate_password_hash(password), role=role)
+        session.add(user)
+        session.commit()
+        flash(f"Foydalanuvchi '{username}' ({role}) yaratildi", "success")
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/deactivate", methods=["POST"])
+@role_required("admin")
+def deactivate_user(user_id):
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user:
+            if user.username == current_user.username:
+                flash("O'zingizni faolsizlantira olmaysiz", "error")
+            else:
+                user.is_active = False
+                session.commit()
+                flash(f"'{user.username}' faolsizlantirildi", "success")
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
+def _alert_to_dict(session, alert: Alert) -> dict:
+    device = session.query(Device).filter(Device.id == alert.device_id).first() if alert.device_id else None
+    return {
+        "id": alert.id,
+        "timestamp": alert.timestamp,
+        "severity": alert.severity,
+        "reason": alert.reason,
+        "action_taken": alert.action_taken,
+        "notified": alert.notified,
+        "mitre_technique_id": alert.mitre_technique_id,
+        "mitre_technique_name": alert.mitre_technique_name,
+        "mitre_tactic": alert.mitre_tactic,
+        "hostname": device.hostname if device else None,
+        "ip_address": device.ip_address if device else None,
+        "acknowledged": alert.acknowledged,
+        "acknowledged_by": alert.acknowledged_by,
+    }
+
+
+@app.template_filter("severity_color")
+def severity_color(severity):
+    return {
+        "critical": "#c0392b", "high": "#e67e22", "medium": "#f1c40f", "low": "#95a5a6",
+    }.get(severity, "#7f8c8d")
+
+
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template("error.html", code=403, message="Bu sahifaga kirish huquqingiz yo'q"), 403
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("DASHBOARD_PORT", "8080"))
+    app.run(host="0.0.0.0", port=port)

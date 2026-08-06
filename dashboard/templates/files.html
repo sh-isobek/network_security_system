@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Fayllar - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Tekshirilgan fayllar ({{ files | length }})</h1>
+
+<div class="filters">
+    <a href="/files" class="{% if not verdict_filter %}active{% endif %}">Hammasi</a>
+    <a href="/files?verdict=malicious" class="{% if verdict_filter == 'malicious' %}active{% endif %}">Zararli</a>
+    <a href="/files?verdict=clean" class="{% if verdict_filter == 'clean' %}active{% endif %}">Toza</a>
+</div>
+
+{% if files %}
+<table>
+    <tr>
+        <th>Vaqt</th><th>Fayl nomi</th><th>Manba IP</th><th>Verdict</th>
+        <th>Score</th><th>SHA256</th><th>Manba</th>
+    </tr>
+    {% for f in files %}
+    <tr>
+        <td class="mono">{{ f.timestamp.strftime('%Y-%m-%d %H:%M:%S') if f.timestamp else '' }}</td>
+        <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
+        <td class="mono">{{ f.src_ip }}</td>
+        <td>
+            {% if f.verdict == 'malicious' %}
+            <span class="badge" style="background: #c0392b;">ZARARLI</span>
+            {% elif f.verdict == 'clean' %}
+            <span class="badge" style="background: #27ae60;">TOZA</span>
+            {% else %}
+            <span class="badge" style="background: #95a5a6;">TEKSHIRILMOQDA</span>
+            {% endif %}
+        </td>
+        <td>{{ f.threat_score }}</td>
+        <td class="mono" style="font-size: 11px;">{{ (f.sha256 or '')[:16] }}...</td>
+        <td class="mono">{{ f.checked_sources or '-' }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hech qanday fayl topilmadi</div>
+{% endif %}
+{% endblock %}

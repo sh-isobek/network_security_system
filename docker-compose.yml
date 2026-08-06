@@ -1,0 +1,179 @@
+volumes:
+  postgres_data:
+  clamav_db:
+  # Diqqat: Suricata odatda SPAN port orqali xom tarmoq trafigini o'qishi
+  # kerak bo'lgani uchun konteynerdan tashqarida, host'da alohida ishlaydi
+  # (docs_SURICATA_SETUP.md'ga qarang). Uning file-store papkasi
+  # (/var/log/suricata/files) deep_scan_engine xizmatiga pastda bind-mount
+  # orqali (named volume emas) bog'langan.
+
+services:
+  # ---------------------------------------------------------------------
+  # Ma'lumotlar bazasi
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-security_system}
+      POSTGRES_USER: ${POSTGRES_USER:-security_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env faylida majburiy}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-security_admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------
+  # 0-bosqich: Syslog qabul qiluvchi (Kerio/switch/DNS forwarder shu yerga yuboradi)
+  # ---------------------------------------------------------------------
+  syslog_collector:
+    build: .
+    restart: unless-stopped
+    command: python -m collectors.syslog_server
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    ports:
+      - "514:5140/udp"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # 1-bosqich: Parser (syslog -> devices/events, DNS blacklist tekshiruvi)
+  # ---------------------------------------------------------------------
+  parser_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.parser_engine --loop --interval 5
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # 2-3-bosqich: Fayl hash tekshiruvi (VirusTotal/MalwareBazaar/mahalliy)
+  # ---------------------------------------------------------------------
+  file_analysis_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.file_analysis_engine --loop --interval 10
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # 4-bosqich: Chuqur tekshiruv (YARA + ClamAV + Office + ZIP)
+  # Suricata'ning file-store papkasi HOST'dan volume orqali beriladi
+  # ---------------------------------------------------------------------
+  deep_scan_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.deep_scan_engine --loop --interval 10
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+      CLAMAV_DB_DIR: /var/lib/clamav
+    volumes:
+      - clamav_db:/var/lib/clamav
+      # Host'dagi Suricata file-store papkasini shu yerga bog'lang:
+      - /var/log/suricata/files:/var/log/suricata/files:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clamav_updater:
+        condition: service_started
+
+  # ClamAV virus bazasini muntazam yangilab turuvchi alohida xizmat
+  clamav_updater:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav
+    entrypoint: >
+      sh -c "freshclam --daemon --checks=12 --foreground=false;
+             while true; do sleep 3600; freshclam --quiet || true; done"
+
+  # ---------------------------------------------------------------------
+  # 5-bosqich: Avtomatik javob choralari (UniFi/switch)
+  # ---------------------------------------------------------------------
+  response_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.response_engine --loop --interval 5
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # 6-bosqich: Endpoint Agent API (Windows kompyuterlar shu yerga ulanadi)
+  # ---------------------------------------------------------------------
+  agent_api:
+    build: .
+    restart: unless-stopped
+    command: gunicorn -w 4 -b 0.0.0.0:8443 api.server:app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    ports:
+      - "8443:8443"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # 7-bosqich: Bildirishnoma (Email/Telegram)
+  # ---------------------------------------------------------------------
+  notification_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.notification_engine --loop --interval 10
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # MITRE ATT&CK belgilash
+  # ---------------------------------------------------------------------
+  mitre_tagging_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.mitre_tagging_engine --loop --interval 15
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # Web Dashboard
+  # ---------------------------------------------------------------------
+  dashboard:
+    build: .
+    restart: unless-stopped
+    command: gunicorn -w 2 -b 0.0.0.0:8080 dashboard.app:app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
