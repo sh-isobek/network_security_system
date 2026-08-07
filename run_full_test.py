@@ -1161,9 +1161,11 @@ userPassword: CIPass456
     with open(ldif_path, "w") as f:
         f.write(base_ldif)
 
+    slapd_log_path = os.path.join(work_dir, "slapd_stderr.log")
+    slapd_log_file = open(slapd_log_path, "w")
     slapd_proc = subprocess.Popen(
         ["slapd", "-f", os.path.join(work_dir, "slapd.conf"), "-h", "ldap://127.0.0.1:3390/", "-d", "0"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=slapd_log_file, stderr=subprocess.STDOUT,
     )
     import time as _time
 
@@ -1182,7 +1184,17 @@ userPassword: CIPass456
             break
         _time.sleep(0.5)
 
-    assert slapd_ready, "slapd 10 soniyada tayyor bo'lmadi (server ishga tushmadi)"
+    if not slapd_ready:
+        slapd_log_file.flush()
+        with open(slapd_log_path) as f:
+            log_content = f.read()
+        proc_alive = slapd_proc.poll() is None
+        empty_marker = "(bo'sh)"
+        error_msg = (
+            f"slapd 10 soniyada tayyor bo'lmadi (jarayon tirikmi: {proc_alive}). "
+            f"slapd chiqishi: {log_content[:1000] or empty_marker}"
+        )
+        assert False, error_msg
 
     try:
         ldapadd_result = subprocess.run(
@@ -1227,6 +1239,7 @@ userPassword: CIPass456
             slapd_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             slapd_proc.kill()
+        slapd_log_file.close()
         shutil.rmtree(work_dir, ignore_errors=True)
         for k in ["LDAP_SERVER", "LDAP_BIND_DN_TEMPLATE"]:
             os.environ.pop(k, None)

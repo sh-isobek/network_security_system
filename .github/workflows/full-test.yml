@@ -48,7 +48,7 @@ jobs:
         run: |
           set +e
           sudo apt-get update > /tmp/apt_output.txt 2>&1
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils >> /tmp/apt_output.txt 2>&1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils apparmor-utils >> /tmp/apt_output.txt 2>&1
           EXIT_CODE=$?
           echo "=== APT EXIT CODE: $EXIT_CODE ==="
           wc -l /tmp/apt_output.txt
@@ -62,6 +62,22 @@ jobs:
             done
           fi
           exit $EXIT_CODE
+
+      - name: AppArmor'ni slapd uchun complain rejimiga o'tkazish
+        run: |
+          # Ubuntu'ning standart AppArmor profili slapd'ni faqat ma'lum
+          # papkalar/portlar bilan cheklaydi. Bizning testlar /tmp/ ostida
+          # maxsus konfiguratsiya va nostandart port (3390) ishlatadi -
+          # bu profil bilan mos kelmasligi mumkin. "complain" rejimi
+          # cheklovni bekor qilmasdan faqat MAJBURIY qilmaydi (faqat log
+          # yozadi), bu production xavfsizligiga ta'sir qilmaydi - bu
+          # yerda faqat CI test muhiti uchun.
+          if [ -x /usr/sbin/aa-complain ] && [ -f /etc/apparmor.d/usr.sbin.slapd ]; then
+            sudo aa-complain /usr/sbin/slapd || true
+            echo "AppArmor slapd uchun complain rejimiga o'tkazildi"
+          else
+            echo "AppArmor slapd profili topilmadi - o'tkazib yuborildi"
+          fi
 
       - name: Python kutubxonalari
         run: |
