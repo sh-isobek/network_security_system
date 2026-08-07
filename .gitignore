@@ -29,5 +29,9 @@ report_output/
 .DS_Store
 Thumbs.db
 
+# Backup fayllar
+backups/
+*.before_restore
+
 # Zip arxivlar
 *.zip

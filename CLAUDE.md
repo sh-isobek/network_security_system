@@ -81,8 +81,25 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | RabbitMQ Queue (`messaging/`, `collectors/syslog_server_queued.py`, `engine/queue_ingest_worker.py`) | ✅ HAQIQIY RabbitMQ broker bilan, to'liq UDP->Queue->Worker->DB zanjiri test qilingan |
 | — | UEBA / AI (`ueba/anomaly_detection.py`, `engine/ueba_engine.py`) | ✅ Statistik (Z-score) anomaliya aniqlash + Risk Score, real sintetik "normal+buzilgan" trafik bilan (soxta-pozitivsiz) test qilingan |
 | — | Kubernetes (`k8s/*.yaml`, 6 fayl, 24 resurs) | ✅✅ HAQIQIY k3s klasterida (v1.28, cgroup v1 muhitiga moslashtirilgan) to'liq sinaldi - control plane, Node, Pod scheduling, barcha 24 resurs server-side dry-run + real apply orqali tasdiqlangan. Faqat konteyner ijrosi (`docker.io` bloklangani sabab) sinalmagan |
+| — | Audit Log (`dashboard/audit.py`) | ✅ Login/logout/acknowledge/user boshqaruvi/MFA/hisobot yuklab olish - barchasi qayd etiladi, RBAC bilan (`/audit`, faqat admin) |
+| — | Backup/Restore (`backup/backup_manager.py`) | ✅ SQLite (sqlite3 backup API) va PostgreSQL (pg_dump/psql) - ikkalasi ham real "halokat→backup→tiklash" stsenariysi bilan test qilingan |
 
-**Joriy: 25/25 test o'tadi (`run_full_test.py`).**
+**Joriy: 27/27 test o'tadi (`run_full_test.py`).**
+
+## Backup/Restore'da topilgan va tuzatilgan real xato
+
+Birinchi PostgreSQL testida `pg_dump` (flag'siz) standart holatda `CREATE
+TABLE` buyruqlarini ham dump qiladi. Bazada jadvallar allaqachon mavjud
+bo'lgani (ilova ishga tushganda SQLAlchemy avtomatik yaratgan) uchun
+restore paytida "relation already exists" xatolari kelib chiqadi, va bu
+PostgreSQL'da **butun tranzaksiyani bekor qiladi** - shu sabab undan
+keyingi haqiqiy ma'lumot (`COPY`) buyruqlari **jim ravishda e'tiborsiz
+qoldirilib**, ma'lumot yo'qoladi (hech qanday xato ko'rsatilmasdan!).
+Bu ayniqsa xavfli, chunki `restore_backup()` "muvaffaqiyatli" deb
+qaytargan edi (psql default holatda xatolardan keyin ham davom etadi,
+returncode=0). Tuzatildi: `pg_dump`ga `--clean --if-exists` (avval
+mavjud obyektlarni tozalaydi) va `psql` restore'ga `-v ON_ERROR_STOP=1`
+(birinchi xatoda to'xtaydi, jim yo'qotmaydi) qo'shildi.
 
 ## Yangi TZ bo'yicha yakuniy holat
 

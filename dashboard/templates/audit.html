@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Audit Log ({{ entries | length }})</h1>
+
+<div class="filters">
+    <a href="/audit" class="{% if not action_filter %}active{% endif %}">Hammasi</a>
+    <a href="/audit?action=login" class="{% if action_filter == 'login' %}active{% endif %}">Login</a>
+    <a href="/audit?action=acknowledge_alert" class="{% if action_filter == 'acknowledge_alert' %}active{% endif %}">Alert tasdiqlash</a>
+    <a href="/audit?action=create_user" class="{% if action_filter == 'create_user' %}active{% endif %}">Foydalanuvchi yaratish</a>
+</div>
+
+{% if entries %}
+<table>
+    <tr>
+        <th>Vaqt</th><th>Foydalanuvchi</th><th>Harakat</th><th>Nishon</th>
+        <th>Tafsilot</th><th>IP</th><th>Natija</th>
+    </tr>
+    {% for e in entries %}
+    <tr>
+        <td class="mono">{{ e.timestamp.strftime('%Y-%m-%d %H:%M:%S') if e.timestamp else '' }}</td>
+        <td>{{ e.username }}</td>
+        <td class="mono">{{ e.action }}</td>
+        <td class="mono">{% if e.target_type %}{{ e.target_type }}#{{ e.target_id }}{% else %}-{% endif %}</td>
+        <td>{{ e.details or '-' }}</td>
+        <td class="mono">{{ e.ip_address or '-' }}</td>
+        <td>{% if e.success %}✅{% else %}❌{% endif %}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Audit yozuvlari topilmadi</div>
+{% endif %}
+{% endblock %}

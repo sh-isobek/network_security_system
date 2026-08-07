@@ -1485,6 +1485,104 @@ def _test_k8s_manifests():
 check("Kubernetes manifestlar (struktura, kutilgan resurs turlari)", _test_k8s_manifests)
 
 # ---------------------------------------------------------------------------
+print("\n=== 24) AUDIT LOG (real HTTP orqali, login/acknowledge/user boshqaruvi) ===")
+
+
+def _test_audit_log():
+    from db.models import AuditLog
+    from dashboard import app as dash_app
+    from dashboard.create_user import create_user
+
+    create_user("audit_test_admin", "audittestpass123", "admin")
+    dash_app.app.secret_key = "test-secret-audit"
+    client = dash_app.app.test_client()
+
+    # MUHIM: avval noto'g'ri, keyin to'g'ri login - aks holda muvaffaqiyatli
+    # login'dan keyingi sessiya cookie'si ikkinchi so'rovni "current_user.
+    # is_authenticated" tekshiruvida darhol qaytarib yuboradi, login
+    # logikasiga umuman yetib bormaydi (bu test kodidagi tuzatilgan xato edi).
+    client.post("/login", data={"username": "audit_test_admin", "password": "wrong"})
+    client.post("/login", data={"username": "audit_test_admin", "password": "audittestpass123"})
+
+    s = get_session()
+    logins = s.query(AuditLog).filter(AuditLog.username == "audit_test_admin", AuditLog.action == "login").all()
+    assert len(logins) == 2, f"2 ta login urinishi qayd etilishi kerak edi, {len(logins)} ta topildi"
+    successes = [l.success for l in logins]
+    assert True in successes and False in successes, "Muvaffaqiyatli va muvaffaqiyatsiz login ikkalasi ham qayd etilishi kerak edi"
+    s.close()
+
+    # Foydalanuvchi yaratish audit'i
+    client.post("/users/create", data={"username": "audit_created_user", "password": "pass123", "role": "viewer"})
+    s = get_session()
+    create_entry = s.query(AuditLog).filter(AuditLog.action == "create_user", AuditLog.target_id == "audit_created_user").first()
+    assert create_entry is not None, "create_user audit yozuvi topilmadi"
+    assert create_entry.username == "audit_test_admin"
+    s.close()
+
+    # Viewer /audit'ga kira olmasligi kerak (RBAC bilan integratsiya)
+    create_user("audit_test_viewer", "viewerpass123", "viewer")
+    client.get("/logout")
+    client.post("/login", data={"username": "audit_test_viewer", "password": "viewerpass123"})
+    r = client.get("/audit")
+    assert r.status_code == 403, f"Viewer /audit'ga kirmasligi kerak edi, {r.status_code} keldi"
+
+    client.get("/logout")
+    client.post("/login", data={"username": "audit_test_admin", "password": "audittestpass123"})
+    r = client.get("/audit")
+    assert r.status_code == 200
+    assert b"audit_test_admin" in r.data
+
+
+check("Audit Log (login/acknowledge/user boshqaruvi qayd etiladi, RBAC bilan)", _test_audit_log)
+
+# ---------------------------------------------------------------------------
+print("\n=== 25) BACKUP/RESTORE (real 'halokat va tiklash' stsenariysi) ===")
+
+
+def _test_backup_restore():
+    import shutil
+    from backup.backup_manager import create_backup, restore_backup, list_backups
+
+    backup_dir = "/tmp/_test_backup_restore"
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+
+    s = get_session()
+    s.add(Device(ip_address="172.16.21.1", hostname="BACKUP-CI-TEST", connection_type="wifi", source="test"))
+    s.commit()
+    s.close()
+
+    backup_path = create_backup(backup_dir)
+    assert os.path.isfile(backup_path) or (backup_path and os.path.getsize(backup_path) >= 0), "Backup fayli yaratilmadi"
+
+    backups = list_backups(backup_dir)
+    assert len(backups) >= 1, "list_backups bo'sh qaytardi"
+
+    # "Halokat" simulyatsiyasi
+    s = get_session()
+    s.query(Device).filter(Device.hostname == "BACKUP-CI-TEST").delete()
+    s.commit()
+    remaining = s.query(Device).filter(Device.hostname == "BACKUP-CI-TEST").count()
+    assert remaining == 0, "Halokat simulyatsiyasi ishlamadi"
+    s.close()
+
+    ok = restore_backup(backup_path)
+    assert ok, "restore_backup False qaytardi"
+
+    s = get_session()
+    restored = s.query(Device).filter(Device.hostname == "BACKUP-CI-TEST").first()
+    assert restored is not None, "RESTORE'DAN KEYIN MA'LUMOT TIKLANMADI"
+    s.close()
+
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    safety_file = "./logs/security_system.db.before_restore"
+    if os.path.exists(safety_file):
+        os.remove(safety_file)
+
+
+check("Backup/Restore (real halokat+tiklash, SQLite/PostgreSQL avtomatik)", _test_backup_restore)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

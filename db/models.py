@@ -212,6 +212,35 @@ class DeviceBaseline(Base):
     sample_size = Column(Integer, default=0)          # necha soatlik ma'lumot asosida hisoblangan
 
 
+class AuditLog(Base):
+    """
+    Audit Log - yangi TZ 20-bo'lim (Xavfsizlik: Audit Log).
+
+    Dashboard'da bajarilgan har bir MUHIM (yozuvchi) harakatni qayd
+    etadi - kim, qachon, nima qildi. Faqat o'qish (GET) so'rovlari
+    yozilmaydi (haddan tashqari ko'p yozuv bo'lmasligi uchun) - faqat
+    holatni o'zgartiradigan harakatlar: login/logout, foydalanuvchi
+    yaratish/faolsizlantirish, alert tasdiqlash, MFA yoqish/o'chirish,
+    hisobot yuklab olish.
+    """
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
+    username = Column(String(100), nullable=False)
+    action = Column(String(100), nullable=False)          # masalan "login", "acknowledge_alert", "create_user"
+    target_type = Column(String(50))                        # masalan "Alert", "User"
+    target_id = Column(String(100))                          # nishon ID'si (matn sifatida - turli xil bo'lishi mumkin)
+    details = Column(Text)                                    # qo'shimcha kontekst (masalan "role=admin")
+    ip_address = Column(String(45))
+    success = Column(Boolean, default=True)                    # masalan login muvaffaqiyatsiz bo'lsa False
+
+    __table_args__ = (
+        Index("ix_audit_log_timestamp", "timestamp"),
+        Index("ix_audit_log_username", "username"),
+    )
+
+
 class User(Base):
     """Dashboard'ga kirish uchun foydalanuvchi (RBAC - yangi TZ 20-bo'lim)."""
     __tablename__ = "users"

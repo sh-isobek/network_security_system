@@ -34,6 +34,7 @@
         <a href="/files" class="{% if request.path == '/files' %}active{% endif %}">Fayllar</a>
         {% if current_user.is_authenticated and current_user.role == 'admin' %}
         <a href="/users" class="{% if request.path == '/users' %}active{% endif %}">Foydalanuvchilar</a>
+        <a href="/audit" class="{% if request.path == '/audit' %}active{% endif %}">Audit Log</a>
         {% endif %}
         {% if current_user.is_authenticated %}
         <span style="margin-left: auto; color: #95a5a6; font-size: 12px; display: flex; align-items: center; gap: 10px;">

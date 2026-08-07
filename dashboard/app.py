@@ -28,6 +28,7 @@ from db.database import get_session
 from db.models import Device, Alert, Event, FileEvent, User, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
+from dashboard.audit import log_action
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
@@ -57,8 +58,11 @@ def login():
                 user.last_login = utcnow()
                 session.commit()
                 login_user(UserWrapper(user))
+                log_action(username, "login", ip_address=request.remote_addr)
                 next_url = request.args.get("next") or url_for("index")
                 return redirect(next_url)
+            log_action(username, "login", success=False, ip_address=request.remote_addr,
+                       details="Foydalanuvchi topilmadi/faolsiz/parol noto'g'ri")
             flash("Login yoki parol noto'g'ri", "error")
         finally:
             session.close()
@@ -83,7 +87,10 @@ def mfa_verify():
                 session.commit()
                 flask_session.pop("pending_mfa_user_id", None)
                 login_user(UserWrapper(user))
+                log_action(user.username, "login", details="MFA orqali", ip_address=request.remote_addr)
                 return redirect(url_for("index"))
+            uname = user.username if user else "nomalum"
+            log_action(uname, "mfa_verify", success=False, ip_address=request.remote_addr)
             flash("Kod noto'g'ri yoki muddati o'tgan", "error")
         finally:
             session.close()
@@ -111,6 +118,7 @@ def mfa_setup():
                 session.commit()
                 flask_session.pop("pending_mfa_secret", None)
                 flash("MFA muvaffaqiyatli yoqildi", "success")
+                log_action(current_user.username, "mfa_enable", ip_address=request.remote_addr)
                 return redirect(url_for("index"))
             flash("Kod noto'g'ri - qaytadan urinib ko'ring", "error")
 
@@ -136,6 +144,7 @@ def mfa_disable():
         user.mfa_secret = None
         session.commit()
         flash("MFA o'chirildi", "success")
+        log_action(current_user.username, "mfa_disable", ip_address=request.remote_addr)
     finally:
         session.close()
     return redirect(url_for("index"))
@@ -144,6 +153,7 @@ def mfa_disable():
 @app.route("/logout")
 @login_required
 def logout():
+    log_action(current_user.username, "logout", ip_address=request.remote_addr)
     logout_user()
     return redirect(url_for("login"))
 
@@ -197,6 +207,8 @@ def acknowledge_alert(alert_id):
             alert.acknowledged_at = utcnow()
             session.commit()
             flash(f"Alert #{alert_id} tasdiqlandi", "success")
+            log_action(current_user.username, "acknowledge_alert", target_type="Alert",
+                       target_id=alert_id, ip_address=request.remote_addr)
         return redirect(request.referrer or url_for("alerts"))
     finally:
         session.close()
@@ -253,6 +265,8 @@ def download_report():
         filepath = result[fmt]
         if not filepath:
             return Response("Hisobot yaratilmadi", 500)
+        log_action(current_user.username, "download_report", details=f"format={fmt}, period_days={period_days}",
+                   ip_address=request.remote_addr)
         return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
 
 
@@ -289,6 +303,8 @@ def create_user_route():
         session.add(user)
         session.commit()
         flash(f"Foydalanuvchi '{username}' ({role}) yaratildi", "success")
+        log_action(current_user.username, "create_user", target_type="User", target_id=username,
+                   details=f"role={role}", ip_address=request.remote_addr)
     finally:
         session.close()
     return redirect(url_for("users"))
@@ -307,6 +323,8 @@ def deactivate_user(user_id):
                 user.is_active = False
                 session.commit()
                 flash(f"'{user.username}' faolsizlantirildi", "success")
+                log_action(current_user.username, "deactivate_user", target_type="User",
+                           target_id=user.username, ip_address=request.remote_addr)
     finally:
         session.close()
     return redirect(url_for("users"))
@@ -336,6 +354,22 @@ def severity_color(severity):
     return {
         "critical": "#c0392b", "high": "#e67e22", "medium": "#f1c40f", "low": "#95a5a6",
     }.get(severity, "#7f8c8d")
+
+
+@app.route("/audit")
+@role_required("admin")
+def audit_log():
+    from db.models import AuditLog
+    session = get_session()
+    try:
+        action_filter = request.args.get("action", "")
+        query = session.query(AuditLog)
+        if action_filter:
+            query = query.filter(AuditLog.action == action_filter)
+        entries = query.order_by(AuditLog.timestamp.desc()).limit(300).all()
+        return render_template("audit.html", entries=entries, action_filter=action_filter)
+    finally:
+        session.close()
 
 
 @app.errorhandler(403)
