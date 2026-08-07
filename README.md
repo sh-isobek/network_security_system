@@ -133,6 +133,8 @@ python -m engine.notification_engine --loop
 | Kubernetes | `k8s/*.yaml` | 24 resurs, haqiqiy k3s klasterida to'liq sinalgan (`docs_KUBERNETES_SETUP.md`) |
 | Audit Log | `dashboard/audit.py` | Dashboard'dagi barcha muhim harakatlar qayd etiladi (`/audit`, faqat admin) |
 | Backup/Restore | `backup/backup_manager.py` | `python -m backup.backup_manager --backup` / `--restore FILE` / `--list` |
+| Live Map | `/live-map`, `/api/topology` | Interaktiv real-vaqt tarmoq topologiyasi (vis-network) |
+| Grafana | `grafana/dashboards/security-overview.json` | 8 panelli dashboard, SQL so'rovlar real bazaga qarshi tekshirilgan (`docs_GRAFANA_LIVEMAP.md`) |
 | Mac Agent | `mac_agent/` | Xuddi shu yadro, launchd konfiguratsiyasi - `docs_MAC_AGENT_SETUP.md`ga qarang (kod yozilgan, lekin haqiqiy macOS'da sinalmagan) |
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 

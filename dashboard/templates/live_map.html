@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Live Map - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Live Network Map <span id="last-update" style="font-size:12px; color:#95a5a6; font-weight:400;"></span></h1>
+<p style="font-size:13px; color:#5a6673; margin-bottom:14px;">
+    So'nggi 24 soatda faol qurilmalar va ularning tashqi aloqalari.
+    Rang = Risk Score (qizil=yuqori, sariq=o'rta, ko'k=past/yo'q). 15 soniyada avtomatik yangilanadi.
+</p>
+
+<div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/vis-network.min.js"></script>
+<script>
+let network = null;
+
+async function loadTopology() {
+    const resp = await fetch('/api/topology');
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const nodes = new vis.DataSet(data.nodes);
+    const edges = new vis.DataSet(data.edges);
+    const container = document.getElementById('network-map');
+    const options = {
+        physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },
+        edges: { arrows: 'to', smooth: true, color: '#cfd8dc', width: 1 },
+        nodes: { font: { size: 12, color: '#2c3e50' } },
+        interaction: { hover: true },
+    };
+
+    if (network === null) {
+        network = new vis.Network(container, { nodes, edges }, options);
+    } else {
+        network.setData({ nodes, edges });
+    }
+
+    document.getElementById('last-update').textContent =
+        '(oxirgi yangilanish: ' + new Date().toLocaleTimeString() + ')';
+}
+
+loadTopology();
+setInterval(loadTopology, 15000);
+</script>
+{% endblock %}

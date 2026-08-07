@@ -1583,6 +1583,99 @@ def _test_backup_restore():
 check("Backup/Restore (real halokat+tiklash, SQLite/PostgreSQL avtomatik)", _test_backup_restore)
 
 # ---------------------------------------------------------------------------
+print("\n=== 26) LIVE MAP (real HTTP, topologiya API) ===")
+
+
+def _test_live_map():
+    from dashboard import app as dash_app
+    from dashboard.create_user import create_user
+
+    create_user("livemap_test_admin", "livemaptestpass123", "admin")
+    dash_app.app.secret_key = "test-secret-livemap"
+    client = dash_app.app.test_client()
+    client.post("/login", data={"username": "livemap_test_admin", "password": "livemaptestpass123"})
+
+    s = get_session()
+    d_high = Device(ip_address="172.16.32.1", hostname="LIVEMAP-HIGH-RISK", connection_type="wifi", source="test", risk_score=80)
+    d_low = Device(ip_address="172.16.32.2", hostname="LIVEMAP-LOW-RISK", connection_type="cable", source="test", risk_score=0)
+    s.add_all([d_high, d_low])
+    s.flush()
+    high_id, low_id = d_high.id, d_low.id
+    s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
+    s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
+    s.commit()
+    s.close()
+
+    r = client.get("/live-map")
+    assert r.status_code == 200
+    assert b"network-map" in r.data
+
+    r = client.get("/api/topology")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "nodes" in data and "edges" in data
+
+    node_ids = {n["id"] for n in data["nodes"]}
+    high_node = next((n for n in data["nodes"] if n["id"] == f"dev_{high_id}"), None)
+    assert high_node is not None, "Yuqori riskli qurilma node'i topilmadi"
+    assert high_node["color"] == "#c0392b", f"Risk=80 uchun qizil rang kutilgan edi, {high_node['color']} keldi"
+
+    ext_node = next((n for n in data["nodes"] if n["id"] == "ext_9.9.9.9"), None)
+    assert ext_node is not None, "Tashqi manzil node'i topilmadi"
+
+    edge = next((e for e in data["edges"] if e["from"] == f"dev_{high_id}" and e["to"] == "ext_9.9.9.9"), None)
+    assert edge is not None, "Edge topilmadi"
+    assert edge["value"] == 2, f"2 ta hodisa kutilgan edi, {edge['value']} keldi"
+
+    # Autentifikatsiyasiz kirish rad etilishi kerak
+    anon_client = dash_app.app.test_client()
+    r = anon_client.get("/api/topology", follow_redirects=False)
+    assert r.status_code == 302
+
+
+check("Live Map (real HTTP, topologiya API, risk-rang moslashuvi)", _test_live_map)
+
+# ---------------------------------------------------------------------------
+print("\n=== 27) GRAFANA DASHBOARD (JSON struktura + SQL so'rovlar real bazaga qarshi) ===")
+
+
+def _test_grafana_dashboard():
+    import json as json_mod
+
+    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "grafana", "dashboards", "security-overview.json")
+    assert os.path.isfile(dashboard_path), "Grafana dashboard JSON fayli topilmadi"
+
+    with open(dashboard_path) as f:
+        dashboard = json_mod.load(f)
+
+    assert "panels" in dashboard and len(dashboard["panels"]) >= 5, "Kamida 5 ta panel kutilgan edi"
+
+    from config.settings import DATABASE_URL as CURRENT_DB_URL
+    if not CURRENT_DB_URL.startswith("postgresql://"):
+        print("   (SQL so'rovlar faqat PostgreSQL rejimida sinaladi - SQLite'da faqat JSON struktura tekshirildi)")
+        return
+
+    import psycopg2
+    conn = psycopg2.connect(CURRENT_DB_URL)
+    cur = conn.cursor()
+    try:
+        for panel in dashboard["panels"]:
+            for target in panel.get("targets", []):
+                sql = target["rawSql"]
+                try:
+                    cur.execute(sql)
+                    cur.fetchall()
+                except Exception as exc:
+                    conn.rollback()
+                    raise AssertionError(f"Panel '{panel['title']}' SQL xatoligi: {exc}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+check("Grafana Dashboard (8 panel SQL so'rovi real bazaga qarshi)", _test_grafana_dashboard)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

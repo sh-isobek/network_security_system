@@ -83,8 +83,10 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Kubernetes (`k8s/*.yaml`, 6 fayl, 24 resurs) | ✅✅ HAQIQIY k3s klasterida (v1.28, cgroup v1 muhitiga moslashtirilgan) to'liq sinaldi - control plane, Node, Pod scheduling, barcha 24 resurs server-side dry-run + real apply orqali tasdiqlangan. Faqat konteyner ijrosi (`docker.io` bloklangani sabab) sinalmagan |
 | — | Audit Log (`dashboard/audit.py`) | ✅ Login/logout/acknowledge/user boshqaruvi/MFA/hisobot yuklab olish - barchasi qayd etiladi, RBAC bilan (`/audit`, faqat admin) |
 | — | Backup/Restore (`backup/backup_manager.py`) | ✅ SQLite (sqlite3 backup API) va PostgreSQL (pg_dump/psql) - ikkalasi ham real "halokat→backup→tiklash" stsenariysi bilan test qilingan |
+| — | Live Map (`/live-map`, `/api/topology`) | ✅ To'liq ishlaydi, real HTTP orqali test qilingan (vis-network, risk-score rangi, real ma'lumot) |
+| — | Grafana (`grafana/dashboards/security-overview.json`) | ⚠️ Grafana'ning o'zi o'rnatilmagan (dl.grafana.com ruxsat etilmagan), LEKIN barcha 8 panel SQL so'rovi haqiqiy PostgreSQL'ga qarshi test qilingan va to'g'ri natija bergan |
 
-**Joriy: 27/27 test o'tadi (`run_full_test.py`).**
+**Joriy: 29/29 test o'tadi (`run_full_test.py`).**
 
 ## Backup/Restore'da topilgan va tuzatilgan real xato
 

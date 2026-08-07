@@ -32,6 +32,7 @@
         <a href="/alerts" class="{% if request.path == '/alerts' %}active{% endif %}">Alertlar</a>
         <a href="/devices" class="{% if request.path == '/devices' %}active{% endif %}">Qurilmalar</a>
         <a href="/files" class="{% if request.path == '/files' %}active{% endif %}">Fayllar</a>
+        <a href="/live-map" class="{% if request.path == '/live-map' %}active{% endif %}">Live Map</a>
         {% if current_user.is_authenticated and current_user.role == 'admin' %}
         <a href="/users" class="{% if request.path == '/users' %}active{% endif %}">Foydalanuvchilar</a>
         <a href="/audit" class="{% if request.path == '/audit' %}active{% endif %}">Audit Log</a>

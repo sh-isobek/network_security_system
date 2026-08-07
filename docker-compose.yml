@@ -1,6 +1,7 @@
 volumes:
   postgres_data:
   clamav_db:
+  grafana_data:
   # Diqqat: Suricata odatda SPAN port orqali xom tarmoq trafigini o'qishi
   # kerak bo'lgani uchun konteynerdan tashqarida, host'da alohida ishlaydi
   # (docs_SURICATA_SETUP.md'ga qarang). Uning file-store papkasi
@@ -221,6 +222,27 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
     ports:
       - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # Grafana (yangi TZ 12-bo'lim) - ixtiyoriy, --profile grafana orqali
+  # ---------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    restart: unless-stopped
+    profiles: ["grafana"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
+      - grafana_data:/var/lib/grafana
+    env_file: .env
     depends_on:
       postgres:
         condition: service_healthy

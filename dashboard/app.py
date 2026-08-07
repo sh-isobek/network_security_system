@@ -372,6 +372,96 @@ def audit_log():
         session.close()
 
 
+@app.route("/live-map")
+@login_required
+def live_map():
+    return render_template("live_map.html")
+
+
+@app.route("/api/topology")
+@login_required
+def api_topology():
+    """
+    Live Map uchun tarmoq topologiyasi ma'lumoti (JSON).
+    Nodes - so'nggi 24 soatda faol bo'lgan qurilmalar (risk_score bo'yicha
+    rangli). Edges - shu qurilmalar orasidagi/ular bilan tashqi manzillar
+    orasidagi aloqalar (hodisalar soni bo'yicha og'irlangan).
+    """
+    from datetime import timedelta
+    from sqlalchemy import func
+
+    session = get_session()
+    try:
+        since = utcnow() - timedelta(hours=24)
+
+        active_device_ids = (
+            session.query(Event.device_id)
+            .filter(Event.timestamp >= since)
+            .distinct()
+            .limit(100)
+            .all()
+        )
+        device_ids = [d[0] for d in active_device_ids if d[0] is not None]
+
+        devices = session.query(Device).filter(Device.id.in_(device_ids)).all() if device_ids else []
+
+        nodes = []
+        for d in devices:
+            risk = d.risk_score or 0
+            if risk >= 70:
+                color = "#c0392b"
+            elif risk >= 30:
+                color = "#e67e22"
+            elif risk > 0:
+                color = "#f1c40f"
+            else:
+                color = "#3498db"
+            nodes.append({
+                "id": f"dev_{d.id}",
+                "label": d.hostname or d.ip_address,
+                "title": f"{d.ip_address} | risk={risk} | {d.connection_type or 'nomalum'}",
+                "color": color,
+                "shape": "dot",
+                "size": 14 + min(risk, 100) / 5,
+            })
+
+        # Edges: qurilma -> tashqi manzil (dest_ip), so'nggi 24 soatda,
+        # eng ko'p uchraydigan 60 ta juftlik bilan cheklangan (grafik
+        # o'qilishini saqlash uchun)
+        edge_rows = []
+        if device_ids:
+            edge_rows = (
+                session.query(Event.device_id, Event.dest_ip, func.count(Event.id).label("cnt"))
+                .filter(Event.timestamp >= since, Event.device_id.in_(device_ids))
+                .group_by(Event.device_id, Event.dest_ip)
+                .order_by(func.count(Event.id).desc())
+                .limit(60)
+                .all()
+            )
+
+        edges = []
+        external_nodes = {}
+        for device_id, dest_ip, cnt in edge_rows:
+            if not dest_ip:
+                continue
+            dest_node_id = f"ext_{dest_ip}"
+            if dest_node_id not in external_nodes:
+                external_nodes[dest_node_id] = {
+                    "id": dest_node_id, "label": dest_ip, "shape": "dot",
+                    "color": "#95a5a6", "size": 8,
+                }
+            edges.append({
+                "from": f"dev_{device_id}", "to": dest_node_id,
+                "value": cnt, "title": f"{cnt} ta hodisa",
+            })
+
+        nodes.extend(external_nodes.values())
+
+        return {"nodes": nodes, "edges": edges}
+    finally:
+        session.close()
+
+
 @app.errorhandler(403)
 def forbidden(e):
     return render_template("error.html", code=403, message="Bu sahifaga kirish huquqingiz yo'q"), 403

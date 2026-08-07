@@ -1,0 +1,135 @@
+{
+  "title": "Xavfsizlik Monitoring - Umumiy Ko'rinish",
+  "uid": "security-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["xavfsizlik", "network-security-system"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Jami Critical Alertlar (24 soat)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT count(*) FROM alerts WHERE severity = 'critical' AND timestamp >= now() - interval '24 hours'",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Jami Qurilmalar",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "targets": [
+        { "rawSql": "SELECT count(*) FROM devices", "format": "table" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Zararli Fayllar (jami)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }
+      },
+      "targets": [
+        { "rawSql": "SELECT count(*) FROM file_events WHERE verdict = 'malicious'", "format": "table" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Xabar Berilmagan Alertlar",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "targets": [
+        { "rawSql": "SELECT count(*) FROM alerts WHERE notified = false", "format": "table" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Vaqt bo'yicha Alertlar (Severity)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('hour', timestamp) AS time, severity, count(*) AS value FROM alerts WHERE timestamp >= now() - interval '24 hours' GROUP BY 1, 2 ORDER BY 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "MITRE ATT&CK Taktika Taqsimoti",
+      "type": "piechart",
+      "gridPos": { "h": 9, "w": 6, "x": 12, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "targets": [
+        {
+          "rawSql": "SELECT mitre_tactic AS metric, count(*) AS value FROM alerts WHERE mitre_tactic IS NOT NULL GROUP BY mitre_tactic ORDER BY value DESC",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Eng Yuqori Risk Score'li Qurilmalar",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 6, "x": 18, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "max": 100, "min": 0,
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 70 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT hostname AS metric, risk_score AS value FROM devices WHERE risk_score > 0 ORDER BY risk_score DESC LIMIT 10",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "So'nggi Alertlar",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "targets": [
+        {
+          "rawSql": "SELECT a.timestamp, a.severity, d.hostname, a.reason, a.mitre_technique_id, a.action_taken FROM alerts a LEFT JOIN devices d ON a.device_id = d.id ORDER BY a.timestamp DESC LIMIT 50",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}
