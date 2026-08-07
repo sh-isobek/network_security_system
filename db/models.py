@@ -64,6 +64,14 @@ class Device(Base):
     risk_score = Column(Integer, default=0)          # 0-100, engine/ueba_engine.py hisoblaydi
     risk_score_updated_at = Column(DateTime)
 
+    # --- Asset Inventory / Network Discovery ---
+    device_type = Column(String(50))                   # "server" | "switch" | "printer" | "ups" | "router" | "workstation" | "unknown"
+    vendor = Column(String(255))                        # MAC OUI orqali aniqlangan ishlab chiqaruvchi
+    os_guess = Column(String(255))                       # OS fingerprint yoki AD/SNMP orqali aniqlangan
+    open_ports = Column(Text)                             # JSON: [{"port":22,"service":"ssh"},...]
+    discovery_source = Column(String(50))                  # "arp_scan" | "icmp" | "snmp" | "ad" | "unifi" | "kerio_dhcp"
+    last_discovered_at = Column(DateTime)
+
     events = relationship("Event", back_populates="device")
 
 
@@ -202,6 +210,22 @@ class HashBlacklist(Base):
     threat_name = Column(String(255))             # masalan "Trojan.GenericKD"
     source = Column(String(100))                    # "manual" | "malwarebazaar" | "virustotal"
     added_at = Column(DateTime, default=utcnow)
+
+
+class TopologyLink(Base):
+    """
+    Tarmoq topologiyasi bog'lanishi - LLDP/CDP orqali aniqlangan
+    "qaysi qurilma qaysi switch portiga ulangan" ma'lumoti.
+    """
+    __tablename__ = "topology_links"
+
+    id = Column(Integer, primary_key=True)
+    local_interface = Column(String(100))                  # qaysi interfeysimizda ushlangan
+    neighbor_chassis_id = Column(String(100))                # qo'shni qurilmaning ID'si (MAC yoki boshqa)
+    neighbor_system_name = Column(String(255))
+    neighbor_port_id = Column(String(100))
+    protocol = Column(String(10))                              # "lldp" | "cdp"
+    discovered_at = Column(DateTime, default=utcnow)
 
 
 class DeviceBaseline(Base):

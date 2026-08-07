@@ -236,6 +236,43 @@ def devices():
         session.close()
 
 
+@app.route("/asset-inventory")
+@login_required
+def asset_inventory():
+    import json as json_mod
+    from db.models import TopologyLink
+
+    session = get_session()
+    try:
+        all_devices = (
+            session.query(Device)
+            .filter(Device.discovery_source.isnot(None))
+            .order_by(Device.last_discovered_at.desc())
+            .limit(300)
+            .all()
+        )
+        devices_data = []
+        for d in all_devices:
+            open_ports = []
+            if d.open_ports:
+                try:
+                    open_ports = json_mod.loads(d.open_ports)
+                except (json_mod.JSONDecodeError, TypeError):
+                    pass
+            devices_data.append({
+                "ip_address": d.ip_address, "mac_address": d.mac_address, "hostname": d.hostname,
+                "device_type": d.device_type or "unknown", "vendor": d.vendor, "os_guess": d.os_guess,
+                "discovery_source": d.discovery_source, "last_discovered_at": d.last_discovered_at,
+                "open_ports": open_ports,
+            })
+
+        topology = session.query(TopologyLink).order_by(TopologyLink.discovered_at.desc()).limit(100).all()
+
+        return render_template("asset_inventory.html", devices=devices_data, topology=topology)
+    finally:
+        session.close()
+
+
 @app.route("/files")
 @login_required
 def files():

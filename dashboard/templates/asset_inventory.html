@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Asset Inventory - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Asset Inventory ({{ devices | length }})</h1>
+<p style="font-size:13px; color:#5a6673; margin-bottom:14px;">
+    Network Discovery orqali (ARP/ICMP/SNMP/TCP scan) aniqlangan qurilmalar.
+    Yangilash: <code>python -m network_discovery.asset_inventory --cidr ... --interface ...</code>
+</p>
+
+{% if devices %}
+<table style="margin-bottom: 32px;">
+    <tr>
+        <th>IP</th><th>MAC</th><th>Hostname</th><th>Tur</th><th>Vendor</th>
+        <th>OS</th><th>Manba</th><th>Ochiq portlar</th><th>Aniqlangan</th>
+    </tr>
+    {% for d in devices %}
+    <tr>
+        <td class="mono">{{ d.ip_address }}</td>
+        <td class="mono">{{ d.mac_address or '-' }}</td>
+        <td>{{ d.hostname or '-' }}</td>
+        <td>
+            {% set type_colors = {'switch': '#3498db', 'router': '#9b59b6', 'printer': '#16a085', 'ups': '#e67e22', 'server': '#c0392b', 'workstation': '#7f8c8d'} %}
+            <span class="badge" style="background: {{ type_colors.get(d.device_type, '#95a5a6') }};">{{ d.device_type }}</span>
+        </td>
+        <td>{{ d.vendor or '-' }}</td>
+        <td>{{ d.os_guess or '-' }}</td>
+        <td class="mono">{{ d.discovery_source }}</td>
+        <td>
+            {% if d.open_ports %}
+            {% for p in d.open_ports[:5] %}<span class="mono" style="font-size:11px; background:#f4f6f8; padding:1px 5px; border-radius:3px; margin-right:3px;">{{ p.port }}/{{ p.service or '?' }}</span>{% endfor %}
+            {% else %}-{% endif %}
+        </td>
+        <td class="mono">{{ d.last_discovered_at.strftime('%Y-%m-%d %H:%M') if d.last_discovered_at else '-' }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hali hech qanday qurilma aniqlanmagan - discovery ishga tushirilmagan bo'lishi mumkin</div>
+{% endif %}
+
+<h1>Tarmoq Topologiyasi (LLDP/CDP)</h1>
+{% if topology %}
+<table>
+    <tr><th>Protokol</th><th>Qo'shni qurilma</th><th>Chassis ID</th><th>Port</th><th>Aniqlangan</th></tr>
+    {% for t in topology %}
+    <tr>
+        <td><span class="badge" style="background: {% if t.protocol == 'lldp' %}#3498db{% else %}#16a085{% endif %};">{{ t.protocol | upper }}</span></td>
+        <td>{{ t.neighbor_system_name or '-' }}</td>
+        <td class="mono">{{ t.neighbor_chassis_id or '-' }}</td>
+        <td class="mono">{{ t.neighbor_port_id or '-' }}</td>
+        <td class="mono">{{ t.discovered_at.strftime('%Y-%m-%d %H:%M') if t.discovered_at else '-' }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hali hech qanday LLDP/CDP qo'shni topilmagan</div>
+{% endif %}
+{% endblock %}

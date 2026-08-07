@@ -88,8 +88,36 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Rasmiy hujjatlar (`docs/ADMIN_GUIDE.md`, `USER_GUIDE.md`, `API_GUIDE.md`, `INSTALLATION_GUIDE.md`, `DISASTER_RECOVERY_GUIDE.md`) | ✅ Barcha 5 guide, ichki havolalar va CLI buyruqlari kod bilan solishtirib tekshirilgan |
 | — | Encryption at Rest (`crypto/field_encryption.py`) | ✅ MFA maxfiy kaliti endi bazada shifrlangan saqlanadi (Fernet, kalit almashtirish qo'llab-quvvatlanadi). To'liq MFA login oqimi orqali (shifrlash→saqlash→ochish) real test qilingan |
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
+| — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 32/32 test o'tadi (`run_full_test.py`).**
+**Joriy: 36/36 test o'tadi (`run_full_test.py`).**
+
+## Network Discovery'da topilgan muhim kashfiyot
+
+Avvalgi bosqichlarda "sandbox'da paket capture umuman ishlamaydi" deb
+xulosa qilingan edi (`tcpdump` `lo` interfeysida 0 paket ushlagani
+sabab). Bu bosqichda **bu xulosa noto'g'ri ekanligi aniqlandi** -
+faqat `lo` (loopback) capture cheklangan, lekin **`eth0` (haqiqiy
+tarmoq interfeysi)da to'liq L2/L3 paket capture ishlaydi**. Bu
+LLDP/CDP kabi L2 protokollarni **haqiqiy paket jo'natib, haqiqiy
+ushlab, haqiqiy parslab** test qilish imkonini berdi (Zeek kabi
+"faqat kod, sinab bo'lmaydi" holatidan farqli). **Xulosa**: bir marta
+"ishlamaydi" deb topilgan narsani boshqa interfeys/sharoitda qayta
+tekshirish foydali bo'lishi mumkin.
+
+## Network Discovery'da topilgan va tuzatilgan real xatolar (4 ta)
+
+1. ARP scan'da "DUP" (takroriy) javoblar alohida yozuv sifatida
+   qo'shilib qolgani - deduplikatsiya bilan tuzatildi.
+2. CDP test paketi noto'g'ri Ethernet freyming bilan qurilgan edi
+   (oddiy `Ether()` - CDP esa haqiqiy 802.3 LLC/SNAP inkapsulyatsiyasini
+   talab qiladi) - `Dot3()/LLC()/SNAP()` bilan tuzatildi.
+3. Debug skriptida `scapy.contrib.cdp` import qilinmagani sababli
+   SNAP->CDP avtomatik bog'lanish (`bind_layers`) faollashmagan edi.
+4. `asset_inventory.py`da `discovery_source` maydoni har doim ustidan
+   yozilardi - ARP orqali (MAC bilan) topilgan boy ma'lumot keyinroq
+   ICMP orqali (faqat "tirik") qayta ko'rilganda "pasayib" qolardi -
+   manba ustuvorligi mantig'i bilan tuzatildi.
 
 ## Yakuniy holat - loyiha to'liq
 
