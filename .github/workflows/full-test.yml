@@ -48,7 +48,7 @@ jobs:
         run: |
           set +e
           sudo apt-get update > /tmp/apt_output.txt 2>&1
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils apparmor-utils rabbitmq-server nmap arp-scan iputils-ping >> /tmp/apt_output.txt 2>&1
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils apparmor-utils rabbitmq-server nmap arp-scan iputils-ping >> /tmp/apt_output.txt 2>&1
           EXIT_CODE=$?
           echo "=== APT EXIT CODE: $EXIT_CODE ==="
           wc -l /tmp/apt_output.txt
