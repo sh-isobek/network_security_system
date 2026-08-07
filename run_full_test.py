@@ -1161,6 +1161,14 @@ userPassword: CIPass456
     with open(ldif_path, "w") as f:
         f.write(base_ldif)
 
+    # Avval slapd'ning o'z konfiguratsiya-tekshirish rejimi (-Tt) orqali
+    # sinxron tarzda tekshiramiz - bu aniq xato xabarini darhol beradi
+    # (agar keyingi bosqichda muammo bo'lsa, buni ham diagnostikaga qo'shamiz).
+    conf_test = subprocess.run(
+        ["slapd", "-Tt", "-f", os.path.join(work_dir, "slapd.conf")],
+        capture_output=True, timeout=10, text=True,
+    )
+
     slapd_log_path = os.path.join(work_dir, "slapd_stderr.log")
     slapd_log_file = open(slapd_log_path, "w")
     slapd_proc = subprocess.Popen(
@@ -1188,11 +1196,18 @@ userPassword: CIPass456
         slapd_log_file.flush()
         with open(slapd_log_path) as f:
             log_content = f.read()
-        proc_alive = slapd_proc.poll() is None
+        return_code = slapd_proc.poll()
+        module_path = "/usr/lib/ldap/back_mdb.la"
+        module_exists = os.path.isfile(module_path)
         empty_marker = "(bo'sh)"
         error_msg = (
-            f"slapd 10 soniyada tayyor bo'lmadi (jarayon tirikmi: {proc_alive}). "
-            f"slapd chiqishi: {log_content[:1000] or empty_marker}"
+            f"slapd 10 soniyada tayyor bo'lmadi. "
+            f"return_code={return_code}, "
+            f"modul_fayl_mavjud({module_path})={module_exists}, "
+            f"slapd_chiqishi={log_content[:500] or empty_marker!r}, "
+            f"config_test_rc={conf_test.returncode}, "
+            f"config_test_stdout={conf_test.stdout[:300]!r}, "
+            f"config_test_stderr={conf_test.stderr[:300]!r}"
         )
         assert False, error_msg
 
