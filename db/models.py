@@ -192,6 +192,17 @@ class User(Base):
     created_at = Column(DateTime, default=utcnow)
     last_login = Column(DateTime)
 
+    # --- Autentifikatsiya manbai (yangi TZ 20-bo'lim: LDAP Login) ---
+    # "local" - parol shu jadvalda (password_hash) tekshiriladi
+    # "ldap"  - parol Active Directory/LDAP serverida tekshiriladi
+    #           (password_hash bu holatda ishlatilmaydi, lekin baza
+    #           sxemasi soddaligi uchun bo'sh xesh bilan to'ldiriladi)
+    auth_source = Column(String(20), nullable=False, default="local")
+
+    # --- MFA / TOTP (yangi TZ 20-bo'lim: MFA) ---
+    mfa_secret = Column(String(64))          # Base32 TOTP maxfiy kaliti (null = MFA sozlanmagan)
+    mfa_enabled = Column(Boolean, default=False)
+
 
 def init_db(database_url: str):
     """Bazani va barcha jadvallarni yaratadi (agar mavjud bo'lmasa)."""

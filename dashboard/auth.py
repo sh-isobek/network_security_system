@@ -14,9 +14,11 @@ from functools import wraps
 
 from flask import redirect, url_for, flash, abort
 from flask_login import LoginManager, UserMixin, current_user
+from werkzeug.security import check_password_hash
 
 from db.database import get_session
 from db.models import User
+from dashboard.ldap_auth import authenticate_ldap
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -30,10 +32,21 @@ class UserWrapper(UserMixin):
         self.username = user.username
         self.role = user.role
         self.is_active_db = user.is_active
+        self.mfa_enabled = user.mfa_enabled
 
     @property
     def is_active(self):
         return self.is_active_db
+
+
+def verify_credentials(user: User, password: str) -> bool:
+    """
+    Foydalanuvchi parolini `auth_source`ga qarab tekshiradi:
+    "local" -> mahalliy xeshlangan parol, "ldap" -> LDAP/AD server orqali.
+    """
+    if user.auth_source == "ldap":
+        return authenticate_ldap(user.username, password)
+    return check_password_hash(user.password_hash, password)
 
 
 @login_manager.user_loader

@@ -20,13 +20,14 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash
+from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db.database import get_session
 from db.models import Device, Alert, Event, FileEvent, User, utcnow
-from dashboard.auth import login_manager, UserWrapper, role_required
+from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
+from dashboard import mfa as mfa_module
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
@@ -45,7 +46,14 @@ def login():
         session = get_session()
         try:
             user = session.query(User).filter(User.username == username).first()
-            if user and user.is_active and check_password_hash(user.password_hash, password):
+            if user and user.is_active and verify_credentials(user, password):
+                if user.mfa_enabled:
+                    # Parol to'g'ri, lekin MFA yoqilgan - login_user() HALI
+                    # chaqirilmaydi. Foydalanuvchi ID'sini vaqtinchalik
+                    # sessiyada saqlab, 2-bosqichga (kod kiritish) yo'naltiramiz.
+                    flask_session["pending_mfa_user_id"] = user.id
+                    return redirect(url_for("mfa_verify"))
+
                 user.last_login = utcnow()
                 session.commit()
                 login_user(UserWrapper(user))
@@ -56,6 +64,81 @@ def login():
             session.close()
 
     return render_template("login.html")
+
+
+@app.route("/mfa/verify", methods=["GET", "POST"])
+def mfa_verify():
+    """Login'ning 2-bosqichi: TOTP kodini tekshirish."""
+    pending_user_id = flask_session.get("pending_mfa_user_id")
+    if not pending_user_id:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        session = get_session()
+        try:
+            user = session.query(User).filter(User.id == pending_user_id).first()
+            if user and mfa_module.verify_code(user.mfa_secret, code):
+                user.last_login = utcnow()
+                session.commit()
+                flask_session.pop("pending_mfa_user_id", None)
+                login_user(UserWrapper(user))
+                return redirect(url_for("index"))
+            flash("Kod noto'g'ri yoki muddati o'tgan", "error")
+        finally:
+            session.close()
+
+    return render_template("mfa_verify.html")
+
+
+@app.route("/mfa/setup", methods=["GET", "POST"])
+@login_required
+def mfa_setup():
+    """Joriy foydalanuvchi uchun MFA'ni yoqish (QR-kod skanerlash + tasdiqlash)."""
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == current_user.id).first()
+
+        if user.mfa_enabled:
+            return render_template("mfa_setup.html", already_enabled=True)
+
+        if request.method == "POST":
+            code = request.form.get("code", "").strip()
+            secret = flask_session.get("pending_mfa_secret")
+            if secret and mfa_module.verify_code(secret, code):
+                user.mfa_secret = secret
+                user.mfa_enabled = True
+                session.commit()
+                flask_session.pop("pending_mfa_secret", None)
+                flash("MFA muvaffaqiyatli yoqildi", "success")
+                return redirect(url_for("index"))
+            flash("Kod noto'g'ri - qaytadan urinib ko'ring", "error")
+
+        # Yangi vaqtinchalik maxfiy kalit (hali tasdiqlanmagan, DB'ga yozilmagan)
+        secret = flask_session.get("pending_mfa_secret")
+        if not secret:
+            secret = mfa_module.generate_secret()
+            flask_session["pending_mfa_secret"] = secret
+
+        qr_data_uri = mfa_module.generate_qr_code_data_uri(secret, user.username)
+        return render_template("mfa_setup.html", already_enabled=False, qr_data_uri=qr_data_uri, secret=secret)
+    finally:
+        session.close()
+
+
+@app.route("/mfa/disable", methods=["POST"])
+@login_required
+def mfa_disable():
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == current_user.id).first()
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        session.commit()
+        flash("MFA o'chirildi", "success")
+    finally:
+        session.close()
+    return redirect(url_for("index"))
 
 
 @app.route("/logout")

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>MFA tasdiqlash - Xavfsizlik Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #1a2634; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .card { background: #fff; padding: 36px; border-radius: 8px; width: 340px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); text-align: center; }
+        h1 { font-size: 18px; margin-bottom: 4px; color: #1a2634; }
+        p.subtitle { font-size: 13px; color: #95a5a6; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; border: 1px solid #dde3e8; border-radius: 5px; font-size: 22px; text-align: center; letter-spacing: 6px; margin-top: 10px; }
+        button { width: 100%; margin-top: 20px; padding: 10px; background: #1a2634; color: #fff; border: none; border-radius: 5px; font-size: 14px; cursor: pointer; }
+        .flash { padding: 8px 12px; border-radius: 5px; font-size: 13px; margin-bottom: 12px; }
+        .flash.error { background: #fdecea; color: #c0392b; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔐 Ikki bosqichli tasdiqlash</h1>
+        <p class="subtitle">Autentifikator ilovangizdagi 6 xonali kodni kiriting</p>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+        <form method="POST">
+            <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
+            <button type="submit">Tasdiqlash</button>
+        </form>
+    </div>
+</body>
+</html>

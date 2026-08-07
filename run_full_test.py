@@ -1043,6 +1043,178 @@ def _test_zeek_integration():
 check("Zeek integratsiyasi (4 log turi + mavjud file-pipeline bilan)", _test_zeek_integration)
 
 # ---------------------------------------------------------------------------
+print("\n=== 19) MFA - TOTP (real vaqt algoritmi) ===")
+
+
+def _test_mfa():
+    from dashboard import mfa as mfa_module
+    from dashboard.create_user import create_user
+    from dashboard import app as dash_app
+
+    create_user("mfatest_admin", "mfatestpass123", "admin", "local")
+    dash_app.app.secret_key = "test-secret-mfa-full"
+    client = dash_app.app.test_client()
+
+    # MFA yo'qligida to'g'ridan-to'g'ri kirish
+    r = client.post("/login", data={"username": "mfatest_admin", "password": "mfatestpass123"}, follow_redirects=True)
+    r2 = client.get("/")
+    assert r2.status_code == 200, "MFA yo'q holatda to'g'ridan-to'g'ri kirishi kerak edi"
+
+    # QR-kod olish
+    r = client.get("/mfa/setup")
+    assert b"data:image/png;base64," in r.data
+
+    with client.session_transaction() as sess:
+        secret = sess.get("pending_mfa_secret")
+    assert secret is not None
+
+    # To'g'ri kod bilan yoqish
+    code = mfa_module.get_current_code(secret)
+    client.post("/mfa/setup", data={"code": code})
+
+    s = get_session()
+    u = s.query(User).filter(User.username == "mfatest_admin").first()
+    assert u.mfa_enabled is True, "MFA yoqilmadi"
+    s.close()
+
+    client.get("/logout")
+
+    # Endi login parol to'g'ri bo'lsa ham MFA sahifasiga yo'naltirishi kerak
+    r = client.post("/login", data={"username": "mfatest_admin", "password": "mfatestpass123"}, follow_redirects=False)
+    assert "/mfa/verify" in r.headers.get("Location", ""), "MFA sahifasiga yo'naltirilmadi"
+
+    r2 = client.get("/", follow_redirects=False)
+    assert r2.status_code == 302, "MFA tasdiqlanmasdan kira olmasligi kerak edi"
+
+    # Noto'g'ri kod
+    client.post("/mfa/verify", data={"code": "000000"})
+    r3 = client.get("/", follow_redirects=False)
+    assert r3.status_code == 302, "Noto'g'ri kod bilan hali ham kira olmasligi kerak"
+
+    # To'g'ri kod bilan yakuniy kirish
+    new_code = mfa_module.get_current_code(secret)
+    client.post("/mfa/verify", data={"code": new_code})
+    r4 = client.get("/")
+    assert r4.status_code == 200, "To'g'ri kod bilan kirishi kerak edi"
+
+    # Boshqa secret bilan kod mos kelmasligini tekshirish (birlik test, mfa.py'da)
+    other_secret = mfa_module.generate_secret()
+    assert mfa_module.verify_code(other_secret, code) is False
+
+
+check("MFA/TOTP (QR-kod, to'liq login oqimi, real vaqt algoritmi)", _test_mfa)
+
+# ---------------------------------------------------------------------------
+print("\n=== 20) LDAP LOGIN (real OpenLDAP server bilan) ===")
+
+
+def _test_ldap_login():
+    import subprocess
+    import shutil
+
+    if subprocess.run(["which", "slapd"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - slapd o'rnatilmagan bu muhitda)")
+        return
+
+    work_dir = "/tmp/_test_ldap_e2e"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(os.path.join(work_dir, "data"))
+
+    slapd_conf = f"""include /etc/ldap/schema/core.schema
+include /etc/ldap/schema/cosine.schema
+include /etc/ldap/schema/inetorgperson.schema
+modulepath /usr/lib/ldap
+moduleload back_mdb.la
+pidfile {work_dir}/slapd.pid
+argsfile {work_dir}/slapd.args
+database mdb
+maxsize 1048576000
+suffix "dc=test,dc=local"
+rootdn "cn=admin,dc=test,dc=local"
+rootpw testpass456
+directory {work_dir}/data
+"""
+    with open(os.path.join(work_dir, "slapd.conf"), "w") as f:
+        f.write(slapd_conf)
+
+    base_ldif = """dn: dc=test,dc=local
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Test
+dc: test
+
+dn: ou=people,dc=test,dc=local
+objectClass: organizationalUnit
+ou: people
+
+dn: cn=ciuser,ou=people,dc=test,dc=local
+objectClass: inetOrgPerson
+cn: ciuser
+sn: User
+givenName: CI
+mail: ciuser@test.local
+userPassword: CIPass456
+"""
+    ldif_path = os.path.join(work_dir, "base.ldif")
+    with open(ldif_path, "w") as f:
+        f.write(base_ldif)
+
+    slapd_proc = subprocess.Popen(
+        ["slapd", "-f", os.path.join(work_dir, "slapd.conf"), "-h", "ldap://127.0.0.1:3390/", "-d", "0"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    import time as _time
+    _time.sleep(2)
+
+    try:
+        subprocess.run(
+            ["ldapadd", "-x", "-D", "cn=admin,dc=test,dc=local", "-w", "testpass456",
+             "-H", "ldap://127.0.0.1:3390", "-f", ldif_path],
+            capture_output=True, timeout=10,
+        )
+
+        os.environ["LDAP_SERVER"] = "ldap://127.0.0.1:3390"
+        os.environ["LDAP_BIND_DN_TEMPLATE"] = "cn={username},ou=people,dc=test,dc=local"
+
+        import importlib
+        import dashboard.ldap_auth as ldap_mod
+        importlib.reload(ldap_mod)
+        import dashboard.auth as auth_mod
+        importlib.reload(auth_mod)
+
+        assert ldap_mod.authenticate_ldap("ciuser", "CIPass456") is True, "To'g'ri LDAP parol qabul qilinishi kerak edi"
+        assert ldap_mod.authenticate_ldap("ciuser", "wrong") is False, "Noto'g'ri LDAP parol rad etilishi kerak edi"
+        assert ldap_mod.authenticate_ldap("ciuser", "") is False, "Bo'sh parol (anonim bind) rad etilishi kerak edi"
+        assert ldap_mod.authenticate_ldap("nonexistent", "anything") is False
+
+        # Dashboard login oqimi orqali ham tekshirish
+        from dashboard.create_user import create_user
+        create_user("ciuser", "placeholder", "viewer", "ldap")
+
+        from dashboard import app as dash_app
+        dash_app.app.secret_key = "test-secret-ldap-full"
+        client = dash_app.app.test_client()
+
+        r = client.post("/login", data={"username": "ciuser", "password": "CIPass456"}, follow_redirects=True)
+        r2 = client.get("/")
+        assert r2.status_code == 200, "LDAP orqali dashboard login muvaffaqiyatli bo'lishi kerak edi"
+
+    finally:
+        slapd_proc.terminate()
+        try:
+            slapd_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            slapd_proc.kill()
+        shutil.rmtree(work_dir, ignore_errors=True)
+        for k in ["LDAP_SERVER", "LDAP_BIND_DN_TEMPLATE"]:
+            os.environ.pop(k, None)
+
+
+check("LDAP Login (real OpenLDAP server, to'g'ri/noto'g'ri/bo'sh parol)", _test_ldap_login)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

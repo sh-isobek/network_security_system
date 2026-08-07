@@ -76,8 +76,10 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | PDF/Excel hisobotlar (`reports/report_generator.py`: `export_summary_pdf`, `export_alerts_excel`) | ✅ real fayl + LibreOffice recalc bilan tasdiqlangan |
 | — | Snort integratsiyasi (`collectors/snort_reader.py`) | ✅ HAQIQIY Snort binary bilan (pcap orqali, scapy sintetik paketlar) |
 | — | Zeek integratsiyasi (`collectors/zeek_reader.py`) | ⚠️ kod yozilgan, sxemaga mos sintetik JSON bilan test qilingan, LEKIN haqiqiy Zeek binary bilan SINALMAGAN (OBS/Docker Hub domenlari ruxsat etilmagan) |
+| — | MFA/TOTP (`dashboard/mfa.py`) | ✅ real TOTP algoritmi bilan (QR-kod, to'liq login oqimi) |
+| — | LDAP Login (`dashboard/ldap_auth.py`) | ✅ HAQIQIY OpenLDAP server bilan (o'rnatilgan, sozlangan, real bind orqali) |
 
-**Joriy: 20/20 test o'tadi (`run_full_test.py`).**
+**Joriy: 22/22 test o'tadi (`run_full_test.py`).**
 
 ## GitHub va CI
 
@@ -141,8 +143,6 @@ xatti-harakat qilishi mumkin.
 ## Keyingi navbatdagi (foydalanuvchi so'ragan, hali qurilmagan)
 
 Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
-- **MFA/LDAP** — RBAC'ni kengaytirish (`dashboard/auth.py`), TOTP
-  (`pyotp`) yoki LDAP bind orqali.
 - **Kafka/RabbitMQ** — hozirgi polling-asosli enginelarni queue-asosga
   o'tkazish (katta refaktoring, `docs_DOCKER_DEPLOYMENT.md`da eslatma bor).
 - **Kubernetes** — `docker-compose.yml`dagi 11 xizmatni K8s

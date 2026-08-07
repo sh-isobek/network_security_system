@@ -44,11 +44,11 @@ jobs:
           echo -e '#!/bin/sh\nexit 101' | sudo tee /usr/sbin/policy-rc.d
           sudo chmod +x /usr/sbin/policy-rc.d
 
-      - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort)
+      - name: Tizim darajasidagi bog'liqliklar (ClamAV, SNMP, LibreOffice, Snort, OpenLDAP)
         run: |
           set +e
           sudo apt-get update > /tmp/apt_output.txt 2>&1
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort >> /tmp/apt_output.txt 2>&1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils >> /tmp/apt_output.txt 2>&1
           EXIT_CODE=$?
           echo "=== APT EXIT CODE: $EXIT_CODE ==="
           wc -l /tmp/apt_output.txt
