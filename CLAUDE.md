@@ -86,18 +86,32 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Live Map (`/live-map`, `/api/topology`) | ✅ To'liq ishlaydi, real HTTP orqali test qilingan (vis-network, risk-score rangi, real ma'lumot) |
 | — | Grafana (`grafana/dashboards/security-overview.json`) | ⚠️ Grafana'ning o'zi o'rnatilmagan (dl.grafana.com ruxsat etilmagan), LEKIN barcha 8 panel SQL so'rovi haqiqiy PostgreSQL'ga qarshi test qilingan va to'g'ri natija bergan |
 | — | Rasmiy hujjatlar (`docs/ADMIN_GUIDE.md`, `USER_GUIDE.md`, `API_GUIDE.md`, `INSTALLATION_GUIDE.md`, `DISASTER_RECOVERY_GUIDE.md`) | ✅ Barcha 5 guide, ichki havolalar va CLI buyruqlari kod bilan solishtirib tekshirilgan |
+| — | Encryption at Rest (`crypto/field_encryption.py`) | ✅ MFA maxfiy kaliti endi bazada shifrlangan saqlanadi (Fernet, kalit almashtirish qo'llab-quvvatlanadi). To'liq MFA login oqimi orqali (shifrlash→saqlash→ochish) real test qilingan |
+| — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 
-**Joriy: 30/30 test o'tadi (`run_full_test.py`).**
+**Joriy: 32/32 test o'tadi (`run_full_test.py`).**
 
-## Yakuniy holat - loyiha deyarli to'liq
+## Yakuniy holat - loyiha to'liq
 
-Yangi TZ'dagi 24 bo'limning **barchasi** (Zeek'dan tashqari, u faqat
-kod darajasida) qurilgan va real test qilingan. Rasmiy hujjatlar ham
-qo'shildi. Qolgan ochiq yo'nalishlar endi juda kichik: to'liq
-**API Token boshqaruvi** (hozircha faqat AGENT_API_KEY bor, lekin
-har foydalanuvchi/xizmat uchun alohida scoped token yo'q) va
-**Encryption at rest** (baza darajasida shifrlash, hozircha faqat
-TLS/parol xeshlash bor). Bular so'ralganda alohida qo'shiladi.
+Yangi TZ'dagi 24 bo'limning **deyarli barchasi** (Zeek va Grafana'ning
+faqat binary ijrosidan tashqari - ikkalasi ham tarmoq cheklovi sabab,
+lekin kod/konfiguratsiya darajasida to'liq va test qilingan) qurilgan
+va real test qilingan. Rasmiy hujjatlar, Encryption at Rest, API Token
+boshqaruvi - barchasi qo'shildi.
+
+## Encryption at Rest'da topilgan va tuzatilgan real xato
+
+`db/models.py`da `mfa_secret = Column(String(64))` edi - ochiq Base32
+TOTP kaliti 32 belgi bo'lgani uchun bu yetarli edi. Lekin Fernet bilan
+shifrlangandan keyin qiymat **~140 belgi**ga cho'zilib ketadi. SQLite
+VARCHAR uzunlik cheklovini UMUMAN MAJBURLAMAYDI (shuning uchun lokal
+testlarda bu xato yashiringan edi), lekin **PostgreSQL buni qat'iy
+talab qiladi** va xatoni chiqarib berdi. Tuzatildi: `String(255)`ga
+kengaytirildi. **Xulosa (yana bir marta tasdiqlandi)**: bazaga bog'liq
+xatolarni faqat SQLite'da emas, albatta PostgreSQL'da ham sinash kerak
+- bu loyihada shu sababli hozirgacha kamida 3-4 marta real xato
+topilgan (bu xil "SQLite kechiradi, PostgreSQL kechirmaydi" muammolar
+darajasi).
 
 ## Backup/Restore'da topilgan va tuzatilgan real xato
 

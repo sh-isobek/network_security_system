@@ -50,7 +50,25 @@ docker compose restart <xizmat-nomi>      # qayta ishga tushirish
 
 **Kubernetes**: `docs_KUBERNETES_SETUP.md`ga qarang.
 
-## 3. Foydalanuvchi va rol boshqaruvi (RBAC)
+## 3. Xavfsizlik sozlamalari (birinchi o'rnatishda majburiy)
+
+**Shifrlash kaliti** (MFA maxfiy kalitlari bazada shifrlangan saqlanishi uchun):
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# natijani .env fayliga ENCRYPTION_KEY=... qilib qo'shing
+```
+Agar `ENCRYPTION_KEY` sozlanmasa, tizim ishlashda davom etadi, lekin
+MFA maxfiy kalitlari **ochiq matnda** saqlanadi (log'da ogohlantirish
+chiqadi) - production'da bu albatta sozlanishi SHART.
+
+**API Token'lar** (agentlar uchun, umumiy `AGENT_API_KEY` o'rniga
+tavsiya etiladi):
+```bash
+python -m api.token_manager --create "ACCOUNTING-PC agent" --expires-days 365
+```
+Batafsil: `API_GUIDE.md`.
+
+## 4. Foydalanuvchi va rol boshqaruvi (RBAC)
 
 3 rol: `admin` (to'liq huquq), `analyst` (ko'rish + alert tasdiqlash),
 `viewer` (faqat ko'rish).
@@ -73,7 +91,7 @@ qo'shish/faolsizlantirish mumkin.
 boshqa foydalanuvchi uchun majburiy qilib qo'ya olmaydi (hozircha) -
 bu kelajakdagi kengaytirish sifatida qoldirilgan.
 
-## 4. Monitoring va kundalik nazorat
+## 5. Monitoring va kundalik nazorat
 
 - **Dashboard** (`/`) — umumiy holat: critical/high alertlar soni,
   zararli fayllar, oxirgi 10 alert.
@@ -93,7 +111,7 @@ bu kelajakdagi kengaytirish sifatida qoldirilgan.
    tasdiqlang
 4. `/audit` orqali kutilmagan admin harakatlarini kuzating
 
-## 5. Whitelist/Blacklist boshqaruvi
+## 6. Whitelist/Blacklist boshqaruvi
 
 Muhim serverlar (1C, domen kontroller) whitelist'ga qo'shilishi
 SHART, aks holda tasodifiy bloklanishi mumkin:
@@ -112,7 +130,7 @@ s.add(BlacklistEntry(value="evil-domain.com", source="manual", reason="SOC tomon
 s.commit()
 ```
 
-## 6. Backup
+## 7. Backup
 
 Kundalik avtomatik backup uchun cron (yoki K8s CronJob) sozlang:
 ```bash
@@ -121,7 +139,7 @@ Kundalik avtomatik backup uchun cron (yoki K8s CronJob) sozlang:
 
 To'liq tafsilot: `DISASTER_RECOVERY_GUIDE.md`.
 
-## 7. Nosozliklarni bartaraf etish (Troubleshooting)
+## 8. Nosozliklarni bartaraf etish (Troubleshooting)
 
 | Muammo | Tekshirish | Yechim |
 |---|---|---|

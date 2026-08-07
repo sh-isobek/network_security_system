@@ -19,9 +19,39 @@ Tarmoq Xavfsizligi Monitoring Tizimida ikki xil API mavjud:
 `AGENT_API_KEY` bilan bir xil bo'lishi kerak). Kalit noto'g'ri bo'lsa
 `401 Unauthorized` qaytadi.
 
-**MUHIM**: bu API faqat ichki tarmoq uchun mo'ljallangan, tashqi
-internetga ochiq bo'lmasligi SHART. Production'da HTTPS (ichki CA
-sertifikati) majburiy.
+## Autentifikatsiya usullari (2 xil)
+
+1. **Eski, umumiy kalit** (`AGENT_API_KEY`, `.env`da) — barcha agentlar
+   uchun bitta umumiy kalit. Sodda, lekin bitta agent buzilsa hammasini
+   bekor qilish kerak bo'ladi.
+2. **Yangi, alohida token'lar** (tavsiya etiladi) — har bir
+   agent/integratsiya uchun alohida, kuzatiladigan va bekor qilinadigan
+   token. Quyida batafsil.
+
+### Alohida API Token yaratish
+
+```bash
+python -m api.token_manager --create "ACCOUNTING-PC agent" --expires-days 365
+```
+
+Natija (**faqat bir marta ko'rsatiladi**, saqlab qo'ying):
+```
+Token yaratildi (BU FAQAT BIR MARTA KO'RSATILADI, saqlab qo'ying):
+nssk_k-sgszcDDZJlqhy...
+```
+
+Bazada faqat SHA256 xesh saqlanadi - token'ning o'zini keyinroq qayta
+ko'rsatib bo'lmaydi (parollar kabi).
+
+**Ro'yxat va bekor qilish**:
+```bash
+python -m api.token_manager --list
+python -m api.token_manager --revoke 5
+```
+
+**Dashboard orqali** (`/api-tokens`, faqat admin): token yaratish,
+ko'rish (yaratilgan/oxirgi ishlatilgan vaqt), bekor qilish - barchasi
+Audit Log'ga yoziladi.
 
 ### `GET /api/v1/health`
 

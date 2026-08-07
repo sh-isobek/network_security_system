@@ -170,6 +170,29 @@ class FileEvent(Base):
     )
 
 
+class ApiToken(Base):
+    """
+    API Token boshqaruvi - yangi TZ 15/20-bo'lim (API Token).
+
+    Yagona umumiy AGENT_API_KEY'ga qo'shimcha - har bir agent/integratsiya
+    uchun ALOHIDA, KUZATILADIGAN va BEKOR QILINADIGAN token. Token'ning
+    o'zi hech qachon bazada saqlanmaydi - faqat uning SHA256 xesh'i
+    (parollar kabi) - shuning uchun baza o'g'irlansa ham token'larning
+    o'zini tiklab bo'lmaydi.
+    """
+    __tablename__ = "api_tokens"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)             # masalan "ACCOUNTING-PC agent" yoki "SIEM integratsiyasi"
+    token_hash = Column(String(64), nullable=False, unique=True)  # SHA256 xesh
+    token_prefix = Column(String(12))                        # birinchi 8 belgi (UI'da ko'rsatish uchun, to'liq token emas)
+    created_by = Column(String(100))
+    created_at = Column(DateTime, default=utcnow)
+    last_used_at = Column(DateTime)
+    expires_at = Column(DateTime)                              # null = muddatsiz
+    revoked = Column(Boolean, default=False)
+
+
 class HashBlacklist(Base):
     """Ma'lum zararli fayl hash'lari (mahalliy yoki MalwareBazaar/VT'dan tasdiqlangan)."""
     __tablename__ = "hash_blacklist"
@@ -264,7 +287,10 @@ class User(Base):
     auth_source = Column(String(20), nullable=False, default="local")
 
     # --- MFA / TOTP (yangi TZ 20-bo'lim: MFA) ---
-    mfa_secret = Column(String(64))          # Base32 TOTP maxfiy kaliti (null = MFA sozlanmagan)
+    mfa_secret = Column(String(255))          # Base32 TOTP maxfiy kaliti (shifrlangan holda ~140 belgi,
+                                                 # shuning uchun String(64) YETARLI EMAS EDI - PostgreSQL'da
+                                                 # bu chegara qat'iy talab qilinadi, SQLite'da esa e'tiborsiz
+                                                 # qoldirilgani uchun bu xato faqat PostgreSQL testida chiqdi)
     mfa_enabled = Column(Boolean, default=False)
 
 

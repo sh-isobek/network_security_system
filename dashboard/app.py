@@ -29,6 +29,7 @@ from db.models import Device, Alert, Event, FileEvent, User, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
 from dashboard.audit import log_action
+from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
@@ -82,7 +83,8 @@ def mfa_verify():
         session = get_session()
         try:
             user = session.query(User).filter(User.id == pending_user_id).first()
-            if user and mfa_module.verify_code(user.mfa_secret, code):
+            decrypted_secret = decrypt_if_needed(user.mfa_secret) if user else None
+            if user and mfa_module.verify_code(decrypted_secret, code):
                 user.last_login = utcnow()
                 session.commit()
                 flask_session.pop("pending_mfa_user_id", None)
@@ -113,7 +115,7 @@ def mfa_setup():
             code = request.form.get("code", "").strip()
             secret = flask_session.get("pending_mfa_secret")
             if secret and mfa_module.verify_code(secret, code):
-                user.mfa_secret = secret
+                user.mfa_secret = encrypt_if_configured(secret)
                 user.mfa_enabled = True
                 session.commit()
                 flask_session.pop("pending_mfa_secret", None)
@@ -354,6 +356,48 @@ def severity_color(severity):
     return {
         "critical": "#c0392b", "high": "#e67e22", "medium": "#f1c40f", "low": "#95a5a6",
     }.get(severity, "#7f8c8d")
+
+
+@app.route("/api-tokens")
+@role_required("admin")
+def api_tokens():
+    from api import token_manager
+    tokens = token_manager.list_tokens()
+    new_token = flask_session.pop("new_token_plaintext", None)
+    flask_session.modified = True
+    return render_template("api_tokens.html", tokens=tokens, new_token=new_token)
+
+
+@app.route("/api-tokens/create", methods=["POST"])
+@role_required("admin")
+def api_tokens_create():
+    from api import token_manager
+    name = request.form.get("name", "").strip()
+    expires_days = request.form.get("expires_days", "").strip()
+    if not name:
+        flash("Token nomi majburiy", "error")
+        return redirect(url_for("api_tokens"))
+
+    token = token_manager.create_token(
+        name, created_by=current_user.username,
+        expires_days=int(expires_days) if expires_days else None,
+    )
+    flask_session["new_token_plaintext"] = token
+    log_action(current_user.username, "create_api_token", target_type="ApiToken", target_id=name,
+               ip_address=request.remote_addr)
+    return redirect(url_for("api_tokens"))
+
+
+@app.route("/api-tokens/<int:token_id>/revoke", methods=["POST"])
+@role_required("admin")
+def api_tokens_revoke(token_id):
+    from api import token_manager
+    ok = token_manager.revoke_token(token_id)
+    if ok:
+        flash("Token bekor qilindi", "success")
+        log_action(current_user.username, "revoke_api_token", target_type="ApiToken", target_id=token_id,
+                   ip_address=request.remote_addr)
+    return redirect(url_for("api_tokens"))
 
 
 @app.route("/audit")

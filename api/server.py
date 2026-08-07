@@ -37,6 +37,7 @@ from db.models import HashBlacklist, Alert, Device, FileEvent
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
+from api import token_manager
 
 import logging
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -52,9 +53,17 @@ def require_api_key(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         provided = request.headers.get("X-API-Key", "")
-        if provided != AGENT_API_KEY:
-            return jsonify({"error": "Ruxsat berilmagan - noto'g'ri API kalit"}), 401
-        return fn(*args, **kwargs)
+
+        # 1) Eski, umumiy AGENT_API_KEY (orqaga moslik uchun saqlanadi)
+        if provided == AGENT_API_KEY:
+            return fn(*args, **kwargs)
+
+        # 2) Yangi, alohida kuzatiladigan/bekor qilinadigan API token'lar
+        token_info = token_manager.verify_token(provided)
+        if token_info is not None:
+            return fn(*args, **kwargs)
+
+        return jsonify({"error": "Ruxsat berilmagan - noto'g'ri API kalit"}), 401
     return wrapper
 
 

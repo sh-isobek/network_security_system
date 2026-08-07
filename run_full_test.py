@@ -1713,6 +1713,133 @@ def _test_formal_docs():
 check("Rasmiy hujjatlar (5 guide, ichki havolalar, CLI mosligi)", _test_formal_docs)
 
 # ---------------------------------------------------------------------------
+print("\n=== 29) ENCRYPTION AT REST (MFA secret, real shifrlash/ochish) ===")
+
+
+def _test_encryption_at_rest():
+    from crypto.field_encryption import generate_key, encrypt_value, decrypt_value, is_encrypted, is_configured
+
+    # Birlik testlar (baza kerak emas)
+    os.environ["ENCRYPTION_KEY"] = generate_key()
+    secret = "ZTYJVNNE6UI3LIQAQNCOVTXNCDWFBUR3"
+    encrypted = encrypt_value(secret)
+    assert encrypted != secret
+    assert decrypt_value(encrypted) == secret
+    assert is_encrypted(encrypted) is True
+    assert is_encrypted(secret) is False
+
+    # Kalit almashtirish (rotation)
+    old_key = os.environ["ENCRYPTION_KEY"]
+    enc_with_old = encrypt_value("rotation-test")
+    os.environ["ENCRYPTION_KEY"] = generate_key()
+    os.environ["ENCRYPTION_KEY_OLD"] = old_key
+    assert decrypt_value(enc_with_old) == "rotation-test"
+    os.environ.pop("ENCRYPTION_KEY_OLD", None)
+
+    # To'liq MFA oqimi orqali - bazada HAQIQATAN shifrlangan saqlanishini tekshirish
+    os.environ["ENCRYPTION_KEY"] = generate_key()
+    from dashboard import app as dash_app
+    from dashboard import mfa as mfa_module
+    from dashboard.create_user import create_user
+
+    create_user("enc_ci_test", "enccitest123", "admin")
+    dash_app.app.secret_key = "test-secret-encryption"
+    client = dash_app.app.test_client()
+    client.post("/login", data={"username": "enc_ci_test", "password": "enccitest123"})
+    client.get("/mfa/setup")
+    with client.session_transaction() as sess:
+        plaintext_secret = sess.get("pending_mfa_secret")
+    code = mfa_module.get_current_code(plaintext_secret)
+    client.post("/mfa/setup", data={"code": code})
+
+    s = get_session()
+    u = s.query(User).filter(User.username == "enc_ci_test").first()
+    db_value = u.mfa_secret
+    s.close()
+
+    assert db_value != plaintext_secret, "Baza ochiq matnda saqladi - ENCRYPTION AT REST ISHLAMAYAPTI"
+    assert is_encrypted(db_value), "DB qiymati shifrlangan formatda emas"
+
+    # To'liq login MFA orqali (decrypt qilib) hali ishlashini tasdiqlash
+    client.get("/logout")
+    client.post("/login", data={"username": "enc_ci_test", "password": "enccitest123"})
+    new_code = mfa_module.get_current_code(plaintext_secret)
+    client.post("/mfa/verify", data={"code": new_code})
+    r = client.get("/")
+    assert r.status_code == 200, "Shifrlangan MFA secret orqali login ishlamadi"
+
+
+check("Encryption at Rest (MFA secret shifrlash, kalit almashtirish, to'liq oqim)", _test_encryption_at_rest)
+
+# ---------------------------------------------------------------------------
+print("\n=== 30) API TOKEN BOSHQARUVI (real Flask, revoke, muddat, RBAC) ===")
+
+
+def _test_api_token_management():
+    from api import server as api_server
+    from api import token_manager
+
+    os.environ["AGENT_API_KEY"] = "legacy-shared-key-ci"
+    import importlib
+    importlib.reload(api_server)
+
+    client = api_server.app.test_client()
+
+    # Eski AGENT_API_KEY orqaga moslik
+    r = client.post("/api/v1/check_hash", json={"sha256": "a" * 64}, headers={"X-API-Key": "legacy-shared-key-ci"})
+    assert r.status_code == 200
+
+    # Yangi token yaratish va ishlatish
+    token = token_manager.create_token("ci-test-agent", created_by="ci")
+    r = client.post("/api/v1/check_hash", json={"sha256": "b" * 64}, headers={"X-API-Key": token})
+    assert r.status_code == 200, f"Yangi token bilan 200 kutilgan edi, {r.status_code} keldi"
+
+    tokens = token_manager.list_tokens()
+    t = next(t for t in tokens if t.name == "ci-test-agent")
+    assert t.last_used_at is not None, "last_used_at yangilanmadi"
+
+    # Bekor qilish
+    assert token_manager.revoke_token(t.id) is True
+    r = client.post("/api/v1/check_hash", json={"sha256": "c" * 64}, headers={"X-API-Key": token})
+    assert r.status_code == 401, "Bekor qilingan token rad etilishi kerak edi"
+
+    # Muddati o'tgan token
+    expired = token_manager.create_token("ci-expired", expires_days=-1)
+    r = client.post("/api/v1/check_hash", json={"sha256": "d" * 64}, headers={"X-API-Key": expired})
+    assert r.status_code == 401, "Muddati o'tgan token rad etilishi kerak edi"
+
+    # Soxta token
+    r = client.post("/api/v1/check_hash", json={"sha256": "e" * 64}, headers={"X-API-Key": "nssk_fake123"})
+    assert r.status_code == 401
+
+    # Dashboard UI: token yaratish, bir marta ko'rsatilishi, RBAC
+    import re
+    from dashboard import app as dash_app
+    from dashboard.create_user import create_user
+
+    create_user("token_admin_ci", "tokenadminci123", "admin")
+    dash_app.app.secret_key = "test-secret-tokens"
+    ui_client = dash_app.app.test_client()
+    ui_client.post("/login", data={"username": "token_admin_ci", "password": "tokenadminci123"})
+
+    r1 = ui_client.post("/api-tokens/create", data={"name": "UI-CI-Token", "expires_days": ""}, follow_redirects=True)
+    match = re.search(rb"nssk_[A-Za-z0-9_-]{20,}", r1.data)
+    assert match, "Dashboard UI orqali yaratilgan token ko'rsatilmadi"
+    full_token = match.group(0)
+
+    r2 = ui_client.get("/api-tokens")
+    assert full_token not in r2.data, "To'liq token ikkinchi marta ko'rsatilmasligi kerak"
+
+    create_user("token_viewer_ci", "viewerci123", "viewer")
+    ui_client.get("/logout")
+    ui_client.post("/login", data={"username": "token_viewer_ci", "password": "viewerci123"})
+    r3 = ui_client.get("/api-tokens")
+    assert r3.status_code == 403, "Viewer /api-tokens'ga kira olmasligi kerak edi"
+
+
+check("API Token boshqaruvi (yaratish/ishlatish/revoke/muddat/RBAC)", _test_api_token_management)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
