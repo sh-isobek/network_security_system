@@ -48,7 +48,7 @@ jobs:
         run: |
           set +e
           sudo apt-get update > /tmp/apt_output.txt 2>&1
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils apparmor-utils >> /tmp/apt_output.txt 2>&1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam snmp libreoffice snort slapd ldap-utils apparmor-utils rabbitmq-server >> /tmp/apt_output.txt 2>&1
           EXIT_CODE=$?
           echo "=== APT EXIT CODE: $EXIT_CODE ==="
           wc -l /tmp/apt_output.txt
@@ -88,6 +88,15 @@ jobs:
         run: |
           mkdir -p /tmp/clamav_ci_db
           echo "0000000000000000000000000000000000000000000000000000000000000000:10:CI.Test.Signature" > /tmp/clamav_ci_db/ci.hdb
+
+      - name: RabbitMQ serverni ishga tushirish
+        run: |
+          # Paket o'rnatilishi xizmatni avtomatik ishga tushirmaydi
+          # (policy-rc.d bloklaydi - yuqoriga qarang). Testlar uchun
+          # to'g'ridan-to'g'ri fon jarayoni sifatida ishga tushiramiz.
+          sudo -u rabbitmq rabbitmq-server > /tmp/rabbitmq_ci.log 2>&1 &
+          sleep 8
+          sudo rabbitmqctl status || cat /tmp/rabbitmq_ci.log
 
       - name: To'liq test suite (SQLite)
         run: |

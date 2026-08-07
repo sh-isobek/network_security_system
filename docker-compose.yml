@@ -29,6 +29,53 @@ services:
   # ---------------------------------------------------------------------
   # 0-bosqich: Syslog qabul qiluvchi (Kerio/switch/DNS forwarder shu yerga yuboradi)
   # ---------------------------------------------------------------------
+  # ---------------------------------------------------------------------
+  # Queue (yangi TZ 17-bo'lim) - yuqori yuklama uchun ixtiyoriy
+  # ---------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    restart: unless-stopped
+    ports:
+      - "5672:5672"    # AMQP protokoli
+      - "15672:15672"  # Web boshqaruv paneli (http://localhost:15672)
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Standart syslog_collector (yuqorida) o'rniga ishlatiladigan
+  # navbat-asosli variant - juda yuqori UDP trafik kutilganda tavsiya
+  # etiladi (docs_DOCKER_DEPLOYMENT.md'dagi "Kengaytirish" bo'limiga qarang)
+  syslog_collector_queued:
+    build: .
+    restart: unless-stopped
+    command: python -m collectors.syslog_server_queued
+    env_file: .env
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    ports:
+      - "515:5140/udp"  # standart syslog_collector bilan bir vaqtda sinash uchun boshqa port
+    profiles: ["queue"]  # standart holatda ishga tushmaydi: docker compose --profile queue up
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  queue_ingest_worker:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.queue_ingest_worker --loop
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    profiles: ["queue"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   syslog_collector:
     build: .
     restart: unless-stopped

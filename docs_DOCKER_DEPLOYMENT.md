@@ -97,3 +97,25 @@ ulashingiz yoki `rsync` bilan davriy nusxalashingiz kerak bo'ladi.
   compose up -d --scale file_analysis_engine=3`) - chunki ular
   navbat-asosida (`checked=False`) ishlaydi va bir-birining ustidan
   yozmaydi (SQL `LIMIT` + tranzaksiya orqali).
+
+## RabbitMQ Queue rejimi (yuqori yuklama uchun, ixtiyoriy)
+
+Standart holatda `syslog_collector` UDP paketni bevosita bazaga yozadi.
+Juda yuqori trafik (masalan 10 000+ qurilma, minglab hodisa/soniya)
+kutilganda, navbat-asosli rejimga o'ting:
+
+```bash
+docker compose --profile queue up -d rabbitmq syslog_collector_queued queue_ingest_worker
+```
+
+Bu holda:
+- `syslog_collector_queued` UDP paketni bazaga yozmasdan RabbitMQ
+  navbatiga joylaydi (millisekundlar ichida, hech qachon bloklanmaydi)
+- `queue_ingest_worker` navbatdan o'qib bazaga yozadi - **gorizontal
+  miqyoslanadi**: `docker compose --profile queue up -d --scale
+  queue_ingest_worker=5`
+
+RabbitMQ boshqaruv paneli: http://localhost:15672 (standart login:
+guest/guest - **production'da albatta o'zgartiring**, `.env`ga
+`RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` qo'shib
+`docker-compose.yml`da mos environment o'zgaruvchilarini bering).

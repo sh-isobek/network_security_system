@@ -1263,6 +1263,102 @@ userPassword: CIPass456
 check("LDAP Login (real OpenLDAP server, to'g'ri/noto'g'ri/bo'sh parol)", _test_ldap_login)
 
 # ---------------------------------------------------------------------------
+print("\n=== 21) RABBITMQ QUEUE (real broker, to'liq UDP->Queue->Worker->DB zanjiri) ===")
+
+
+def _test_rabbitmq_queue():
+    import subprocess
+    if subprocess.run(["which", "rabbitmqctl"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - rabbitmq-server o'rnatilmagan bu muhitda)")
+        return
+
+    from messaging.rabbitmq_client import health_check, publish_json, consume_batch, queue_depth, get_connection
+
+    if not health_check():
+        print("   (o'tkazib yuborildi - RabbitMQ server ishlamayapti)")
+        return
+
+    test_queue = "_ci_test_queue"
+    e2e_queue = "_ci_e2e_syslog_queue"
+
+    # MUHIM: avvalgi (masalan muvaffaqiyatsiz tugagan) test urinishlaridan
+    # qolgan xabarlar bo'lishi mumkin - RabbitMQ navbatlari persistent
+    # (durable) bo'lgani uchun. Test har doim BO'SH navbatdan boshlashi
+    # kerak - shuning uchun avval tozalaymiz.
+    for qname in (test_queue, e2e_queue):
+        try:
+            conn = get_connection()
+            ch = conn.channel()
+            ch.queue_declare(queue=qname, durable=True)
+            ch.queue_purge(queue=qname)
+            conn.close()
+        except Exception:
+            pass
+
+    # 1) Asosiy publish/consume birlik testi
+    for i in range(5):
+        assert publish_json(test_queue, {"id": i, "text": f"test {i}"}) is True
+
+    depth = queue_depth(test_queue)
+    assert depth == 5, f"Navbat chuqurligi 5 bo'lishi kerak edi, {depth} keldi"
+
+    received = []
+    count = consume_batch(test_queue, lambda d: received.append(d), max_messages=5, timeout_seconds=10)
+    assert count == 5
+    assert sorted(r["id"] for r in received) == [0, 1, 2, 3, 4]
+    assert queue_depth(test_queue) == 0
+
+    # 2) To'liq E2E: real UDP paket -> navbat-asosli syslog server -> RabbitMQ -> worker -> DB
+    import socket
+    import time as _time
+
+    server_proc = subprocess.Popen(
+        ["python3", "-m", "collectors.syslog_server_queued"],
+        env={**os.environ, "RAW_SYSLOG_QUEUE": "_ci_e2e_syslog_queue"},
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    _time.sleep(2)
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        test_mac = "AA:BB:CC:DD:EE:99"
+        msg = f"DHCP: Lease granted to 172.16.9.199 MAC={test_mac} HOST=RABBITMQ-E2E-TEST"
+        sock.sendto(msg.encode(), ("127.0.0.1", 5140))
+        _time.sleep(1)
+
+        depth_after_send = queue_depth("_ci_e2e_syslog_queue")
+        assert depth_after_send == 1, f"UDP paket navbatga tushmadi (chuqurlik={depth_after_send})"
+
+        # MUHIM: muhit o'zgaruvchisi modul import qilinishidan OLDIN
+        # o'rnatilishi kerak (modul darajasidagi konstanta faqat bir
+        # marta, import paytida hisoblanadi) - shuning uchun importlib.reload
+        # bilan majburan qayta yuklaymiz.
+        os.environ["RAW_SYSLOG_QUEUE"] = "_ci_e2e_syslog_queue"
+        import importlib
+        import engine.queue_ingest_worker as worker_mod
+        importlib.reload(worker_mod)
+
+        n = worker_mod.run_once(timeout_seconds=5)
+        assert n == 1, f"Worker 1 ta xabarni qayta ishlashi kerak edi, {n} ta ishladi"
+
+        s = get_session()
+        raw = s.query(RawLog).filter(RawLog.raw_message.like("%RABBITMQ-E2E-TEST%")).first()
+        assert raw is not None, "UDP->Queue->Worker->DB zanjiri orqali yozuv topilmadi"
+        assert raw.source_ip == "127.0.0.1"
+        s.close()
+
+    finally:
+        server_proc.terminate()
+        try:
+            server_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server_proc.kill()
+        os.environ.pop("RAW_SYSLOG_QUEUE", None)
+
+
+check("RabbitMQ Queue (real broker, to'liq UDP->Queue->Worker->DB)", _test_rabbitmq_queue)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

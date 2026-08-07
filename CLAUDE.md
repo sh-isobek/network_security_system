@@ -78,8 +78,9 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Zeek integratsiyasi (`collectors/zeek_reader.py`) | ⚠️ kod yozilgan, sxemaga mos sintetik JSON bilan test qilingan, LEKIN haqiqiy Zeek binary bilan SINALMAGAN (OBS/Docker Hub domenlari ruxsat etilmagan) |
 | — | MFA/TOTP (`dashboard/mfa.py`) | ✅ real TOTP algoritmi bilan (QR-kod, to'liq login oqimi) |
 | — | LDAP Login (`dashboard/ldap_auth.py`) | ✅ HAQIQIY OpenLDAP server bilan (o'rnatilgan, sozlangan, real bind orqali) |
+| — | RabbitMQ Queue (`messaging/`, `collectors/syslog_server_queued.py`, `engine/queue_ingest_worker.py`) | ✅ HAQIQIY RabbitMQ broker bilan, to'liq UDP->Queue->Worker->DB zanjiri test qilingan |
 
-**Joriy: 22/22 test o'tadi (`run_full_test.py`).**
+**Joriy: 23/23 test o'tadi (`run_full_test.py`).**
 
 ## GitHub va CI
 
@@ -110,12 +111,40 @@ xizmatlarni avtomatik ishga tushirishni allaqachon bloklagani uchun
 paket o'rnatishdan OLDIN `policy-rc.d` skripti qo'shildi (xizmatlar
 avtomatik ishga tushishini rad etadi - Docker konteynerlaridagi kabi).
 
-**Xulosa (ikkinchi marta tasdiqlandi)**: yangi katta o'zgarish
+**MUHIM (uchinchi topilgan va tuzatilgan xato, MFA/LDAP bosqichida):**
+Real OpenLDAP (`slapd`) bilan test qilishda CI'da `Permission denied
+(13)` xatoligi - sabab: Ubuntu'ning **AppArmor** profili `slapd`ni
+faqat ma'lum papkalardan (odatda `/etc/ldap/**`, `/var/lib/ldap/**`)
+konfiguratsiya o'qishga cheklaydi, bizning test esa `/tmp/` ostida
+maxsus config ishlatgan. Bu ham lokal sandbox'da (AppArmor bu yerda
+faol emas) yashiringan edi. Muhim diagnostika usuli: `slapd -Tt -f
+<conf>` orqali sinxron xato xabarini olish - bu darhol aniq sababni
+ko'rsatdi ("Permission denied"), taxmin qilishga hojat qolmadi.
+Birinchi urinish (`aa-complain` faqat slapd uchun) yetarli bo'lmadi,
+ikkinchi urinishda butun AppArmor subsystemini CI runner'ida o'chirish
+(`systemctl stop apparmor` + `aa-teardown`) muammoni hal qildi.
+
+**Umumiy xulosa (3 marta tasdiqlandi)**: yangi katta o'zgarish
 qilinganda, `git clone` qilib, toza muhitda test qilish kerak - lokal
 ishlagan narsa har doim ham CI/production'da ishlayvermaydi. Ayniqsa
-"konteyner ichida systemd/service-management cheklangan" kabi
+"konteyner ichida systemd/AppArmor/service-management cheklangan" kabi
 sandbox-specific xususiyatlar tashqi (haqiqiy VM) muhitda boshqacha
-xatti-harakat qilishi mumkin.
+xatti-harakat qilishi mumkin. Muvaffaqiyatsiz CI'ni tuzatishda TAXMIN
+QILMASLIK kerak - avval aniq diagnostika (xato xabarini to'liq
+chiqarish, kerak bo'lsa vositaning o'z "test/dry-run" rejimidan
+foydalanish) qo'shib, keyin tuzatish kerak.
+
+## GitHub holati (joriy)
+
+Repo: https://github.com/sh-isobek/network_security_system (`main` branch)
+GitHub Actions CI: ✅ yashil (`.github/workflows/full-test.yml`),
+har push'da SQLite va PostgreSQL'da 22 bosqichli to'liq testni
+haqiqiy GitHub runner'ida ishga tushiradi.
+
+Push qilish uchun avval foydalanuvchidan yangi Personal Access Token
+so'rash kerak (fine-grained, "Contents: Read and write" + "Workflows:
+Read and write" ruxsatlari bilan, aniq shu repo uchun) - oldingi
+token'lar sessiyada saqlanmaydi.
 
 ## Bilib turish kerak bo'lgan cheklovlar (halol)
 
@@ -143,9 +172,7 @@ xatti-harakat qilishi mumkin.
 ## Keyingi navbatdagi (foydalanuvchi so'ragan, hali qurilmagan)
 
 Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
-- **Kafka/RabbitMQ** — hozirgi polling-asosli enginelarni queue-asosga
-  o'tkazish (katta refaktoring, `docs_DOCKER_DEPLOYMENT.md`da eslatma bor).
-- **Kubernetes** — `docker-compose.yml`dagi 11 xizmatni K8s
+- **Kubernetes** — `docker-compose.yml`dagi 14 xizmatni K8s
   Deployment/Service manifestlariga aylantirish.
 - **AI/UEBA** — eng noaniq bo'lim; "AI" deb signature-based/threshold
   qoidalarni sotmaslik kerak - agar qurilsa, aniq statistik/ML yondashuv
