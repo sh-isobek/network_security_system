@@ -1166,13 +1166,33 @@ userPassword: CIPass456
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     import time as _time
-    _time.sleep(2)
+
+    # MUHIM: sobit sleep() o'rniga slapd haqiqatan tayyor bo'lguncha
+    # polling orqali kutamiz - sekinroq muhitlarda (masalan GitHub
+    # Actions runner) 2 soniya yetarli bo'lmasligi mumkin (bu CI'da
+    # aynan shu sabab bilan aniqlangan xato edi).
+    slapd_ready = False
+    for _ in range(20):  # maksimal ~10 soniya
+        probe = subprocess.run(
+            ["ldapsearch", "-x", "-H", "ldap://127.0.0.1:3390", "-b", "", "-s", "base"],
+            capture_output=True, timeout=3,
+        )
+        if probe.returncode == 0:
+            slapd_ready = True
+            break
+        _time.sleep(0.5)
+
+    assert slapd_ready, "slapd 10 soniyada tayyor bo'lmadi (server ishga tushmadi)"
 
     try:
-        subprocess.run(
+        ldapadd_result = subprocess.run(
             ["ldapadd", "-x", "-D", "cn=admin,dc=test,dc=local", "-w", "testpass456",
              "-H", "ldap://127.0.0.1:3390", "-f", ldif_path],
-            capture_output=True, timeout=10,
+            capture_output=True, timeout=10, text=True,
+        )
+        assert ldapadd_result.returncode == 0, (
+            f"ldapadd muvaffaqiyatsiz (kod={ldapadd_result.returncode}): "
+            f"stdout={ldapadd_result.stdout!r} stderr={ldapadd_result.stderr!r}"
         )
 
         os.environ["LDAP_SERVER"] = "ldap://127.0.0.1:3390"
