@@ -138,6 +138,16 @@ python -m engine.notification_engine --loop
 | Mac Agent | `mac_agent/` | Xuddi shu yadro, launchd konfiguratsiyasi - `docs_MAC_AGENT_SETUP.md`ga qarang (kod yozilgan, lekin haqiqiy macOS'da sinalmagan) |
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 
+## Rasmiy hujjatlar
+
+| Hujjat | Kim uchun |
+|---|---|
+| [`docs/INSTALLATION_GUIDE.md`](docs/INSTALLATION_GUIDE.md) | O'rnatuvchi muhandis - noldan to'liq o'rnatish yo'l xaritasi |
+| [`docs/ADMIN_GUIDE.md`](docs/ADMIN_GUIDE.md) | Tizim administratori - kundalik boshqaruv, RBAC, nosozliklarni bartaraf etish |
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Xavfsizlik analitiklari - Dashboard'dan foydalanish |
+| [`docs/API_GUIDE.md`](docs/API_GUIDE.md) | Integratsiya muhandislari - Agent API va Dashboard API |
+| [`docs/DISASTER_RECOVERY_GUIDE.md`](docs/DISASTER_RECOVERY_GUIDE.md) | Tizim administratori - backup, halokatdan tiklash rejasi |
+
 ## Ma'lumotlar bazasi jadvallari (qisqacha)
 
 | Jadval | Vazifasi |

@@ -85,8 +85,19 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Backup/Restore (`backup/backup_manager.py`) | ✅ SQLite (sqlite3 backup API) va PostgreSQL (pg_dump/psql) - ikkalasi ham real "halokat→backup→tiklash" stsenariysi bilan test qilingan |
 | — | Live Map (`/live-map`, `/api/topology`) | ✅ To'liq ishlaydi, real HTTP orqali test qilingan (vis-network, risk-score rangi, real ma'lumot) |
 | — | Grafana (`grafana/dashboards/security-overview.json`) | ⚠️ Grafana'ning o'zi o'rnatilmagan (dl.grafana.com ruxsat etilmagan), LEKIN barcha 8 panel SQL so'rovi haqiqiy PostgreSQL'ga qarshi test qilingan va to'g'ri natija bergan |
+| — | Rasmiy hujjatlar (`docs/ADMIN_GUIDE.md`, `USER_GUIDE.md`, `API_GUIDE.md`, `INSTALLATION_GUIDE.md`, `DISASTER_RECOVERY_GUIDE.md`) | ✅ Barcha 5 guide, ichki havolalar va CLI buyruqlari kod bilan solishtirib tekshirilgan |
 
-**Joriy: 29/29 test o'tadi (`run_full_test.py`).**
+**Joriy: 30/30 test o'tadi (`run_full_test.py`).**
+
+## Yakuniy holat - loyiha deyarli to'liq
+
+Yangi TZ'dagi 24 bo'limning **barchasi** (Zeek'dan tashqari, u faqat
+kod darajasida) qurilgan va real test qilingan. Rasmiy hujjatlar ham
+qo'shildi. Qolgan ochiq yo'nalishlar endi juda kichik: to'liq
+**API Token boshqaruvi** (hozircha faqat AGENT_API_KEY bor, lekin
+har foydalanuvchi/xizmat uchun alohida scoped token yo'q) va
+**Encryption at rest** (baza darajasida shifrlash, hozircha faqat
+TLS/parol xeshlash bor). Bular so'ralganda alohida qo'shiladi.
 
 ## Backup/Restore'da topilgan va tuzatilgan real xato
 

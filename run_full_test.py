@@ -1676,6 +1676,43 @@ def _test_grafana_dashboard():
 check("Grafana Dashboard (8 panel SQL so'rovi real bazaga qarshi)", _test_grafana_dashboard)
 
 # ---------------------------------------------------------------------------
+print("\n=== 28) RASMIY HUJJATLAR (mavjudligi + ichki havolalar to'g'riligi) ===")
+
+
+def _test_formal_docs():
+    import re
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    required_docs = [
+        "docs/ADMIN_GUIDE.md", "docs/USER_GUIDE.md", "docs/API_GUIDE.md",
+        "docs/INSTALLATION_GUIDE.md", "docs/DISASTER_RECOVERY_GUIDE.md",
+    ]
+    for doc in required_docs:
+        path = os.path.join(base_dir, doc)
+        assert os.path.isfile(path), f"{doc} topilmadi"
+        assert os.path.getsize(path) > 500, f"{doc} juda qisqa (bo'sh/to'liqsiz bo'lishi mumkin)"
+
+    # Barcha docs_*.md havolalarining haqiqatan mavjudligini tekshirish
+    referenced = set()
+    for doc in required_docs + ["README.md"]:
+        path = os.path.join(base_dir, doc)
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        referenced.update(re.findall(r"docs_[A-Z_]+\.md", content))
+
+    assert len(referenced) >= 5, f"Kamida 5 ta docs_*.md havolasi kutilgan edi, {len(referenced)} ta topildi"
+    for ref in referenced:
+        assert os.path.isfile(os.path.join(base_dir, ref)), f"Havola qilingan fayl topilmadi: {ref}"
+
+    # DR guide'dagi buyruqlar backup_manager.py'ning haqiqiy CLI flaglariga mos kelishini tekshirish
+    with open(os.path.join(base_dir, "docs/DISASTER_RECOVERY_GUIDE.md"), encoding="utf-8") as f:
+        dr_content = f.read()
+    assert "--backup" in dr_content and "--restore" in dr_content and "--list" in dr_content
+
+
+check("Rasmiy hujjatlar (5 guide, ichki havolalar, CLI mosligi)", _test_formal_docs)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
