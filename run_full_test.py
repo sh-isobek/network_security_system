@@ -1359,6 +1359,94 @@ def _test_rabbitmq_queue():
 check("RabbitMQ Queue (real broker, to'liq UDP->Queue->Worker->DB)", _test_rabbitmq_queue)
 
 # ---------------------------------------------------------------------------
+print("\n=== 22) UEBA / AI - anomaliya aniqlash va Risk Score (real statistik ma'lumot) ===")
+
+
+def _test_ueba():
+    import random
+    from datetime import timedelta
+    from db.models import DeviceBaseline, utcnow
+    from engine.ueba_engine import compute_baselines_for_all_devices, detect_anomalies, compute_risk_scores
+
+    random.seed(123)
+    s = get_session()
+    now = utcnow()
+
+    d_normal = Device(ip_address="172.16.11.1", hostname="UEBA-NORMAL", connection_type="wifi", source="test")
+    d_anomaly = Device(ip_address="172.16.11.2", hostname="UEBA-ANOMALY", connection_type="wifi", source="test")
+    s.add_all([d_normal, d_anomaly])
+    s.flush()
+    normal_id, anomaly_id = d_normal.id, d_anomaly.id
+
+    # Ikkala qurilma uchun bir xil "normal" baseline: 25 kun, soat 9-18, 4-8 hodisa/soat
+    for dev_id in (normal_id, anomaly_id):
+        for day in range(1, 26):  # bugungi kunni band qilmaslik uchun 1-dan boshlaymiz
+            for hour in range(9, 19):
+                for _ in range(random.randint(4, 8)):
+                    ts = now.replace(hour=hour, minute=random.randint(0, 59), second=0, microsecond=0) - timedelta(days=day)
+                    s.add(Event(device_id=dev_id, source_ip="172.16.11.0", dest_ip="8.8.8.8", dest_port=443, protocol="TCP", timestamp=ts))
+
+    # Faqat anomaly qurilmasida - joriy soatda katta portlash
+    for _ in range(150):
+        s.add(Event(device_id=anomaly_id, source_ip="172.16.11.0", dest_ip="185.20.10.99", dest_port=8080, protocol="TCP", timestamp=now))
+
+    s.commit()
+    s.close()
+
+    n_baselines = compute_baselines_for_all_devices()
+    assert n_baselines >= 2, f"Kamida 2 ta baseline hisoblanishi kerak edi, {n_baselines} ta hisoblandi"
+
+    s = get_session()
+    bl_normal = s.query(DeviceBaseline).filter(DeviceBaseline.device_id == normal_id).first()
+    bl_anomaly = s.query(DeviceBaseline).filter(DeviceBaseline.device_id == anomaly_id).first()
+    assert bl_normal is not None and bl_anomaly is not None
+    assert bl_normal.mean_events_per_hour > 0
+    s.close()
+
+    n_anomalies = detect_anomalies()
+    assert n_anomalies >= 1, f"Kamida 1 ta anomaliya topilishi kerak edi, {n_anomalies} ta topildi"
+
+    s = get_session()
+    anomaly_alert = s.query(Alert).filter(Alert.device_id == anomaly_id, Alert.reason.like("UEBA%")).first()
+    assert anomaly_alert is not None, "Anomal qurilma uchun UEBA alert yaratilishi kerak edi"
+    assert "Hajm anomaliyasi" in anomaly_alert.reason
+
+    normal_false_positive = s.query(Alert).filter(Alert.device_id == normal_id, Alert.reason.like("UEBA%")).first()
+    assert normal_false_positive is None, "Normal qurilmada SOXTA-POZITIV UEBA alert bo'lmasligi kerak edi"
+    s.close()
+
+    # Risk Score: anomaly qurilmasiga qo'shimcha critical/high alertlar qo'shib, farqni tekshiramiz
+    s = get_session()
+    s.add(Alert(device_id=anomaly_id, severity="critical", reason="Test critical", mitre_tactic="Execution", action_taken="TODO"))
+    s.add(Alert(device_id=anomaly_id, severity="high", reason="Test high", mitre_tactic="Command and Control", action_taken="TODO"))
+    s.commit()
+    s.close()
+
+    compute_risk_scores()
+
+    s = get_session()
+    dev_normal = s.query(Device).filter(Device.id == normal_id).first()
+    dev_anomaly = s.query(Device).filter(Device.id == anomaly_id).first()
+    assert dev_anomaly.risk_score > dev_normal.risk_score, (
+        f"Anomal qurilma risk score'i normal qurilmadan yuqori bo'lishi kerak edi "
+        f"({dev_anomaly.risk_score} vs {dev_normal.risk_score})"
+    )
+    assert dev_normal.risk_score == 0, f"Normal qurilma risk score'i 0 bo'lishi kerak edi, {dev_normal.risk_score} keldi"
+    assert dev_anomaly.risk_score > 30, "Anomal qurilma yetarlicha yuqori risk score olishi kerak edi"
+    s.close()
+
+    # MITRE tagging bilan integratsiya
+    from engine.mitre_tagging_engine import run_once as mitre_run
+    mitre_run()
+    s = get_session()
+    tagged = s.query(Alert).filter(Alert.reason.like("UEBA%")).first()
+    assert tagged.mitre_technique_id is not None, "UEBA alert MITRE bilan belgilanmadi"
+    s.close()
+
+
+check("UEBA/AI (statistik anomaliya aniqlash, Risk Score, soxta-pozitivsiz)", _test_ueba)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

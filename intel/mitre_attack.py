@@ -43,6 +43,7 @@ _RULES: List[tuple] = [
     ("Scan::Address_Scan", MitreMapping("T1595.001", "Active Scanning: Scanning IP Blocks", "Reconnaissance")),
     ("SQL_Injection", MitreMapping("T1190", "Exploit Public-Facing Application", "Initial Access")),
     ("Trojan::Detected", MitreMapping("T1204.002", "User Execution: Malicious File", "Execution")),
+    ("UEBA", MitreMapping("T1078", "Valid Accounts", "Persistence")),
 ]
 
 _DEFAULT = MitreMapping("T1204", "User Execution", "Execution")

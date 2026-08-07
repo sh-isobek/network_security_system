@@ -7,7 +7,7 @@
 <table>
     <tr>
         <th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
-        <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Alertlar</th>
+        <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Alertlar</th><th>Risk Score</th>
     </tr>
     {% for d in devices %}
     <tr>
@@ -21,6 +21,17 @@
             {% if d.alert_count > 0 %}
             <span class="badge" style="background: #c0392b;">{{ d.alert_count }}</span>
             {% else %}0{% endif %}
+        </td>
+        <td>
+            {% if d.risk_score >= 70 %}
+            <span class="badge" style="background: #c0392b;">{{ d.risk_score }}</span>
+            {% elif d.risk_score >= 30 %}
+            <span class="badge" style="background: #e67e22;">{{ d.risk_score }}</span>
+            {% elif d.risk_score > 0 %}
+            <span class="badge" style="background: #f1c40f;">{{ d.risk_score }}</span>
+            {% else %}
+            <span style="color:#95a5a6;">0</span>
+            {% endif %}
         </td>
     </tr>
     {% endfor %}

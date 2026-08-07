@@ -207,7 +207,7 @@ def acknowledge_alert(alert_id):
 def devices():
     session = get_session()
     try:
-        all_devices = session.query(Device).order_by(Device.last_seen.desc()).limit(200).all()
+        all_devices = session.query(Device).order_by(Device.risk_score.desc(), Device.last_seen.desc()).limit(200).all()
         devices_data = []
         for d in all_devices:
             alert_count = session.query(Alert).filter(Alert.device_id == d.id).count()
@@ -215,6 +215,7 @@ def devices():
                 "id": d.id, "ip_address": d.ip_address, "mac_address": d.mac_address,
                 "hostname": d.hostname, "connection_type": d.connection_type,
                 "source": d.source, "last_seen": d.last_seen, "alert_count": alert_count,
+                "risk_score": d.risk_score or 0,
             })
         return render_template("devices.html", devices=devices_data)
     finally:

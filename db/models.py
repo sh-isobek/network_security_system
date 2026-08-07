@@ -60,6 +60,10 @@ class Device(Base):
     first_seen = Column(DateTime, default=utcnow)
     last_seen = Column(DateTime, default=utcnow)
 
+    # --- UEBA / Risk Score (yangi TZ 11-bo'lim) ---
+    risk_score = Column(Integer, default=0)          # 0-100, engine/ueba_engine.py hisoblaydi
+    risk_score_updated_at = Column(DateTime)
+
     events = relationship("Event", back_populates="device")
 
 
@@ -175,6 +179,37 @@ class HashBlacklist(Base):
     threat_name = Column(String(255))             # masalan "Trojan.GenericKD"
     source = Column(String(100))                    # "manual" | "malwarebazaar" | "virustotal"
     added_at = Column(DateTime, default=utcnow)
+
+
+class DeviceBaseline(Base):
+    """
+    UEBA (User and Entity Behavior Analytics) - yangi TZ 11-bo'lim.
+
+    Har bir qurilma uchun "normal xatti-harakat" statistik profili
+    (baseline). MUHIM (halol tushuntirish): bu chuqur o'rganish (deep
+    learning) emas - soatlik faollik statistikasi (o'rtacha va standart
+    og'ish) asosidagi klassik anomaliya aniqlash (Z-score). Bu yondashuv
+    tanlangan, chunki: (1) natijasi tushuntirib bo'ladigan (explainable) -
+    "nega bu anomaliya deb topildi" savoliga aniq javob beriladi,
+    (2) kam ma'lumot bilan ham ishlaydi, (3) haqiqiy sinovdan o'tkazish
+    va tekshirish mumkin - "qora quti" ML modeliga qaraganda ancha
+    ishonchli SOC muhitida.
+    """
+    __tablename__ = "device_baselines"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("devices.id"), nullable=False, unique=True)
+
+    # Soatlik hodisa (event) chastotasi statistikasi (oxirgi N kun bo'yicha)
+    mean_events_per_hour = Column(Integer, default=0)
+    stddev_events_per_hour = Column(Integer, default=0)
+
+    # Odatiy faol soatlar (0-23), vergul bilan: masalan "9,10,11,...,18"
+    typical_active_hours = Column(String(255))
+
+    lookback_days = Column(Integer, default=30)
+    computed_at = Column(DateTime, default=utcnow)
+    sample_size = Column(Integer, default=0)          # necha soatlik ma'lumot asosida hisoblangan
 
 
 class User(Base):

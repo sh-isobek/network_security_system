@@ -129,6 +129,7 @@ python -m engine.notification_engine --loop
 | ClamAV | `scanners/clamav_scanner.py` | YARA'ga qo'shimcha antivirus qatlami (`docs_SURICATA_SETUP.md`) |
 | Linux Agent | `agent_core/`, `linux_agent/` | Windows Agent bilan bir xil yadro (`agent_core/`) - `docs_LINUX_AGENT_SETUP.md`ga qarang. To'liq real E2E test bilan tasdiqlangan (Linux sandbox'da) |
 | RabbitMQ Queue | `messaging/`, `collectors/syslog_server_queued.py` | Yuqori yuklama uchun navbat-asosli kollektor. `docker compose --profile queue up` orqali yoqiladi |
+| UEBA / AI | `ueba/`, `engine/ueba_engine.py` | Statistik (Z-score) anomaliya aniqlash + Risk Score. `python -m engine.ueba_engine --all` |
 | Mac Agent | `mac_agent/` | Xuddi shu yadro, launchd konfiguratsiyasi - `docs_MAC_AGENT_SETUP.md`ga qarang (kod yozilgan, lekin haqiqiy macOS'da sinalmagan) |
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 

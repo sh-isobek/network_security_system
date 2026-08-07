@@ -79,8 +79,23 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | MFA/TOTP (`dashboard/mfa.py`) | ✅ real TOTP algoritmi bilan (QR-kod, to'liq login oqimi) |
 | — | LDAP Login (`dashboard/ldap_auth.py`) | ✅ HAQIQIY OpenLDAP server bilan (o'rnatilgan, sozlangan, real bind orqali) |
 | — | RabbitMQ Queue (`messaging/`, `collectors/syslog_server_queued.py`, `engine/queue_ingest_worker.py`) | ✅ HAQIQIY RabbitMQ broker bilan, to'liq UDP->Queue->Worker->DB zanjiri test qilingan |
+| — | UEBA / AI (`ueba/anomaly_detection.py`, `engine/ueba_engine.py`) | ✅ Statistik (Z-score) anomaliya aniqlash + Risk Score, real sintetik "normal+buzilgan" trafik bilan (soxta-pozitivsiz) test qilingan |
 
-**Joriy: 23/23 test o'tadi (`run_full_test.py`).**
+**Joriy: 24/24 test o'tadi (`run_full_test.py`).**
+
+## UEBA/AI haqida muhim izoh
+
+`ueba/anomaly_detection.py` **chuqur o'rganish (deep learning) emas** -
+klassik Z-score (3-sigma) statistik anomaliya aniqlash. Bu ataylab
+tanlangan: (1) natija tushuntirib bo'ladigan ("nega anomaliya" aniq
+javob beriladi), (2) kam ma'lumot bilan ham ishonchli ishlaydi,
+(3) "AI" deb signature-based qoidalarni sotmaslik printsipiga amal
+qilingan (bu `CLAUDE.md`ning ilgari yozilgan qismida ham aytilgan edi).
+Agar chinakam ML (masalan Isolation Forest, LSTM) kerak bo'lsa, bu
+alohida, kattaroq ish - hozirgi statistik yondashuv puxta poydevor
+sifatida xizmat qiladi (bir xil `Baseline`/`AnomalyResult` interfeysi
+saqlanadi, faqat `compute_baseline()`/`detect_anomaly()` ichki
+mantiqi almashtiriladi).
 
 ## GitHub va CI
 
@@ -173,10 +188,9 @@ token'lar sessiyada saqlanmaydi.
 
 Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
 - **Kubernetes** — `docker-compose.yml`dagi 14 xizmatni K8s
-  Deployment/Service manifestlariga aylantirish.
-- **AI/UEBA** — eng noaniq bo'lim; "AI" deb signature-based/threshold
-  qoidalarni sotmaslik kerak - agar qurilsa, aniq statistik/ML yondashuv
-  tanlab, ishlashini haqiqiy ma'lumotda ko'rsatish kerak.
+  Deployment/Service manifestlariga aylantirish. (Yagona qolgan yangi
+  TZ bo'limi - MFA/LDAP, Kafka/RabbitMQ, AI/UEBA, Zeek/Snort barchasi
+  qurilgan.)
 
 ## MUHIM: sandbox'da "ghost" fayllar haqida
 
