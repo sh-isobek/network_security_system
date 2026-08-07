@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: network-security
+spec:
+  replicas: 2   # web trafik uchun gorizontal miqyoslanadi
+  selector:
+    matchLabels: {app: dashboard}
+  template:
+    metadata:
+      labels: {app: dashboard}
+    spec:
+      containers:
+        - name: dashboard
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["gunicorn", "-w", "2", "-b", "0.0.0.0:8080", "dashboard.app:app"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          readinessProbe:
+            httpGet: {path: /login, port: 8080}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: network-security
+spec:
+  selector: {app: dashboard}
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP   # tashqi kirish uchun Ingress orqali (03-ingress.yaml)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api
+  namespace: network-security
+spec:
+  replicas: 3   # Windows/Linux/Mac agentlaridan kelayotgan so'rovlar uchun miqyoslanadi
+  selector:
+    matchLabels: {app: agent-api}
+  template:
+    metadata:
+      labels: {app: agent-api}
+    spec:
+      containers:
+        - name: agent-api
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["gunicorn", "-w", "4", "-b", "0.0.0.0:8443", "api.server:app"]
+          ports:
+            - containerPort: 8443
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          readinessProbe:
+            httpGet: {path: /api/v1/health, port: 8443}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-api
+  namespace: network-security
+spec:
+  selector: {app: agent-api}
+  ports:
+    - port: 8443
+      targetPort: 8443
+  type: LoadBalancer   # tashqi tarmoqdagi agentlar to'g'ridan-to'g'ri ulanishi uchun
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-api-hpa
+  namespace: network-security
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-api
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}

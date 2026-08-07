@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: network-security
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: network-security
+data:
+  NETWORK_RANGE_START: "172.16.0.11"
+  NETWORK_RANGE_END: "172.16.3.254"
+  SYSLOG_HOST: "0.0.0.0"
+  SYSLOG_PORT: "5140"
+  LOG_LEVEL: "INFO"
+  POSTGRES_DB: "security_system"
+  POSTGRES_USER: "security_admin"
+  DATABASE_URL: "postgresql://security_admin:$(POSTGRES_PASSWORD)@postgres:5432/security_system"
+  NOTIFY_CHANNELS: "email,telegram"
+  SMTP_PORT: "587"
+  SMTP_USE_TLS: "true"
+  CLAMAV_DB_DIR: "/var/lib/clamav"
+  DASHBOARD_PORT: "8080"
+  API_PORT: "8443"
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/%2F"
+---
+# MUHIM: bu FAQAT shablon - haqiqiy qiymatlar bilan hech qachon Git'ga
+# commit qilinmasin. Production'da:
+#   kubectl create secret generic app-secrets -n network-security \
+#     --from-literal=POSTGRES_PASSWORD='...' \
+#     --from-literal=AGENT_API_KEY='...' \
+#     --from-literal=DASHBOARD_SECRET_KEY='...' \
+#     --from-literal=SMTP_PASSWORD='...' \
+#     --from-literal=VT_API_KEY='...'
+# yoki tashqi Secret manager (Vault, AWS Secrets Manager, Sealed Secrets)
+# orqali boshqarilishi tavsiya etiladi.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+  namespace: network-security
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "CHANGE_ME_STRONG_PASSWORD"
+  AGENT_API_KEY: "CHANGE_ME_STRONG_RANDOM_KEY"
+  DASHBOARD_SECRET_KEY: "CHANGE_ME_RANDOM_SECRET"

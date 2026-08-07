@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslog-collector
+  namespace: network-security
+spec:
+  replicas: 1   # UDP LoadBalancer bilan bir nechta nusxa murakkabroq (session affinity kerak) - boshlang'ich uchun 1
+  selector:
+    matchLabels: {app: syslog-collector}
+  template:
+    metadata:
+      labels: {app: syslog-collector}
+    spec:
+      containers:
+        - name: syslog-collector
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "collectors.syslog_server"]
+          ports:
+            - containerPort: 5140
+              protocol: UDP
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslog-collector
+  namespace: network-security
+spec:
+  selector: {app: syslog-collector}
+  ports:
+    - port: 514
+      targetPort: 5140
+      protocol: UDP
+  type: LoadBalancer   # Kerio/switch/UniFi shu manzilga syslog yuboradi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: network-security
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: rabbitmq}
+  template:
+    metadata:
+      labels: {app: rabbitmq}
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.12-management-alpine
+          ports:
+            - {containerPort: 5672, name: amqp}
+            - {containerPort: 15672, name: management}
+          volumeMounts:
+            - {name: rabbitmq-data, mountPath: /var/lib/rabbitmq}
+          resources:
+            requests: {cpu: "200m", memory: "256Mi"}
+            limits: {cpu: "1", memory: "1Gi"}
+      volumes:
+        - name: rabbitmq-data
+          persistentVolumeClaim: {claimName: rabbitmq-data-pvc}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: network-security
+spec:
+  selector: {app: rabbitmq}
+  ports:
+    - {port: 5672, targetPort: 5672, name: amqp}
+    - {port: 15672, targetPort: 15672, name: management}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-data-pvc
+  namespace: network-security
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-ingest-worker
+  namespace: network-security
+spec:
+  replicas: 3   # gorizontal miqyoslash namunasi - RabbitMQ xabarlarni avtomatik taqsimlaydi
+  selector:
+    matchLabels: {app: queue-ingest-worker}
+  template:
+    metadata:
+      labels: {app: queue-ingest-worker}
+    spec:
+      containers:
+        - name: queue-ingest-worker
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.queue_ingest_worker", "--loop"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}

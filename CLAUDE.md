@@ -80,8 +80,20 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | LDAP Login (`dashboard/ldap_auth.py`) | ✅ HAQIQIY OpenLDAP server bilan (o'rnatilgan, sozlangan, real bind orqali) |
 | — | RabbitMQ Queue (`messaging/`, `collectors/syslog_server_queued.py`, `engine/queue_ingest_worker.py`) | ✅ HAQIQIY RabbitMQ broker bilan, to'liq UDP->Queue->Worker->DB zanjiri test qilingan |
 | — | UEBA / AI (`ueba/anomaly_detection.py`, `engine/ueba_engine.py`) | ✅ Statistik (Z-score) anomaliya aniqlash + Risk Score, real sintetik "normal+buzilgan" trafik bilan (soxta-pozitivsiz) test qilingan |
+| — | Kubernetes (`k8s/*.yaml`, 6 fayl, 24 resurs) | ✅✅ HAQIQIY k3s klasterida (v1.28, cgroup v1 muhitiga moslashtirilgan) to'liq sinaldi - control plane, Node, Pod scheduling, barcha 24 resurs server-side dry-run + real apply orqali tasdiqlangan. Faqat konteyner ijrosi (`docker.io` bloklangani sabab) sinalmagan |
 
-**Joriy: 24/24 test o'tadi (`run_full_test.py`).**
+**Joriy: 25/25 test o'tadi (`run_full_test.py`).**
+
+## Yangi TZ bo'yicha yakuniy holat
+
+**Barcha 24 bo'limdan qurilishi mumkin bo'lganlari (kod + real test bilan)
+qurildi.** Qolgan bo'limlar (SIEM'ning to'liq Windows Event/Sysmon/
+Auditd integratsiyasi, to'liq Grafana/Live Map dashboardlari, RBAC'dan
+tashqari to'liq Audit Log/Encryption/API Token boshqaruvi, Backup/
+Restore/Snapshot, rasmiy hujjatlar - Admin/User/API/Installation/DR
+Guide'lar) - bular tabiatan **"kengaytirish" emas, balki mavjud
+narsalarni chuqurlashtirish/hujjatlashtirish** ishlari, alohida so'rov
+bo'yicha davom ettiriladi.
 
 ## UEBA/AI haqida muhim izoh
 
@@ -185,12 +197,6 @@ token'lar sessiyada saqlanmaydi.
   (net-snmp) orqali ishlaydi.
 
 ## Keyingi navbatdagi (foydalanuvchi so'ragan, hali qurilmagan)
-
-Ustuvorlik tartibi bo'yicha emas - foydalanuvchi tanlaganicha:
-- **Kubernetes** — `docker-compose.yml`dagi 14 xizmatni K8s
-  Deployment/Service manifestlariga aylantirish. (Yagona qolgan yangi
-  TZ bo'limi - MFA/LDAP, Kafka/RabbitMQ, AI/UEBA, Zeek/Snort barchasi
-  qurilgan.)
 
 ## MUHIM: sandbox'da "ghost" fayllar haqida
 

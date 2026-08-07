@@ -1,0 +1,195 @@
+# Barcha "engine" xizmatlari bir xil naqsh bo'yicha quriladi: bitta
+# Docker image (loyihaning Dockerfile'idan), faqat `command` farq qiladi.
+# Bularning barchasi STATELESS (holatsiz) - baza orqali muvofiqlashadi,
+# shuning uchun `replicas`ni oshirish orqali osongina gorizontal
+# miqyoslash mumkin (yangi TZ 21-bo'lim).
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parser-engine
+  namespace: network-security
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: parser-engine}
+  template:
+    metadata:
+      labels: {app: parser-engine}
+    spec:
+      containers:
+        - name: parser-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.parser_engine", "--loop", "--interval", "5"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: file-analysis-engine
+  namespace: network-security
+spec:
+  replicas: 2   # gorizontal miqyoslash namunasi - navbat-asosida ishlagani uchun xavfsiz
+  selector:
+    matchLabels: {app: file-analysis-engine}
+  template:
+    metadata:
+      labels: {app: file-analysis-engine}
+    spec:
+      containers:
+        - name: file-analysis-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.file_analysis_engine", "--loop", "--interval", "10"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deep-scan-engine
+  namespace: network-security
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: deep-scan-engine}
+  template:
+    metadata:
+      labels: {app: deep-scan-engine}
+    spec:
+      containers:
+        - name: deep-scan-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.deep_scan_engine", "--loop", "--interval", "10"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          volumeMounts:
+            - name: clamav-db
+              mountPath: /var/lib/clamav
+            - name: suricata-files
+              mountPath: /var/log/suricata/files
+              readOnly: true
+          resources:
+            requests: {cpu: "200m", memory: "256Mi"}
+            limits: {cpu: "1", memory: "1Gi"}
+      volumes:
+        - name: clamav-db
+          persistentVolumeClaim: {claimName: clamav-db-pvc}
+        - name: suricata-files
+          hostPath: {path: /var/log/suricata/files, type: DirectoryOrCreate}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: response-engine
+  namespace: network-security
+spec:
+  replicas: 1   # bitta nusxa - bloklash amallarini takrorlamaslik uchun
+  selector:
+    matchLabels: {app: response-engine}
+  template:
+    metadata:
+      labels: {app: response-engine}
+    spec:
+      containers:
+        - name: response-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.response_engine", "--loop", "--interval", "5"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-engine
+  namespace: network-security
+spec:
+  replicas: 1   # bitta nusxa - bir xil alert ikki marta yuborilmasligi uchun
+  selector:
+    matchLabels: {app: notification-engine}
+  template:
+    metadata:
+      labels: {app: notification-engine}
+    spec:
+      containers:
+        - name: notification-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.notification_engine", "--loop", "--interval", "10"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "300m", memory: "256Mi"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mitre-tagging-engine
+  namespace: network-security
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mitre-tagging-engine}
+  template:
+    metadata:
+      labels: {app: mitre-tagging-engine}
+    spec:
+      containers:
+        - name: mitre-tagging-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.mitre_tagging_engine", "--loop", "--interval", "15"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "200m", memory: "256Mi"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ueba-engine
+  namespace: network-security
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ueba-engine}
+  template:
+    metadata:
+      labels: {app: ueba-engine}
+    spec:
+      containers:
+        - name: ueba-engine
+          image: ghcr.io/your-org/network-security-system:latest
+          command: ["python", "-m", "engine.ueba_engine", "--loop", "--interval", "300"]
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clamav-db-pvc
+  namespace: network-security
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi

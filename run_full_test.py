@@ -1447,6 +1447,44 @@ def _test_ueba():
 check("UEBA/AI (statistik anomaliya aniqlash, Risk Score, soxta-pozitivsiz)", _test_ueba)
 
 # ---------------------------------------------------------------------------
+print("\n=== 23) KUBERNETES MANIFESTLAR (YAML struktura tekshiruvi) ===")
+
+
+def _test_k8s_manifests():
+    import glob
+    import yaml as yaml_mod
+
+    k8s_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "k8s")
+    files = sorted(glob.glob(os.path.join(k8s_dir, "*.yaml")))
+    assert len(files) >= 6, f"Kamida 6 ta k8s manifest fayli kutilgan edi, {len(files)} ta topildi"
+
+    required_kinds_seen = set()
+    total_docs = 0
+
+    for filepath in files:
+        with open(filepath) as f:
+            docs = list(yaml_mod.safe_load_all(f))
+        for doc in docs:
+            if doc is None:
+                continue
+            total_docs += 1
+            assert "apiVersion" in doc, f"{filepath}: 'apiVersion' yo'q"
+            assert "kind" in doc, f"{filepath}: 'kind' yo'q"
+            assert "metadata" in doc and "name" in doc["metadata"], f"{filepath}: metadata.name yo'q"
+            required_kinds_seen.add(doc["kind"])
+
+    expected_kinds = {
+        "Namespace", "ConfigMap", "Secret", "StatefulSet", "Service",
+        "Deployment", "PersistentVolumeClaim", "HorizontalPodAutoscaler", "Ingress",
+    }
+    missing = expected_kinds - required_kinds_seen
+    assert not missing, f"Kutilgan resurs turlari topilmadi: {missing}"
+    assert total_docs >= 20, f"Kamida 20 ta resurs kutilgan edi, {total_docs} ta topildi"
+
+
+check("Kubernetes manifestlar (struktura, kutilgan resurs turlari)", _test_k8s_manifests)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
