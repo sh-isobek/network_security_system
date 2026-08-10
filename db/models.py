@@ -212,6 +212,27 @@ class HashBlacklist(Base):
     added_at = Column(DateTime, default=utcnow)
 
 
+class DeviceHistory(Base):
+    """
+    Asset History - qurilma qachon birinchi topilgani, qachon
+    "yo'qolgani" (uzoq vaqt ko'rinmay qolgani) haqida tarixiy log.
+    Bu `devices` jadvalidagi joriy holatdan farqli - bu yerda
+    O'ZGARISHLAR (event) saqlanadi, joriy holat emas.
+    """
+    __tablename__ = "device_history"
+
+    id = Column(Integer, primary_key=True)
+    device_ip = Column(String(45), nullable=False)
+    event_type = Column(String(20), nullable=False)  # "discovered" | "disappeared" | "reappeared" | "changed"
+    details = Column(Text)                              # masalan "MAC o'zgardi: X -> Y"
+    timestamp = Column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_device_history_ip", "device_ip"),
+        Index("ix_device_history_timestamp", "timestamp"),
+    )
+
+
 class TopologyLink(Base):
     """
     Tarmoq topologiyasi bog'lanishi - LLDP/CDP orqali aniqlangan

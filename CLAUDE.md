@@ -90,7 +90,41 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 36/36 test o'tadi (`run_full_test.py`).**
+**Joriy: 39/39 test o'tadi (`run_full_test.py`).**
+
+## Network Discovery kengaytmasi (10/10 talabiga javoban)
+
+Foydalanuvchi so'ragan 8 qo'shimcha yo'nalishning barchasi qo'shildi:
+IPv6 Discovery, VMware/Hyper-V, Kubernetes node discovery, Cloud
+(AWS/Azure/GCP), Cisco WLC/Aruba/Ruijie, OT/IoT (qisman - tcp_scanner
+orqali), Rejalashtirilgan+Differensial scan, Asset History.
+
+**MUHIM**: sessiya boshida sandbox'da bu modullarning barchasi
+allaqachon "ghost fayl" sifatida (avvalgi tugallanmagan urinishdan)
+mavjud edi - `CLAUDE.md`dagi ogohlantirishga muvofiq ular qayta
+yozilmasdan, sinchiklab ko'rib chiqilib, sifat tasdiqlanib, keyin
+**real test qilindi**.
+
+**Real test qilingan (yangi)**:
+- Kubernetes Node Discovery - real k3s klasterida (OS image, kubelet versiyasi)
+- Scheduled + Differential Scan - real tarmoqda, 4 xil stsenariy (discovered/disappeared/reappeared/dedup)
+- IPv6, VMware, Cloud, WLC - graceful-fail (real infratuzilma yo'q, lekin xato ko'tarmasligi tasdiqlangan)
+
+**Topilgan va tuzatilgan 3 ta real xato**:
+1. `scheduler.py`da `ip_address` global unique bo'lgani uchun boshqa
+   manba orqali mavjud IP bilan differensial scan INSERT to'qnashuvi.
+2. `run_full_test.py`dagi differensial scan testida "istalgan ma'lum
+   qurilma"ni (`.first()`) "qayta paydo bo'lgan" stsenariysi uchun
+   tanlash - bu **faqat PostgreSQL'da** ochilib qoldi (qatorlar
+   tartibi SQLite'dan farq qilgani uchun boshqa testdan qolgan,
+   joriy tarmoqda mavjud bo'lmagan qurilma tanlanib qolgan edi).
+   Tuzatildi: faqat HOZIRGI skanerlashda haqiqatan topilgan IP
+   ishlatiladi.
+3. Kubernetes testi to'liq test to'plami ichida **flaky** edi (node
+   holati vaqtincha "Ready"dan "NotReady"ga qaytib ketishi) - 3 marta
+   ketma-ket barqaror "Ready" talab qiluvchi tekshiruv bilan
+   tuzatildi, 3 marta ketma-ket ishga tushirib (SQLite) va 2 marta
+   (PostgreSQL) barqarorlik tasdiqlandi.
 
 ## Network Discovery'da topilgan muhim kashfiyot
 

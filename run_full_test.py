@@ -2138,6 +2138,189 @@ def _test_asset_inventory_db():
 check("Network Discovery: Asset Inventory DB integratsiyasi (manba ustuvorligi)", _test_asset_inventory_db)
 
 # ---------------------------------------------------------------------------
+print("\n=== 35) NETWORK DISCOVERY - IPv6, Kubernetes, VMware/Cloud/WLC graceful-fail ===")
+
+
+def _test_advanced_discovery_offline():
+    from network_discovery.ipv6_discovery import ipv6_ping_sweep, ipv6_ndp_neighbors
+    from network_discovery.virtualization_discovery import discover_esxi_vms, discover_hyperv_vms
+    from network_discovery.cloud_discovery import discover_aws_instances, discover_azure_instances, discover_gcp_instances
+    from network_discovery.wlc_discovery import discover_aruba_central_clients, discover_ruijie_cloud_clients
+
+    # IPv6 - bu sandbox muhitida IPv6 umuman yo'q, shuning uchun faqat
+    # "xato ko'tarmasligi"ni tekshiramiz (natija bo'sh bo'lishi kutiladi)
+    assert ipv6_ping_sweep("fe80::/120", "eth0", timeout=10) == []
+    assert ipv6_ndp_neighbors("eth0") == []
+
+    # Graceful-fail: real infratuzilma (ESXi/Hyper-V/AWS/Azure/GCP/Aruba/Ruijie) yo'q
+    assert discover_esxi_vms() == []
+    assert discover_hyperv_vms() == []
+    assert discover_aws_instances() == []
+    assert discover_azure_instances() == []
+    assert discover_gcp_instances() == []
+    assert discover_aruba_central_clients() == []
+    assert discover_ruijie_cloud_clients() == []
+
+
+check("Network Discovery: IPv6 + VMware/Cloud/WLC (graceful-fail, real infra yo'q)", _test_advanced_discovery_offline)
+
+# ---------------------------------------------------------------------------
+print("\n=== 36) NETWORK DISCOVERY - Kubernetes Node Discovery (real k3s) ===")
+
+
+def _test_k8s_node_discovery():
+    import subprocess
+    import shutil
+    import time as _time
+
+    if subprocess.run(["which", "k3s"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - k3s o'rnatilmagan bu muhitda)")
+        return
+
+    shutil.rmtree("/var/lib/rancher/k3s", ignore_errors=True)
+
+    k3s_log_path = "/tmp/_ci_k3s_test.log"
+    k3s_log_file = open(k3s_log_path, "w")
+    k3s_proc = subprocess.Popen(
+        ["k3s", "server", "--disable", "traefik", "--disable", "servicelb",
+         "--kubelet-arg=eviction-hard=nodefs.available<1%,imagefs.available<1%"],
+        stdout=k3s_log_file, stderr=subprocess.STDOUT,
+    )
+    try:
+        os.environ["KUBECONFIG"] = "/etc/rancher/k3s/k3s.yaml"
+        ready = False
+        last_output = ""
+        consecutive_ready = 0
+        for _ in range(120):  # maksimal ~120s - to'liq test to'plami ichida
+                                # tizim band bo'lganda k3s sekinroq ishga
+                                # tushishi mumkin (bu real aniqlangan flakiness)
+            probe = subprocess.run(
+                ["kubectl", "get", "nodes", "--no-headers"],
+                capture_output=True, text=True, timeout=5,
+                env={**os.environ, "KUBECONFIG": "/etc/rancher/k3s/k3s.yaml"},
+            )
+            last_output = probe.stdout + probe.stderr
+            if probe.returncode == 0 and "Ready" in probe.stdout and "NotReady" not in probe.stdout:
+                consecutive_ready += 1
+            else:
+                consecutive_ready = 0
+            # MUHIM: resurs bosimi ostida node holati vaqtincha "Ready"
+            # ko'rinib, keyin darhol "NotReady"ga qaytishi mumkin edi
+            # (real aniqlangan flakiness) - shuning uchun KETMA-KET 3
+            # marta (3 soniya) barqaror "Ready" bo'lishini talab qilamiz.
+            if consecutive_ready >= 3:
+                ready = True
+                break
+            _time.sleep(1)
+        if not ready:
+            k3s_log_file.flush()
+            with open(k3s_log_path) as f:
+                k3s_log_content = f.read()
+            proc_alive = k3s_proc.poll() is None
+            assert False, (
+                f"k3s node 120 soniyada BARQAROR Ready holatiga kelmadi (jarayon tirikmi: {proc_alive}). "
+                f"Oxirgi kubectl holati: {last_output[:200]!r}. "
+                f"k3s log (oxirgi 800 belgi): {k3s_log_content[-800:]!r}"
+            )
+
+        from network_discovery.k8s_discovery import discover_k8s_nodes
+        nodes = discover_k8s_nodes(kubeconfig="/etc/rancher/k3s/k3s.yaml")
+        assert len(nodes) == 1, f"1 ta node kutilgan edi, {len(nodes)} ta topildi: {nodes}"
+        assert nodes[0].ready is True, f"Node ready=True bo'lishi kerak edi: {nodes[0]}"
+        assert nodes[0].kubelet_version is not None, f"kubelet_version bo'sh bo'lmasligi kerak edi: {nodes[0]}"
+
+    finally:
+        k3s_proc.terminate()
+        try:
+            k3s_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            k3s_proc.kill()
+        k3s_log_file.close()
+        if os.path.exists(k3s_log_path):
+            os.remove(k3s_log_path)
+        subprocess.run(["pkill", "-9", "containerd"], capture_output=True)
+        shutil.rmtree("/var/lib/rancher/k3s", ignore_errors=True)
+        os.environ.pop("KUBECONFIG", None)
+
+
+check("Network Discovery: Kubernetes Node Discovery (real k3s klaster)", _test_k8s_node_discovery)
+
+# ---------------------------------------------------------------------------
+print("\n=== 37) NETWORK DISCOVERY - Scheduled + Differential Scan (real tarmoq, real DB) ===")
+
+
+def _test_differential_scan():
+    import subprocess
+    from datetime import timedelta
+    from db.models import utcnow
+
+    if subprocess.run(["which", "arp-scan"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - arp-scan o'rnatilmagan)")
+        return
+
+    route_result = subprocess.run(["ip", "route", "get", "8.8.8.8"], capture_output=True, text=True)
+    interface = None
+    tokens = route_result.stdout.split()
+    for tok, nxt in zip(tokens, tokens[1:]):
+        if tok == "dev":
+            interface = nxt
+            break
+    if not interface:
+        print("   (o'tkazib yuborildi - interfeys aniqlanmadi)")
+        return
+
+    from network_discovery.scheduler import run_differential_scan
+    from db.models import DeviceHistory
+
+    # 1-sikl: birinchi skanerlash
+    result1 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+
+    # 2-sikl: soxta-pozitiv bo'lmasligi kerak (xuddi shu qurilmalar)
+    result2 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    assert len(result2["discovered"]) == 0, "Ikkinchi sikl'da yangi qurilma bo'lmasligi kerak edi"
+
+    # Sun'iy "yo'qolgan" va "qayta paydo bo'lgan" stsenariysi
+    # MUHIM: "qayta paydo bo'lgan" qurilma sifatida FAQAT shu test o'zi
+    # HOZIRGI skanerlashda haqiqatan topgan (result1["discovered"]) IP
+    # tanlanadi - "istalgan ma'lum qurilma" emas, chunki bazada boshqa
+    # (oldingi) testlardan qolgan, joriy tarmoqda MAVJUD BO'LMAGAN
+    # qurilmalar ham bo'lishi mumkin (PostgreSQL'da qatorlar tartibi
+    # SQLite'dan farq qilgani uchun bu xato faqat PostgreSQL'da ochilib
+    # qoldi - `.first()` predictable bo'lmagan qatorni tanlab olardi).
+    tracked_ip = result1["discovered"][0] if result1["discovered"] else None
+    assert tracked_ip is not None, "Reappeared stsenariysi uchun kamida 1 ta topilgan qurilma kerak edi"
+
+    s = get_session()
+    old_time = utcnow() - timedelta(hours=25)
+    s.add(Device(ip_address="203.0.113.250", discovery_source="arp_scan", last_discovered_at=old_time, last_seen=old_time))
+
+    tracked_device = s.query(Device).filter(Device.ip_address == tracked_ip).first()
+    if tracked_device:
+        tracked_device.last_discovered_at = old_time
+    s.commit()
+    s.close()
+
+    result3 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    assert "203.0.113.250" in result3["disappeared"], "Ghost qurilma 'yo'qolgan' deb belgilanmadi"
+    assert tracked_ip in result3["reappeared"], (
+        f"{tracked_ip} 'qayta paydo bo'lgan' deb belgilanishi kerak edi. Natija: {result3}"
+    )
+
+    # Takroriy "disappeared" yozuvi yaratilmasligi
+    result4 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    assert "203.0.113.250" not in result4["disappeared"], "Takroriy 'disappeared' yozuvi yaratilmasligi kerak edi"
+
+    s = get_session()
+    dup_count = s.query(DeviceHistory).filter(
+        DeviceHistory.device_ip == "203.0.113.250", DeviceHistory.event_type == "disappeared"
+    ).count()
+    s.close()
+    assert dup_count == 1, f"Faqat 1 ta 'disappeared' yozuvi kutilgan edi, {dup_count} ta topildi"
+
+
+check("Network Discovery: Scheduled + Differential Scan (discovered/disappeared/reappeared, dedup)", _test_differential_scan)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

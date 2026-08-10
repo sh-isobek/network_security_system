@@ -22,6 +22,25 @@ aniqlaydi va `devices`/`topology_links` jadvallariga yozadi -
 | `cdp_mapper.py` | CDP (Cisco) topologiya | ✅ Real send+capture+parse |
 | `asset_inventory.py` | Barchasini birlashtiruvchi, DB'ga yozuvchi | ✅ |
 | `topology_builder.py` | LLDP/CDP'dan topologiya yig'uvchi | ✅ |
+| `ipv6_discovery.py` | IPv6 (ICMPv6 ping sweep + NDP) | ⚠️ Kod to'g'ri, lekin sandbox kernelida IPv6 umuman yo'q - sinalmagan |
+| `k8s_discovery.py` | Kubernetes Node Discovery | ✅ Real k3s klasterida (OS image, kubelet versiyasi bilan) |
+| `virtualization_discovery.py` | VMware ESXi + Hyper-V | ✅ Graceful-fail (real ESXi/Hyper-V yo'q) |
+| `cloud_discovery.py` | AWS/Azure/GCP asset discovery | ✅ Graceful-fail (real cloud credentials yo'q) |
+| `wlc_discovery.py` | Cisco WLC/Aruba/Ruijie (SNMP-asosli, vendor-neytral) | ✅ Graceful-fail (real controller yo'q) |
+| `scheduler.py` | Rejalashtirilgan + Differensial scan, Asset History | ✅ Real tarmoqda (discovered/disappeared/reappeared, dedup) |
+
+## Yangi TZ 5-bo'lim: qo'shimcha talablar bo'yicha holat
+
+| Talab | Holat |
+|---|---|
+| IPv6 Discovery | ⚠️ Kod tayyor, sandbox'da sinab bo'lmadi |
+| VMware/Hyper-V host discovery | ✅ Kod tayyor, graceful-fail test qilingan |
+| Kubernetes node discovery | ✅ **Real k3s klasterida test qilingan** |
+| Cloud (AWS/Azure/GCP) discovery | ✅ Kod tayyor, graceful-fail test qilingan |
+| Cisco WLC/Aruba/Ruijie | ✅ Vendor-neytral SNMP asos + REST API namunalari |
+| OT/IoT chuqur fingerprint | ⚠️ `tcp_scanner.py`ning `-sV`/`-O` imkoniyatlari orqali qisman qamrab olinadi - alohida OT-specific protokollar (Modbus/BACnet) hali qo'shilmagan |
+| Rejalashtirilgan + Differensial scan | ✅ **To'liq real test qilingan** (`scheduler.py`) |
+| Asset History (qachon qo'shildi/yo'qoldi) | ✅ **To'liq real test qilingan** (`DeviceHistory` jadvali) |
 
 ## O'rnatish (tizim darajasidagi vositalar)
 
@@ -44,6 +63,32 @@ Davriy ishga tushirish uchun cron (masalan har 6 soatda):
 ```bash
 0 */6 * * * cd /path/to/project && python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
 ```
+
+## Rejalashtirilgan + Differensial skanerlash (scheduler.py)
+
+To'liq holatni har safar qayta yozish o'rniga, faqat **o'zgargan**
+qurilmalarni aniqlaydi: `discovered` (yangi), `disappeared` (24 soatdan
+ko'p ko'rinmagan), `reappeared` (qayta paydo bo'lgan). Bu o'zgarishlar
+`device_history` jadvaliga yoziladi - Asset History.
+
+```bash
+# Bir martalik differensial scan
+python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --once
+
+# Doimiy (har soatda)
+python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --loop --interval 3600
+```
+
+`DISCOVERY_MISSING_THRESHOLD_HOURS` (standart 24) - qurilma necha
+soat ko'rinmasa "yo'qolgan" deb belgilanishi.
+
+## Kubernetes Node Discovery
+
+```bash
+python -c "from network_discovery.k8s_discovery import discover_k8s_nodes; print(discover_k8s_nodes())"
+```
+`KUBECONFIG` muhit o'zgaruvchisi yoki `--kubeconfig` parametri orqali
+istalgan klaster bilan ishlaydi.
 
 ## Muhim texnik eslatmalar
 
