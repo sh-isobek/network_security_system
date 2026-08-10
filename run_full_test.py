@@ -2272,11 +2272,54 @@ def _test_differential_scan():
     from network_discovery.scheduler import run_differential_scan
     from db.models import DeviceHistory
 
+    # MUHIM: CIDR'ni QATTIQ KODLASH mumkin emas (masalan "192.0.2.0/24")
+    # - bu faqat mualliflik sandbox'iga xos tarmoq, GitHub Actions
+    # runner'ida butunlay boshqa subnet bo'ladi (bu real aniqlangan
+    # xato edi - runner'da 0 ta host topilib, test muvaffaqiyatsiz
+    # bo'lgan). Interfeysning haqiqiy IP/netmaskidan CIDR'ni dinamik
+    # hisoblaymiz - xuddi arp-scan'ning --localnet rejimi kabi.
+    addr_result = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", interface], capture_output=True, text=True)
+    cidr = None
+    for line in addr_result.stdout.splitlines():
+        parts = line.split()
+        for i, tok in enumerate(parts):
+            if tok == "inet" and i + 1 < len(parts):
+                ip_with_prefix = parts[i + 1]  # masalan "192.0.2.2/24"
+                import ipaddress
+                iface_obj = ipaddress.ip_interface(ip_with_prefix)
+                cidr = str(iface_obj.network)
+                break
+        if cidr:
+            break
+
+    if not cidr:
+        print("   (o'tkazib yuborildi - interfeys CIDR'ini aniqlab bo'lmadi)")
+        return
+
+    import ipaddress
+    net = ipaddress.ip_network(cidr)
+    if net.num_addresses > 256:
+        # GitHub Actions runner kabi muhitlarda interfeys /16 yoki undan
+        # katta subnet'ga ega bo'lishi mumkin - to'liq ping sweep juda
+        # uzoq davom etadi. Xavfsiz tarzda /24'ga qisqartiramiz (o'zimiz
+        # joylashgan segmentni saqlab qolgan holda).
+        our_ip = ipaddress.ip_interface(f"{net.network_address}/{net.prefixlen}").ip
+        # interfeys manzilining o'zini interfeys ma'lumotidan qayta olamiz
+        for line in addr_result.stdout.splitlines():
+            if "inet " in line:
+                our_ip = ipaddress.ip_interface(line.split()[line.split().index("inet") + 1]).ip
+                break
+        narrowed = ipaddress.ip_network(f"{our_ip}/24", strict=False)
+        cidr = str(narrowed)
+
+    def _scan():
+        return run_differential_scan(cidr, interface)
+
     # 1-sikl: birinchi skanerlash
-    result1 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    result1 = _scan()
 
     # 2-sikl: soxta-pozitiv bo'lmasligi kerak (xuddi shu qurilmalar)
-    result2 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    result2 = _scan()
     assert len(result2["discovered"]) == 0, "Ikkinchi sikl'da yangi qurilma bo'lmasligi kerak edi"
 
     # Sun'iy "yo'qolgan" va "qayta paydo bo'lgan" stsenariysi
@@ -2300,14 +2343,14 @@ def _test_differential_scan():
     s.commit()
     s.close()
 
-    result3 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    result3 = _scan()
     assert "203.0.113.250" in result3["disappeared"], "Ghost qurilma 'yo'qolgan' deb belgilanmadi"
     assert tracked_ip in result3["reappeared"], (
         f"{tracked_ip} 'qayta paydo bo'lgan' deb belgilanishi kerak edi. Natija: {result3}"
     )
 
     # Takroriy "disappeared" yozuvi yaratilmasligi
-    result4 = run_differential_scan("192.0.2.0/24", interface) if interface == "eth0" else run_differential_scan("127.0.0.1/32", interface)
+    result4 = _scan()
     assert "203.0.113.250" not in result4["disappeared"], "Takroriy 'disappeared' yozuvi yaratilmasligi kerak edi"
 
     s = get_session()
