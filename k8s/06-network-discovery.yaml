@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-discovery
+  namespace: network-security
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: network-discovery}
+  template:
+    metadata:
+      labels: {app: network-discovery}
+    spec:
+      # MUHIM: docker-compose.yml'dagi `network_mode: host` bilan bir
+      # xil sabab - Kubernetes Pod'ning standart tarmog'i (CNI overlay)
+      # haqiqiy LAN'ni ko'rmaydi. `hostNetwork: true` Pod'ni Node'ning
+      # o'z tarmoq nomfazosiga to'g'ridan-to'g'ri ulaydi (haqiqiy eth0
+      # ko'rinishi uchun).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet   # hostNetwork bilan DNS ishlashi uchun
+      containers:
+        - name: network-discovery
+          image: ghcr.io/your-org/network-security-system:latest
+          command:
+            - python
+            - -m
+            - network_discovery.scheduler
+            - --cidr
+            - "172.16.0.0/22"    # o'z tarmog'ingizga moslang
+            - --interface
+            - "eth0"              # Node'dagi haqiqiy interfeys nomi
+            - --loop
+            - --interval
+            - "3600"
+          envFrom:
+            - configMapRef: {name: app-config}
+            - secretRef: {name: app-secrets}
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]   # ARP scan + LLDP/CDP capture uchun
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "512Mi"}

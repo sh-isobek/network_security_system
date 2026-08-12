@@ -19,6 +19,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-security_system}
       POSTGRES_USER: ${POSTGRES_USER:-security_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env faylida majburiy}
+    ports:
+      # Faqat 127.0.0.1'ga bog'langan (tashqi tarmoqqa OCHIQ EMAS) -
+      # bu `network_discovery` xizmati kabi `network_mode: host`
+      # konteynerlariga host orqali ulanish imkonini beradi.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -243,6 +248,43 @@ services:
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
       - grafana_data:/var/lib/grafana
     env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # Network Discovery (yangi TZ 5-bo'lim) - ixtiyoriy, --profile discovery
+  # ---------------------------------------------------------------------
+  network_discovery:
+    build: .
+    restart: unless-stopped
+    profiles: ["discovery"]
+    # MUHIM: standart Docker tarmoq rejimida konteyner FAQAT Docker'ning
+    # ichki bridge tarmog'ini (172.17.x/172.18.x) ko'radi, sizning
+    # haqiqiy LAN'ingizni (masalan 172.16.0.0/22) emas - ARP scan va
+    # LLDP/CDP capture noto'g'ri (yoki bo'sh) tarmoqni skanerlaydi.
+    # `network_mode: host` konteynerni host'ning tarmoq nomfazosiga
+    # to'g'ridan-to'g'ri ulaydi - host'dagi `ip addr`da ko'ringan barcha
+    # interfeyslar (eth0 va h.k.) konteyner ichida ham xuddi shunday
+    # ko'rinadi.
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN   # ARP scan uchun
+      - NET_RAW     # LLDP/CDP capture (raw socket) uchun
+    command: >
+      python -m network_discovery.scheduler
+        --cidr ${DISCOVERY_CIDR:-172.16.0.0/22}
+        --interface ${DISCOVERY_INTERFACE:-eth0}
+        --loop --interval 3600
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB:-security_system}
+      # MUHIM: network_mode:host'da konteyner "postgres" xizmat nomi
+      # orqali topilmaydi (Docker DNS ishlamaydi) - shuning uchun
+      # PostgreSQL'ning HOST'DAGI ochiq portiga (masalan 127.0.0.1 yoki
+      # host'ning haqiqiy IP'siga) to'g'ridan-to'g'ri ulanish kerak.
+      # `postgres` xizmatining `ports:` bo'limida 5432:5432 ochiq
+      # bo'lishini ta'minlang.
     depends_on:
       postgres:
         condition: service_healthy

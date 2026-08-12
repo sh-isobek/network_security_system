@@ -82,6 +82,55 @@ python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --lo
 `DISCOVERY_MISSING_THRESHOLD_HOURS` (standart 24) - qurilma necha
 soat ko'rinmasa "yo'qolgan" deb belgilanishi.
 
+## Docker'da ishga tushirish (MUHIM: tarmoq rejimi)
+
+Agar Network Discovery **Docker konteynerida** ishga tushirilsa, standart
+Docker bridge tarmog'i (`docker-compose.yml`dagi boshqa xizmatlar kabi)
+ishlatilmaydi - buning sababi quyida.
+
+### Muammo
+
+Docker o'rnatilgan istalgan production serverda qo'shimcha virtual
+interfeyslar bo'ladi (haqiqiy misol):
+
+```
+$ ip -4 addr
+2: eth0: ... inet 172.16.1.206/22 ...          <- HAQIQIY LAN
+3: br-71f7b11dc9c6: ... inet 172.18.0.1/16 ...  <- Docker Compose bridge
+4: docker0: ... inet 172.17.0.1/16 ...          <- Docker standart bridge
+```
+
+Bu **umumiy tizim ishlashiga** (Dashboard, Syslog Collector, baza)
+hech qanday ta'sir qilmaydi - ular oddiy TCP/UDP portlarga bog'langan.
+
+**Lekin** agar `network_discovery` xizmati standart Docker tarmog'ida
+ishga tushirilsa, konteyner FAQAT Docker'ning ichki bridge tarmog'ini
+(`172.17.x`/`172.18.x`) ko'radi - ARP scan/LLDP capture **noto'g'ri
+tarmoqni** (yoki bo'sh natijani) skanerlaydi, haqiqiy LAN'ni (masalan
+`172.16.0.0/22`) emas.
+
+### Yechim: `network_mode: host`
+
+`docker-compose.yml`da `network_discovery` xizmati allaqachon
+`network_mode: "host"` bilan sozlangan - bu konteynerni host'ning
+tarmoq nomfazosiga to'g'ridan-to'g'ri ulaydi (konteyner ichida `ip
+addr` host'dagi bilan bir xil natija beradi, jumladan haqiqiy `eth0`).
+
+```bash
+# .env faylida:
+DISCOVERY_CIDR=172.16.0.0/22
+DISCOVERY_INTERFACE=eth0
+
+docker compose --profile discovery up -d network_discovery postgres
+```
+
+**Eslatma**: `network_mode: host`da Docker'ning ichki DNS (xizmat
+nomi orqali topish, masalan `postgres:5432`) ishlamaydi - shuning
+uchun `docker-compose.yml`da bu xizmat uchun `DATABASE_URL`
+`127.0.0.1:5432`ga ishora qiladi, va `postgres` xizmati
+`127.0.0.1:5432:5432` orqali (faqat localhost'ga, xavfsizlik uchun)
+ochilgan.
+
 ## Kubernetes Node Discovery
 
 ```bash
