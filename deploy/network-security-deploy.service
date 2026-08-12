@@ -1,0 +1,12 @@
+[Unit]
+Description=Network Security System - avtomatik deploy (GitHub tekshiruv)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=REPO_DIR=/opt/network_security_system
+Environment=DEPLOY_BRANCH=main
+Environment=DEPLOY_LOG_FILE=/var/log/network_security_deploy.log
+ExecStart=/bin/bash /opt/network_security_system/deploy/auto_deploy.sh

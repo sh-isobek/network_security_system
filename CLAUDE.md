@@ -90,7 +90,33 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 39/39 test o'tadi (`run_full_test.py`).**
+**Joriy: 40/40 test o'tadi (`run_full_test.py`).**
+
+## Auto-Deploy (SSH+GitHub, foydalanuvchining production serveri so'rovi bo'yicha)
+
+Foydalanuvchi haqiqiy production mashinasidan (`network1411tas@...`,
+`172.16.1.206/22`, Docker bilan) GitHub'dan SSH orqali klonlash va
+yangilanganda avtomatik ishga tushirishni so'radi.
+
+Qurilgan: `deploy/auto_deploy.sh` (git fetch/compare/pull/backup/
+docker-rebuild/health-check/flock zanjiri) + `deploy/network-security-
+deploy.service`+`.timer` (systemd, har 5 daqiqada tekshiradi) +
+`docs_DEPLOYMENT_SSH_AUTOUPDATE.md` (SSH deploy key sozlash to'liq
+yo'riqnomasi).
+
+**Real test qilingan**: ikkita haqiqiy git repo (GitHub va production
+server o'rnini bosuvchi) bilan 4 stsenariy - o'zgarish yo'q holat,
+yangi commit bilan to'liq pull+backup+docker+health-check zanjiri
+(muvaffaqiyatli va muvaffaqiyatsiz health-check ikkalasi), va bir
+vaqtda ikkita jarayonning oldini olish (`flock`). `systemd` unit
+fayllari haqiqiy `systemd-analyze verify` orqali tasdiqlangan.
+
+**Topilgan va tuzatilgan test xatosi**: test skriptim backup/docker
+compose chiqishini noto'g'ri joydan (`subprocess.run`ning `stdout`
+maydonidan) tekshirgan edim - lekin `auto_deploy.sh` bu buyruqlar
+chiqishini faqat log faylga yo'naltiradi (`>> "$LOG_FILE"`), skriptning
+o'z stdout'iga emas (faqat `log()` funksiyasi orqali yozilgan xabarlar
+`tee` bilan ikkalasiga ham boradi). Log fayldan tekshirishga tuzatildi.
 
 ## Network Discovery kengaytmasi (10/10 talabiga javoban)
 

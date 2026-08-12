@@ -138,6 +138,7 @@ python -m engine.notification_engine --loop
 | Encryption at Rest | `crypto/field_encryption.py` | MFA maxfiy kaliti bazada shifrlangan saqlanadi (Fernet) |
 | API Token boshqaruvi | `api/token_manager.py` | `python -m api.token_manager --create NAME` / `--list` / `--revoke ID`, yoki `/api-tokens` |
 | Network Discovery | `network_discovery/` | ARP/ICMP/TCP/SNMP/LLDP/CDP/AD/UniFi/Kerio - `docs_NETWORK_DISCOVERY.md` |
+| Auto-Deploy (SSH+GitHub) | `deploy/auto_deploy.sh` | GitHub'dan avtomatik yangilanish - `docs_DEPLOYMENT_SSH_AUTOUPDATE.md` |
 | Mac Agent | `mac_agent/` | Xuddi shu yadro, launchd konfiguratsiyasi - `docs_MAC_AGENT_SETUP.md`ga qarang (kod yozilgan, lekin haqiqiy macOS'da sinalmagan) |
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 

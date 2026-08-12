@@ -2364,6 +2364,149 @@ def _test_differential_scan():
 check("Network Discovery: Scheduled + Differential Scan (discovered/disappeared/reappeared, dedup)", _test_differential_scan)
 
 # ---------------------------------------------------------------------------
+print("\n=== 40) AUTO-DEPLOY - GitHub'dan avtomatik yangilanish (real git repo'lar bilan) ===")
+
+
+def _test_auto_deploy():
+    import shutil
+    import stat
+    import subprocess
+    import time as _time
+
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", "auto_deploy.sh")
+    assert os.path.isfile(script_path), "deploy/auto_deploy.sh topilmadi"
+    mode = os.stat(script_path).st_mode
+    assert mode & stat.S_IXUSR, "auto_deploy.sh ishga tushirish huquqiga ega bo'lishi kerak edi"
+
+    # systemd unit fayllari mavjudligi
+    for unit_file in ["network-security-deploy.service", "network-security-deploy.timer"]:
+        unit_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", unit_file)
+        assert os.path.isfile(unit_path), f"{unit_file} topilmadi"
+
+    # systemd-analyze mavjud bo'lsa, real validatsiya
+    if subprocess.run(["which", "systemd-analyze"], capture_output=True).returncode == 0:
+        for unit_file in ["network-security-deploy.service", "network-security-deploy.timer"]:
+            unit_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", unit_file)
+            result = subprocess.run(["systemd-analyze", "verify", unit_path], capture_output=True, text=True)
+            assert result.returncode == 0, f"{unit_file} validatsiyadan o'tmadi: {result.stderr}"
+
+    # --- Real ikkita git repo bilan to'liq deploy oqimini test qilish ---
+    work_dir = "/tmp/_test_auto_deploy"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    fake_github = os.path.join(work_dir, "fake_github.git")
+    fake_seed = os.path.join(work_dir, "fake_seed")
+    fake_production = os.path.join(work_dir, "fake_production")
+    os.makedirs(work_dir)
+
+    subprocess.run(["git", "init", "--bare", "-q", fake_github], check=True)
+    subprocess.run(["git", "clone", "-q", fake_github, fake_seed], check=True)
+    subprocess.run(["git", "-C", fake_seed, "config", "user.email", "ci@test.com"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "config", "user.name", "CI Test"], check=True)
+
+    with open(os.path.join(fake_seed, "version.txt"), "w") as f:
+        f.write("v1\n")
+    os.makedirs(os.path.join(fake_seed, "backup"), exist_ok=True)
+    with open(os.path.join(fake_seed, "backup", "backup_manager.py"), "w") as f:
+        f.write('if __name__ == "__main__":\n    print("CI backup simulyatsiyasi OK")\n')
+
+    subprocess.run(["git", "-C", fake_seed, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "commit", "-q", "-m", "v1"], check=True)
+    branch_result = subprocess.run(["git", "-C", fake_seed, "branch", "--show-current"], capture_output=True, text=True)
+    branch = branch_result.stdout.strip()
+    subprocess.run(["git", "-C", fake_seed, "push", "-q", "origin", branch], check=True)
+
+    subprocess.run(["git", "clone", "-q", fake_github, fake_production], check=True)
+
+    fake_compose = os.path.join(work_dir, "fake_docker_compose.sh")
+    with open(fake_compose, "w") as f:
+        f.write("#!/bin/bash\necho \"[FAKE docker compose] $@\"\nexit 0\n")
+    os.chmod(fake_compose, 0o755)
+
+    deploy_log = os.path.join(work_dir, "deploy.log")
+    deploy_lock = os.path.join(work_dir, "deploy.lock")
+
+    def run_deploy(health_url="http://127.0.0.1:1/nonexistent"):
+        return subprocess.run(
+            ["bash", script_path],
+            env={
+                **os.environ,
+                "REPO_DIR": fake_production,
+                "DEPLOY_BRANCH": branch,
+                "DEPLOY_LOG_FILE": deploy_log,
+                "DEPLOY_LOCK_FILE": deploy_lock,
+                "DOCKER_COMPOSE_CMD": fake_compose,
+                "DEPLOY_HEALTH_CHECK_URL": health_url,
+                "DEPLOY_VERBOSE": "1",
+            },
+            capture_output=True, text=True, timeout=60,
+        )
+
+    # 1) O'zgarish yo'q holat
+    r1 = run_deploy()
+    assert r1.returncode == 0, f"O'zgarish-yo'q holatda 0 qaytishi kerak edi: {r1.stdout} {r1.stderr}"
+    assert "O'zgarish yo'q" in r1.stdout, f"'O'zgarish yo'q' xabari kutilgan edi: {r1.stdout}"
+
+    # 2) Yangi commit qo'shish va pull+backup+docker chaqirilishini tekshirish
+    with open(os.path.join(fake_seed, "version.txt"), "a") as f:
+        f.write("v2\n")
+    subprocess.run(["git", "-C", fake_seed, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "commit", "-q", "-m", "v2"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "push", "-q", "origin", branch], check=True)
+
+    r2 = run_deploy()  # health-check muvaffaqiyatsiz bo'ladi (mavjud bo'lmagan URL)
+    assert r2.returncode == 1, f"Health-check muvaffaqiyatsiz bo'lganda exit=1 kutilgan edi: {r2.stdout}"
+    with open(os.path.join(fake_production, "version.txt")) as f:
+        content = f.read()
+    assert "v2" in content, "git pull haqiqatan bajarilmadi - v2 topilmadi"
+
+    # MUHIM: backup/docker compose chiqishi skriptda `>> "$LOG_FILE"` orqali
+    # FAQAT log faylga yo'naltirilgan (skriptning o'z stdout'iga emas) -
+    # shuning uchun bu tekshiruvlar log fayldan, r2.stdout'dan emas.
+    with open(deploy_log) as f:
+        log_content = f.read()
+    assert "CI backup simulyatsiyasi OK" in log_content, f"Backup chaqirilmadi. Log: {log_content}"
+    assert "[FAKE docker compose] build" in log_content, "docker compose build chaqirilmadi"
+    assert "[FAKE docker compose] up -d" in log_content, "docker compose up chaqirilmadi"
+
+    # 3) Muvaffaqiyatli health-check bilan to'liq deploy
+    with open(os.path.join(fake_seed, "version.txt"), "a") as f:
+        f.write("v3\n")
+    subprocess.run(["git", "-C", fake_seed, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "commit", "-q", "-m", "v3"], check=True)
+    subprocess.run(["git", "-C", fake_seed, "push", "-q", "origin", branch], check=True)
+
+    health_proc = subprocess.Popen(["python3", "-m", "http.server", "18234", "--directory", work_dir])
+    try:
+        _time.sleep(1)
+        r3 = run_deploy(health_url="http://127.0.0.1:18234/")
+        assert r3.returncode == 0, f"Muvaffaqiyatli health-check'da 0 qaytishi kerak edi: {r3.stdout} {r3.stderr}"
+        assert "Deploy muvaffaqiyatli yakunlandi" in r3.stdout
+    finally:
+        health_proc.terminate()
+        health_proc.wait(timeout=5)
+
+    # 4) Lock mexanizmi - bir vaqtda ikkita jarayon
+    lock_test_lock = os.path.join(work_dir, "concurrent.lock")
+    with open(lock_test_lock, "w") as lf:
+        import fcntl
+        fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r4 = subprocess.run(
+            ["bash", script_path],
+            env={**os.environ, "REPO_DIR": fake_production, "DEPLOY_BRANCH": branch,
+                 "DEPLOY_LOG_FILE": deploy_log, "DEPLOY_LOCK_FILE": lock_test_lock,
+                 "DOCKER_COMPOSE_CMD": fake_compose},
+            capture_output=True, text=True, timeout=15,
+        )
+        assert r4.returncode == 0
+        assert "allaqachon ishlamoqda" in r4.stdout
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Auto-Deploy (SSH+GitHub avtomatik yangilanish, real git repo'lar, systemd validatsiya)", _test_auto_deploy)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

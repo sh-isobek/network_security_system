@@ -1,0 +1,12 @@
+[Unit]
+Description=Network Security System - har 5 daqiqada GitHub yangilanishini tekshirish
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Bir vaqtning o'zida bir nechta ishga tushish to'planib qolmasligi uchun
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
