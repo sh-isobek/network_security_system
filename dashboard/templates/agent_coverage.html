@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Agent Coverage - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Windows Agent Coverage (AD orqali)</h1>
+<p style="font-size:13px; color:#5a6673; margin-bottom:14px;">
+    Active Directory'dagi barcha kompyuterlar vs Endpoint Agent o'rnatilgan/faol qurilmalar.
+    "Eskirgan" = agent {{ stale_hours }}+ soat heartbeat yubormagan.
+</p>
+
+{% if error %}
+<div class="empty">AD serveriga ulanib bo'lmadi: {{ error }} (AD_SERVER/AD_BASE_DN sozlanganini tekshiring)</div>
+{% elif report.total_ad_computers == 0 %}
+<div class="empty">AD'da hech qanday kompyuter topilmadi</div>
+{% else %}
+<div style="display:flex; gap:16px; margin-bottom:24px;">
+    <div style="background:#fff; padding:16px 24px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size:28px; font-weight:700; color:{% if report.coverage_percent >= 90 %}#27ae60{% elif report.coverage_percent >= 60 %}#e67e22{% else %}#c0392b{% endif %};">{{ report.coverage_percent }}%</div>
+        <div style="font-size:12px; color:#95a5a6;">Qamrov ({{ report.covered|length }}/{{ report.total_ad_computers }})</div>
+    </div>
+    <div style="background:#fff; padding:16px 24px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size:28px; font-weight:700; color:#e67e22;">{{ report.stale|length }}</div>
+        <div style="font-size:12px; color:#95a5a6;">Eskirgan</div>
+    </div>
+    <div style="background:#fff; padding:16px 24px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size:28px; font-weight:700; color:#c0392b;">{{ report.missing|length }}</div>
+        <div style="font-size:12px; color:#95a5a6;">O'rnatilmagan</div>
+    </div>
+</div>
+
+{% if report.missing %}
+<h1>Agent o'rnatilishi kerak bo'lgan kompyuterlar</h1>
+<table style="margin-bottom:24px;">
+    <tr><th>Kompyuter nomi</th></tr>
+    {% for name in report.missing %}
+    <tr><td class="mono">{{ name }}</td></tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+{% if report.stale %}
+<h1>Eskirgan (agent to'xtagan bo'lishi mumkin)</h1>
+<table>
+    <tr><th>Kompyuter nomi</th></tr>
+    {% for name in report.stale %}
+    <tr><td class="mono">{{ name }}</td></tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -2507,6 +2507,181 @@ def _test_auto_deploy():
 check("Auto-Deploy (SSH+GitHub avtomatik yangilanish, real git repo'lar, systemd validatsiya)", _test_auto_deploy)
 
 # ---------------------------------------------------------------------------
+print("\n=== 41) WINDOWS AGENT: Heartbeat + AD Coverage Report (real HTTP + real OpenLDAP) ===")
+
+
+def _test_agent_coverage():
+    import subprocess
+    import shutil
+    import time as _time
+    from db.models import utcnow
+
+    # --- 1) Heartbeat endpoint'ini real HTTP orqali test qilish ---
+    api_env = {**os.environ, "AGENT_API_KEY": "test-coverage-api-key"}
+    api_proc = subprocess.Popen(
+        ["python3", "-m", "api.server"], env=api_env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        _time.sleep(2)
+        import importlib
+        os.environ["API_SERVER_URL"] = "http://127.0.0.1:8443"
+        os.environ["AGENT_API_KEY"] = "test-coverage-api-key"
+        os.environ["AGENT_VERSION"] = "3.1.4"
+        import agent_core.agent as agent_mod
+        importlib.reload(agent_mod)
+
+        result = agent_mod.send_heartbeat("WIN-CI-HEARTBEAT", "172.16.11.200")
+        assert result is True, "Heartbeat muvaffaqiyatli bo'lishi kerak edi"
+    finally:
+        api_proc.terminate()
+        try:
+            api_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            api_proc.kill()
+        for k in ["API_SERVER_URL", "AGENT_API_KEY", "AGENT_VERSION"]:
+            os.environ.pop(k, None)
+
+    s = get_session()
+    d = s.query(Device).filter(Device.hostname == "WIN-CI-HEARTBEAT").first()
+    assert d is not None, "Heartbeat orqali qurilma yaratilmadi"
+    assert d.agent_version == "3.1.4"
+    assert d.agent_last_heartbeat is not None
+    s.close()
+
+    # --- 2) Agent Coverage Report'ni real OpenLDAP bilan test qilish ---
+    if subprocess.run(["which", "slapd"], capture_output=True).returncode != 0:
+        print("   (Coverage Report o'tkazib yuborildi - slapd o'rnatilmagan)")
+        return
+
+    work_dir = "/tmp/_test_agent_coverage"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(os.path.join(work_dir, "data"))
+
+    schema_path = os.path.join(work_dir, "ad-attrs.schema")
+    with open(schema_path, "w") as f:
+        f.write(
+            "attributetype ( 1.2.840.113556.1.4.619 NAME 'dNSHostName' "
+            "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )\n"
+            "attributetype ( 1.2.840.113556.1.4.618 NAME 'operatingSystem' "
+            "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )\n"
+            "objectclass ( 1.2.840.113556.1.5.9 NAME 'computer' SUP device STRUCTURAL "
+            "MAY ( dNSHostName $ operatingSystem ) )\n"
+        )
+
+    conf_path = os.path.join(work_dir, "slapd.conf")
+    with open(conf_path, "w") as f:
+        f.write(f"""include /etc/ldap/schema/core.schema
+include /etc/ldap/schema/cosine.schema
+include /etc/ldap/schema/inetorgperson.schema
+include {schema_path}
+modulepath /usr/lib/ldap
+moduleload back_mdb.la
+pidfile {work_dir}/slapd.pid
+argsfile {work_dir}/slapd.args
+database mdb
+maxsize 1048576000
+suffix "dc=covci,dc=local"
+rootdn "cn=admin,dc=covci,dc=local"
+rootpw covci456
+directory {work_dir}/data
+""")
+
+    ldif_path = os.path.join(work_dir, "computers.ldif")
+    with open(ldif_path, "w") as f:
+        f.write("""dn: dc=covci,dc=local
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Coverage CI
+dc: covci
+
+dn: ou=computers,dc=covci,dc=local
+objectClass: organizationalUnit
+ou: computers
+
+dn: cn=CI-COVERED,ou=computers,dc=covci,dc=local
+objectClass: computer
+objectClass: top
+cn: CI-COVERED
+dNSHostName: CI-COVERED.covci.local
+
+dn: cn=CI-MISSING,ou=computers,dc=covci,dc=local
+objectClass: computer
+objectClass: top
+cn: CI-MISSING
+dNSHostName: CI-MISSING.covci.local
+""")
+
+    slapd_proc = subprocess.Popen(
+        ["slapd", "-f", conf_path, "-h", "ldap://127.0.0.1:16392/", "-d", "0"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        ready = False
+        for _ in range(20):
+            probe = subprocess.run(
+                ["ldapsearch", "-x", "-H", "ldap://127.0.0.1:16392", "-b", "", "-s", "base"],
+                capture_output=True, timeout=3,
+            )
+            if probe.returncode == 0:
+                ready = True
+                break
+            _time.sleep(0.5)
+        assert ready, "slapd 10 soniyada tayyor bo'lmadi"
+
+        add_result = subprocess.run(
+            ["ldapadd", "-x", "-D", "cn=admin,dc=covci,dc=local", "-w", "covci456",
+             "-H", "ldap://127.0.0.1:16392", "-f", ldif_path],
+            capture_output=True, timeout=10, text=True,
+        )
+        assert add_result.returncode == 0, f"ldapadd xatoligi: {add_result.stderr}"
+
+        s = get_session()
+        s.add(Device(ip_address="172.16.11.201", hostname="CI-COVERED", agent_last_heartbeat=utcnow(), agent_version="1.0"))
+        s.commit()
+        s.close()
+
+        os.environ["AD_SERVER"] = "ldap://127.0.0.1:16392"
+        os.environ["AD_BASE_DN"] = "dc=covci,dc=local"
+        os.environ["AD_SERVICE_DN"] = "cn=admin,dc=covci,dc=local"
+        os.environ["AD_SERVICE_PASSWORD"] = "covci456"
+        os.environ["AD_COMPUTER_FILTER"] = "(objectClass=computer)"
+
+        from network_discovery.agent_coverage import generate_coverage_report
+        report = generate_coverage_report()
+
+        assert report.total_ad_computers == 2, f"2 ta AD kompyuter kutilgan edi, {report.total_ad_computers} keldi"
+        assert "CI-COVERED" in report.covered, f"CI-COVERED 'covered' bo'lishi kerak edi: {report}"
+        assert "CI-MISSING" in report.missing, f"CI-MISSING 'missing' bo'lishi kerak edi: {report}"
+        assert report.coverage_percent == 50.0
+
+        # Dashboard sahifasi orqali ham tekshirish
+        from dashboard import app as dash_app
+        from dashboard.create_user import create_user
+        create_user("coverage_ci_admin", "coverageci123", "admin")
+        dash_app.app.secret_key = "test-secret-coverage"
+        client = dash_app.app.test_client()
+        client.post("/login", data={"username": "coverage_ci_admin", "password": "coverageci123"})
+        r = client.get("/agent-coverage")
+        assert r.status_code == 200
+        assert b"CI-MISSING" in r.data
+
+    finally:
+        slapd_proc.terminate()
+        try:
+            slapd_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            slapd_proc.kill()
+        shutil.rmtree(work_dir, ignore_errors=True)
+        for k in ["AD_SERVER", "AD_BASE_DN", "AD_SERVICE_DN", "AD_SERVICE_PASSWORD", "AD_COMPUTER_FILTER"]:
+            os.environ.pop(k, None)
+
+
+check("Windows Agent Heartbeat + AD Coverage Report (real HTTP + real OpenLDAP)", _test_agent_coverage)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

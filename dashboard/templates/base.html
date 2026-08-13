@@ -32,6 +32,9 @@
         <a href="/alerts" class="{% if request.path == '/alerts' %}active{% endif %}">Alertlar</a>
         <a href="/devices" class="{% if request.path == '/devices' %}active{% endif %}">Qurilmalar</a>
         <a href="/asset-inventory" class="{% if request.path == '/asset-inventory' %}active{% endif %}">Asset Inventory</a>
+        {% if current_user.is_authenticated and current_user.role == 'admin' %}
+        <a href="/agent-coverage" class="{% if request.path == '/agent-coverage' %}active{% endif %}">Agent Coverage</a>
+        {% endif %}
         <a href="/files" class="{% if request.path == '/files' %}active{% endif %}">Fayllar</a>
         <a href="/live-map" class="{% if request.path == '/live-map' %}active{% endif %}">Live Map</a>
         {% if current_user.is_authenticated and current_user.role == 'admin' %}

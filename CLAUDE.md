@@ -90,7 +90,47 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 40/40 test o'tadi (`run_full_test.py`).**
+**Joriy: 41/41 test o'tadi (`run_full_test.py`).**
+
+## Windows Agent AD-orqali avtomatlashtirish (foydalanuvchining production so'rovi)
+
+Foydalanuvchi domenga a'zo ko'p Windows kompyuterlarga agentni qo'lda
+o'rnatish o'rniga, **Active Directory GPO** orqali avtomatlashtirishni
+so'radi.
+
+Qurilgan:
+- `deploy/windows_agent_gpo/Deploy-NetworkSecurityAgent.ps1` - GPO
+  Startup Script (idempotent, versiya solishtiradi, SYSVOL'dan
+  o'rnatadi). ⚠️ PowerShell bu sandbox'da yo'q - ijro sinalmagan
+  (Zeek/Grafana kabi), lekin qavslar/tirnoq balansi qo'lda tekshirilgan.
+- `api/server.py`ga `/api/v1/agent_heartbeat` endpoint (agent har
+  5 daqiqada "tirikman" xabari yuboradi).
+- `agent_core/agent.py`ga davriy heartbeat yuborish logikasi.
+- `network_discovery/agent_coverage.py` - AD'dagi barcha kompyuterlar
+  ro'yxatini heartbeat ma'lumoti bilan solishtirib, `covered`/`stale`/
+  `missing` hisoboti chiqaradi. Dashboard'da `/agent-coverage`.
+
+**Real test qilingan**: heartbeat mexanizmi to'liq real HTTP orqali;
+Agent Coverage Report haqiqiy OpenLDAP (maxsus AD sxema bilan) va
+haqiqiy heartbeat ma'lumoti bilan - barcha 3 holat (covered/stale/
+missing) va case-insensitive hostname moslashtirish tasdiqlangan.
+
+**Topilgan va tuzatilgan xato**: `ad_discovery.py` muhit
+o'zgaruvchilarini modul darajasida (import paytida) o'qir edi - bu
+loyihada bir necha marta uchragan tanish xato turkumi
+(`field_encryption.py`da avval tuzatilgan). Funksiya ichida dinamik
+o'qishga o'zgartirildi - bu ham `ad_discovery.py`dan foydalanuvchi
+BOSHQA barcha joylarni (mavjud AD Discovery testi ham) to'g'irladi.
+
+## Ikkinchi tuzatish: SSH Deploy ruxsatlari (foydalanuvchi savoli)
+
+Foydalanuvchi "SSH orqali kirish uchun qanday ruxsatlar kerak"
+so'radi - bu `deploy/network-security-deploy.service`da `root`
+o'rniga maxsus, cheklangan `netsecdeploy` foydalanuvchisiga
+(`docker` guruhi a'zosi) o'tkazildi, va `docs_DEPLOYMENT_SSH_
+AUTOUPDATE.md`ga "0-bosqich: qanday ruxsatlar kerak" bo'limi
+qo'shildi (chiquvchi-vs-kiruvchi tushuntirish, SSH kalit fayl
+ruxsatlari, `docker` guruhi haqida ochiq ogohlantirish).
 
 ## Auto-Deploy (SSH+GitHub, foydalanuvchining production serveri so'rovi bo'yicha)
 

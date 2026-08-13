@@ -236,6 +236,19 @@ def devices():
         session.close()
 
 
+@app.route("/agent-coverage")
+@role_required("admin")
+def agent_coverage_page():
+    from network_discovery.agent_coverage import generate_coverage_report, STALE_THRESHOLD_HOURS
+    try:
+        report = generate_coverage_report()
+        error = None
+    except Exception as exc:
+        report = None
+        error = str(exc)
+    return render_template("agent_coverage.html", report=report, error=error, stale_hours=STALE_THRESHOLD_HOURS)
+
+
 @app.route("/asset-inventory")
 @login_required
 def asset_inventory():

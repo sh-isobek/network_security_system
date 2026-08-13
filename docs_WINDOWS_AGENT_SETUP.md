@@ -108,7 +108,117 @@ orqali barcha kompyuterlarga avtomatik tarqatish mumkin.
 Boshqa papka qo'shish uchun `--watch-dirs` argumentini ishlating yoki
 `_default_watch_dirs()` funksiyasini tahrirlang.
 
-## 5. Xavfsizlik va cheklovlar (halol tushuntirish)
+## 5. Active Directory orqali avtomatik tarqatish (GPO)
+
+Yuqoridagi 2-bo'lim **bitta kompyuterda qo'lda** o'rnatishni tasvirlaydi.
+Domenga a'zo ko'p sonli kompyuterlar uchun (masalan 50, 200, 1000+)
+buni **Group Policy Object (GPO)** orqali butunlay avtomatlashtirish
+mumkin - foydalanuvchi hech narsa qilmasdan, kompyuter domenga
+ulanganida (yoki keyingi reboot'da) agent avtomatik o'rnatiladi.
+
+### 5.1. Qanday ishlaydi
+
+```
+[Domain Controller]                    [Har bir Windows PC]
+  SYSVOL\...\scripts\
+    NetworkSecurityAgent\
+      windows_agent/ (fayllar)    ──►   Kompyuter yoqiladi
+      VERSION                            │
+      api_key.secret                     ▼
+                                    GPO Startup Script ishga tushadi
+                                    (SYSTEM huquqi bilan, login'dan oldin)
+                                          │
+                                    Versiya solishtiradi:
+                                    o'rnatilgan == mavjud?
+                                      │           │
+                                     HA           YO'Q
+                                      │           │
+                                  Chiqadi    Fayllarni nusxalaydi,
+                                  (jim)      xizmatni o'rnatadi/
+                                             qayta ishga tushiradi
+```
+
+### 5.2. Sozlash qadamlari
+
+**a) SYSVOL'da agent paketini tayyorlash** (Domain Controller'da):
+
+```powershell
+$SysvolPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\NetworkSecurityAgent"
+New-Item -ItemType Directory -Path $SysvolPath -Force
+
+# Loyihaning windows_agent/, agent_core/, config/ papkalarini nusxalang
+Copy-Item -Path "C:\Path\To\Repo\windows_agent" -Destination $SysvolPath -Recurse
+Copy-Item -Path "C:\Path\To\Repo\agent_core" -Destination $SysvolPath -Recurse
+Copy-Item -Path "C:\Path\To\Repo\config" -Destination $SysvolPath -Recurse
+
+# Versiya belgisi (har yangilanishda oshiring)
+Set-Content -Path "$SysvolPath\VERSION" -Value "1.0.0"
+
+# API kalitini alohida faylga (bu fayl uchun ACL orqali faqat
+# "Domain Computers" guruhiga O'QISH huquqini bering, boshqa hech kimga)
+Set-Content -Path "$SysvolPath\api_key.secret" -Value "<markazdagi AGENT_API_KEY bilan bir xil>"
+```
+
+**b) Deploy skriptini SYSVOL'ga qo'yish**:
+
+```powershell
+Copy-Item -Path "C:\Path\To\Repo\deploy\windows_agent_gpo\Deploy-NetworkSecurityAgent.ps1" `
+    -Destination "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\"
+```
+
+**c) Yangi GPO yaratish va bog'lash** (Group Policy Management Console orqali):
+
+1. `gpmc.msc` oching
+2. Kerakli OU (masalan "Corporate Computers") ustida o'ng tugma →
+   **"Create a GPO in this domain, and Link it here"**
+3. Nomi: masalan `Network Security Agent - Auto Deploy`
+4. Yaratilgan GPO'ni tahrirlash (**Edit**):
+   - **Computer Configuration** → **Policies** → **Windows Settings**
+     → **Scripts (Startup/Shutdown)** → **Startup**
+   - **"PowerShell Scripts"** tab'ida **"Add"** → skript yo'lini
+     (`\\domain\SYSVOL\domain\scripts\Deploy-NetworkSecurityAgent.ps1`)
+     ko'rsating
+5. **"Enforced"** qilib belgilang (agar boshqa GPO'lar bilan
+   to'qnashmasligi kerak bo'lsa)
+
+**d) Kuchga kiritish**:
+
+Kompyuterlar keyingi reboot'da (yoki `gpupdate /force` + reboot bilan
+majburan) avtomatik agentni o'rnatadi. Bir nechta kompyuterda majburan
+qo'llash uchun (test uchun foydali):
+
+```powershell
+Invoke-GPUpdate -Computer "PC-NAME" -Force
+```
+
+### 5.3. Qamrovni kuzatish (Agent Coverage Report)
+
+GPO orqali tarqatish "hamma joyga yetdimi?" savolini avtomatik javob
+berish uchun, tizimda **Agent Coverage Report** mavjud
+(`network_discovery/agent_coverage.py`) - bu AD'dagi barcha
+kompyuterlar ro'yxatini agent'dan kelayotgan "heartbeat" xabarlari
+bilan solishtiradi:
+
+```bash
+python -m network_discovery.agent_coverage
+```
+
+Natija - `covered` (agent faol), `stale` (agent o'rnatilgan edi, lekin
+24+ soat javob bermayapti - o'chirilgan/ishdan chiqqan bo'lishi
+mumkin), `missing` (hali umuman o'rnatilmagan). Dashboard'da
+`/agent-coverage` sahifasida (faqat admin) vizual ko'rinishda.
+
+**MUHIM (halol tushuntirish)**: `Deploy-NetworkSecurityAgent.ps1`
+skripti Windows/PowerShell/Active Directory infratuzilmasini talab
+qiladi - bu loyiha tayyorlangan Linux sandbox muhitida ijro etib
+sinalmagan (Zeek/Grafana bilan bir xil holat). Kod PowerShell
+sintaksisi va GPO konventsiyalariga ehtiyotkorlik bilan mos yozilgan
+(qavslar/tirnoq balansi qo'lda tekshirilgan), lekin **production'ga
+qo'yishdan oldin bitta test kompyuterda albatta qo'lda sinab
+ko'ring**. Agent Coverage Report (Python/LDAP qismi) esa haqiqiy
+OpenLDAP server bilan to'liq test qilingan.
+
+## 6. Xavfsizlik va cheklovlar (halol tushuntirish)
 
 - **Offline holat**: agent internetdan uzilgan noutbukda ham ishlashi
   uchun mahalliy kesh (`agent_hash_cache.json`) ishlatadi. Lekin kesh

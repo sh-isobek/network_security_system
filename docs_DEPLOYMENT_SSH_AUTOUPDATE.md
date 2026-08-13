@@ -5,6 +5,50 @@ Bu hujjat production serveringizni (masalan sizning
 `main` branch'ga yangi commit tushganda **avtomatik ravishda**
 yangilanadigan qilib sozlashni tushuntiradi.
 
+## 0. Qanday ruxsatlar kerak? (qisqacha javob)
+
+**MUHIM tushuncha**: bu — **chiquvchi (outbound)** SSH ulanish
+(server -> GitHub). Serveringizda hech qanday **kiruvchi (inbound)**
+port ochish yoki firewall qoidasini o'zgartirish SHART EMAS - GitHub
+sizning serveringizga hech qachon ulanmaydi, faqat serveringiz
+GitHub'ga ulanadi (xuddi `git clone`/`git pull` qilganingizdek).
+
+| Nima kerak | Nima uchun | Qanday berish |
+|---|---|---|
+| **Chiquvchi TCP 22-port** (`github.com`ga) | `git fetch`/`pull` SSH orqali ishlaydi | Odatda standart - agar qattiq firewall bo'lsa, `443`-portli SSH muqobilini pastda ko'ring |
+| **`docker` guruhi a'zoligi** | Docker buyruqlarini `root`siz ishga tushirish uchun | `usermod -aG docker netsecdeploy` |
+| **`/opt/network_security_system` papkasiga egalik** | `git pull`, log yozish uchun | `chown -R netsecdeploy:netsecdeploy /opt/network_security_system` |
+| SSH kalit fayl ruxsatlari | SSH o'zi buzilgan ruxsatlar bilan kalitni RAD ETADI | `chmod 600` (shaxsiy), `chmod 700` (`.ssh` papka) |
+
+**Kerak EMAS**: `sudo`, `root`, yangi firewall qoidasi (kiruvchi), SSH
+serverining o'zini sozlash (`/etc/ssh/sshd_config`) - bularning
+hech biriga tegish shart emas.
+
+### 0.1. Maxsus foydalanuvchi yaratish (root o'rniga)
+
+`root` sifatida ishlatish **kerakidan ortiqcha huquq** beradi (agar
+skript yoki bog'liqliklardan birortasi buzilsa, butun serverga kirish
+imkoni bo'ladi). Buning o'rniga faqat kerakli huquqqa ega maxsus
+foydalanuvchi yarating:
+
+```bash
+sudo useradd --system --create-home --shell /bin/bash netsecdeploy
+sudo usermod -aG docker netsecdeploy
+```
+
+`docker` guruhi a'zoligi - bu Docker'ning o'zi tavsiya qiladigan
+standart amaliyot (`/var/run/docker.sock` guruh egaligi orqali,
+`root` bo'lmagan foydalanuvchiga `docker`/`docker compose`
+buyruqlarini ishlatish imkonini beradi).
+
+**Diqqat**: `docker` guruhiga a'zolik amalda root-ekvivalent huquq
+beradi (Docker konteynerlar orqali host fayl tizimiga kirish mumkin)
+- bu **Docker'ning o'zining tanilgan xususiyati**, bizning
+konfiguratsiyamizning kamchiligi emas. Agar bu sizning xavfsizlik
+siyosatingizga mos kelmasa, muqobil: Podman (rootless konteynerlar)
+yoki Docker'ni rootless rejimda ishga tushirish
+(https://docs.docker.com/engine/security/rootless/).
+
 ## 1. SSH Deploy Key yaratish (serverda)
 
 **Muhim**: shaxsiy SSH kalitingizni ishlatmang - repo uchun alohida,
@@ -13,10 +57,13 @@ xavfsizroq - agar server buzilsa, tajovuzkor faqat shu bitta repo'ni
 o'qiy oladi, boshqa hech narsaga yozib ham, boshqa repo'larga kira
 ham olmaydi.
 
+Kalit `netsecdeploy` foydalanuvchisi nomidan (root'dan emas)
+yaratiladi - `sudo -u` orqali:
+
 ```bash
-sudo mkdir -p /opt/network_security_system
-sudo ssh-keygen -t ed25519 -f /root/.ssh/network_security_deploy_key -N "" -C "network-security-deploy@$(hostname)"
-sudo cat /root/.ssh/network_security_deploy_key.pub
+sudo -u netsecdeploy mkdir -p /home/netsecdeploy/.ssh
+sudo -u netsecdeploy ssh-keygen -t ed25519 -f /home/netsecdeploy/.ssh/network_security_deploy_key -N "" -C "network-security-deploy@$(hostname)"
+sudo -u netsecdeploy cat /home/netsecdeploy/.ssh/network_security_deploy_key.pub
 ```
 
 Chiqargan ochiq kalitni nusxalang.
@@ -33,14 +80,20 @@ Chiqargan ochiq kalitni nusxalang.
 ## 3. SSH konfiguratsiyasi (serverda)
 
 ```bash
-sudo tee -a /root/.ssh/config << 'EOF'
+sudo -u netsecdeploy tee -a /home/netsecdeploy/.ssh/config << 'EOF'
 Host github.com-network-security
     HostName github.com
     User git
-    IdentityFile /root/.ssh/network_security_deploy_key
+    IdentityFile /home/netsecdeploy/.ssh/network_security_deploy_key
     IdentitiesOnly yes
 EOF
-sudo chmod 600 /root/.ssh/config
+
+# SSH kalit fayl ruxsatlari - agar bular noto'g'ri bo'lsa, SSH
+# "UNPROTECTED PRIVATE KEY FILE" xatoligi bilan kalitni rad etadi
+sudo -u netsecdeploy chmod 700 /home/netsecdeploy/.ssh
+sudo -u netsecdeploy chmod 600 /home/netsecdeploy/.ssh/network_security_deploy_key
+sudo -u netsecdeploy chmod 644 /home/netsecdeploy/.ssh/network_security_deploy_key.pub
+sudo -u netsecdeploy chmod 600 /home/netsecdeploy/.ssh/config
 ```
 
 GitHub'ning host kalitini ishonchli manbalarga qo'shish (birinchi

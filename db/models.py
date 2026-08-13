@@ -72,6 +72,11 @@ class Device(Base):
     discovery_source = Column(String(50))                  # "arp_scan" | "icmp" | "snmp" | "ad" | "unifi" | "kerio_dhcp"
     last_discovered_at = Column(DateTime)
 
+    # --- Endpoint Agent Coverage (yangi TZ 6-bo'lim: AD orqali avtomatlashtirish) ---
+    agent_last_heartbeat = Column(DateTime)                  # oxirgi marta agent "men tirikman" deb xabar bergan vaqti
+    agent_version = Column(String(50))                         # agentning o'zi bildirgan versiyasi
+    agent_os = Column(String(20))                                # "windows" | "linux" | "mac"
+
     events = relationship("Event", back_populates="device")
 
 

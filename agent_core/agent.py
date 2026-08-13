@@ -56,6 +56,8 @@ logger = logging.getLogger("endpoint_agent")
 # --- Sozlamalar ---
 API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
+AGENT_VERSION = os.getenv("AGENT_VERSION", "1.0.0")
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "300"))  # 5 daqiqa
 LOCAL_CACHE_FILE = os.getenv("AGENT_CACHE_FILE", "./agent_hash_cache.json")
 API_TIMEOUT = 5  # soniya - server sekin javob bersa ham foydalanuvchini kutdirmaslik uchun
 
@@ -166,6 +168,34 @@ def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
         # TODO: offline navbat (queue) qo'shish - internet qaytganda qayta yuborish
 
 
+def send_heartbeat(hostname: str, ip_address: str) -> bool:
+    """
+    Markazga "men tirikman" xabarini yuboradi -
+    `network_discovery.agent_coverage` moduli buni "qaysi AD
+    kompyuterda agent hali o'rnatilmagan/to'xtagan" hisobotini
+    chiqarish uchun ishlatadi. Xatolik (offline) bo'lsa jim ravishda
+    False qaytaradi - agentning asosiy vazifasini (fayl kuzatish)
+    to'xtatib qo'ymaydi.
+    """
+    payload = {
+        "hostname": hostname,
+        "ip_address": ip_address,
+        "agent_version": AGENT_VERSION,
+        "agent_os": platform.system().lower().replace("darwin", "mac"),
+    }
+    try:
+        resp = requests.post(
+            f"{API_SERVER_URL}/api/v1/agent_heartbeat",
+            json=payload,
+            headers={"X-API-Key": AGENT_API_KEY},
+            timeout=API_TIMEOUT,
+        )
+        return resp.status_code == 200
+    except requests.RequestException as exc:
+        logger.debug(f"Heartbeat yuborib bo'lmadi (offline): {exc}")
+        return False
+
+
 def _get_local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -229,9 +259,14 @@ class EndpointAgent:
     def run(self):
         self.monitor.start()
         logger.info("Agent ishga tushdi, fayllar kuzatilmoqda...")
+        send_heartbeat(self.hostname, self.ip_address)  # ishga tushganda darhol bir marta
+        last_heartbeat = time.time()
         try:
             while True:
                 time.sleep(1)
+                if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    send_heartbeat(self.hostname, self.ip_address)
+                    last_heartbeat = time.time()
         except KeyboardInterrupt:
             logger.info("Agent to'xtatilmoqda...")
             self.monitor.stop()

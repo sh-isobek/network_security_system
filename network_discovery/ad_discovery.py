@@ -15,13 +15,7 @@ from ldap3 import Server, Connection, ALL, SIMPLE
 
 logger = logging.getLogger("ad_discovery")
 
-AD_SERVER = os.getenv("AD_SERVER", os.getenv("LDAP_SERVER", ""))
-AD_BASE_DN = os.getenv("AD_BASE_DN", os.getenv("LDAP_BASE_DN", ""))
-AD_SERVICE_DN = os.getenv("AD_SERVICE_DN", os.getenv("LDAP_SERVICE_DN", ""))
-AD_SERVICE_PASSWORD = os.getenv("AD_SERVICE_PASSWORD", os.getenv("LDAP_SERVICE_PASSWORD", ""))
-# Standart Active Directory filtri. Boshqa LDAP serverlar (masalan
-# umumiy OpenLDAP) uchun moslashtiring - masalan `(objectClass=device)`
-AD_COMPUTER_FILTER = os.getenv("AD_COMPUTER_FILTER", "(objectClass=computer)")
+logger = logging.getLogger("ad_discovery")
 
 
 @dataclass
@@ -37,18 +31,29 @@ def discover_ad_computers(timeout: int = 10) -> List[AdComputer]:
     AD/LDAP serveridan kompyuterlar ro'yxatini oladi. Server sozlanmagan
     yoki ulanib bo'lmasa, bo'sh ro'yxat qaytaradi (exception ko'tarmaydi).
     """
-    if not AD_SERVER or not AD_BASE_DN:
+    # MUHIM: muhit o'zgaruvchilari HAR CHAQIRUVDA dinamik o'qiladi (modul
+    # darajasidagi "muzlab qolgan" konstanta emas) - bu loyihada bir
+    # necha marta uchragan xato turkumini oldini oladi (agar kalit
+    # modul import qilingandan KEYIN o'rnatilsa, eski qiymat "muzlab"
+    # qolib, sozlama hech qachon topilmagan bo'lib ko'rinardi).
+    ad_server = os.getenv("AD_SERVER", os.getenv("LDAP_SERVER", ""))
+    ad_base_dn = os.getenv("AD_BASE_DN", os.getenv("LDAP_BASE_DN", ""))
+    ad_service_dn = os.getenv("AD_SERVICE_DN", os.getenv("LDAP_SERVICE_DN", ""))
+    ad_service_password = os.getenv("AD_SERVICE_PASSWORD", os.getenv("LDAP_SERVICE_PASSWORD", ""))
+    ad_computer_filter = os.getenv("AD_COMPUTER_FILTER", "(objectClass=computer)")
+
+    if not ad_server or not ad_base_dn:
         logger.warning("AD_SERVER/AD_BASE_DN sozlanmagan")
         return []
 
     try:
-        server = Server(AD_SERVER, get_info=ALL, connect_timeout=timeout)
+        server = Server(ad_server, get_info=ALL, connect_timeout=timeout)
         conn = Connection(
-            server, user=AD_SERVICE_DN, password=AD_SERVICE_PASSWORD,
+            server, user=ad_service_dn, password=ad_service_password,
             authentication=SIMPLE, auto_bind=True,
         )
         conn.search(
-            AD_BASE_DN, AD_COMPUTER_FILTER,
+            ad_base_dn, ad_computer_filter,
             attributes=["cn", "dNSHostName", "operatingSystem", "name"],
         )
 

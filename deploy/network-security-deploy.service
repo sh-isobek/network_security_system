@@ -5,8 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=root
+# MUHIM: root EMAS - maxsus, cheklangan foydalanuvchi (docs_DEPLOYMENT_
+# SSH_AUTOUPDATE.md'dagi 0-bosqichda yaratiladi). Bu foydalanuvchi faqat
+# `docker` guruhiga a'zo (Docker buyruqlarini root'siz ishga tushirish
+# uchun) va /opt/network_security_system'ga egalik qiladi - undan
+# tashqari serverda HECH QANDAY qo'shimcha huquqqa ega emas.
+User=netsecdeploy
+Group=netsecdeploy
 Environment=REPO_DIR=/opt/network_security_system
 Environment=DEPLOY_BRANCH=main
-Environment=DEPLOY_LOG_FILE=/var/log/network_security_deploy.log
+Environment=DEPLOY_LOG_FILE=/opt/network_security_system/deploy.log
 ExecStart=/bin/bash /opt/network_security_system/deploy/auto_deploy.sh

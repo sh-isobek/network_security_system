@@ -33,7 +33,7 @@ from flask import Flask, request, jsonify
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
-from db.models import HashBlacklist, Alert, Device, FileEvent
+from db.models import HashBlacklist, Alert, Device, FileEvent, utcnow
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
@@ -179,6 +179,49 @@ def report_incident():
 
         logger.warning(f"AGENT INCIDENT: {data['hostname']} ({data['ip_address']}) - {data['filename']} - {action_summary}")
         return jsonify({"status": "recorded", "alert_id": alert.id})
+    finally:
+        session.close()
+
+
+@app.route("/api/v1/agent_heartbeat", methods=["POST"])
+@require_api_key
+def agent_heartbeat():
+    """
+    Endpoint Agent davriy ravishda (masalan har 5 daqiqada) "men
+    tirikman" xabarini yuboradi - bu `network_discovery.agent_coverage`
+    modulining "qaysi AD kompyuterda agent hali o'rnatilmagan/to'xtagan"
+    hisobotini chiqarishi uchun asosiy manba.
+
+    So'rov: {
+        "hostname": "ACCOUNTING-PC",
+        "ip_address": "172.16.1.45",
+        "agent_version": "1.2.0",
+        "agent_os": "windows"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+
+    required = ["hostname", "ip_address"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Majburiy maydonlar yo'q: {missing}"}), 400
+
+    session = get_session()
+    try:
+        device = session.query(Device).filter(Device.ip_address == data["ip_address"]).first()
+        if device is None:
+            device = Device(ip_address=data["ip_address"], hostname=data["hostname"], source="endpoint_agent")
+            session.add(device)
+            session.flush()
+        else:
+            device.hostname = data["hostname"]
+
+        device.agent_last_heartbeat = utcnow()
+        device.agent_version = data.get("agent_version")
+        device.agent_os = data.get("agent_os")
+        session.commit()
+
+        return jsonify({"status": "ok"})
     finally:
         session.close()
 
