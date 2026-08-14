@@ -122,6 +122,44 @@ loyihada bir necha marta uchragan tanish xato turkumi
 o'qishga o'zgartirildi - bu ham `ad_discovery.py`dan foydalanuvchi
 BOSHQA barcha joylarni (mavjud AD Discovery testi ham) to'g'irladi.
 
+## Windows Agent .exe paketi - GitHub Actions'ning HAQIQIY Windows runner'ida qurilgan
+
+Foydalanuvchi to'g'ri aniqladi: GPO orqali avtomatlashtirish uchun
+avval `.exe`/`.ps1` o'rnatuvchi paket kerak edi, u yo'q edi (faqat
+Python manba kodi bor edi).
+
+Qurilgan:
+- `windows_agent/build/NetworkSecurityAgent.spec` - PyInstaller spec,
+  `service_wrapper.py`ni (agent.py emas - Windows Service sifatida
+  ishlashi uchun) mustaqil `.exe`ga aylantiradi.
+- `.github/workflows/build-windows-agent.yml` - **eng muhim yechim**:
+  Linux sandbox'da Wine bilan emas, GitHub'ning **haqiqiy
+  `windows-latest` runner'ida** `.exe`ni quradi va `--help` bilan
+  ishga tushirilishini tasdiqlaydi. Bu loyihadagi eng chuqur real
+  Windows-tomon testi.
+- `deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1` - yangi,
+  qo'lda ishlatiluvchi to'g'ridan-to'g'ri o'rnatuvchi.
+- `docs_WINDOWS_AGENT_SETUP.md` 5-bo'limi to'liq yangilandi - endi
+  Python fayllarini emas, `.exe`ni SYSVOL'ga joylashtirish oqimi.
+
+**HAQIQIY natija (push qilib, kuzatilgan)**: `Build Windows Agent`
+workflow'i muvaffaqiyatli o'tdi - `.exe` fayli haqiqatan yaratildi
+(hajmi tekshirilgan), va **haqiqiy Windows muhitida** `--help` bilan
+ishga tushirilgani tasdiqlandi.
+
+**Topilgan va tuzatilgan 2 ta real xato** (avvalgi `Deploy-
+NetworkSecurityAgent.ps1`da, .exe paketini qurish jarayonida
+aniqlangan):
+1. API kalit/URL **registry**ga yozilardi, lekin Python kodi
+   (`os.getenv()`) ularni **muhit o'zgaruvchisi** sifatida o'qiydi -
+   bular hech qachon bog'lanmagan bo'lardi. Machine-scope muhit
+   o'zgaruvchisiga o'zgartirildi.
+2. Xizmat `sc.exe create` orqali o'rnatilardi - lekin pywin32
+   xizmatlari o'zining `install` buyrug'i orqali qo'shimcha registry
+   ma'lumotini (Python sinf yo'li) yozishi SHART, aks holda SCM
+   xizmatni ishga tushira olmaydi. exe'ning o'z install/stop/remove
+   buyruqlariga o'zgartirildi.
+
 ## Ikkinchi tuzatish: SSH Deploy ruxsatlari (foydalanuvchi savoli)
 
 Foydalanuvchi "SSH orqali kirish uchun qanday ruxsatlar kerak"

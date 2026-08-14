@@ -140,6 +140,7 @@ python -m engine.notification_engine --loop
 | Network Discovery | `network_discovery/` | ARP/ICMP/TCP/SNMP/LLDP/CDP/AD/UniFi/Kerio - `docs_NETWORK_DISCOVERY.md` |
 | Auto-Deploy (SSH+GitHub) | `deploy/auto_deploy.sh` | GitHub'dan avtomatik yangilanish - `docs_DEPLOYMENT_SSH_AUTOUPDATE.md` |
 | Windows Agent GPO + Coverage | `deploy/windows_agent_gpo/`, `network_discovery/agent_coverage.py` | AD orqali avtomatik tarqatish + qamrov hisoboti (`/agent-coverage`) - `docs_WINDOWS_AGENT_SETUP.md` (5-bo'lim) |
+| Windows Agent .exe build | `.github/workflows/build-windows-agent.yml` | GitHub'ning haqiqiy Windows runner'ida `.exe` quradi - Actions → Build Windows Agent → Artifacts |
 | Mac Agent | `mac_agent/` | Xuddi shu yadro, launchd konfiguratsiyasi - `docs_MAC_AGENT_SETUP.md`ga qarang (kod yozilgan, lekin haqiqiy macOS'da sinalmagan) |
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 

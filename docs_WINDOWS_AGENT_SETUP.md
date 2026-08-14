@@ -116,13 +116,41 @@ buni **Group Policy Object (GPO)** orqali butunlay avtomatlashtirish
 mumkin - foydalanuvchi hech narsa qilmasdan, kompyuter domenga
 ulanganida (yoki keyingi reboot'da) agent avtomatik o'rnatiladi.
 
-### 5.1. Qanday ishlaydi
+**MUHIM**: bu bo'lim endi mustaqil `NetworkSecurityAgent.exe` faylidan
+foydalanadi - domendagi kompyuterlarda Python o'rnatilgan bo'lishi
+SHART EMAS. `.exe` GitHub Actions orqali avtomatik quriladi
+(pastga qarang, 5.1-bo'lim).
+
+### 5.1. `.exe` faylini olish
+
+`.exe` GitHub'ning **haqiqiy Windows runner'ida** avtomatik quriladi
+(`.github/workflows/build-windows-agent.yml`) - `windows_agent/`,
+`agent_core/` yoki `requirements-agent.txt` o'zgargan har safar.
+
+**Yuklab olish**:
+1. `https://github.com/sh-isobek/network_security_system/actions/workflows/build-windows-agent.yml`
+   sahifasiga o'ting
+2. Eng so'nggi muvaffaqiyatli (yashil ✅) ishga tushirishni tanlang
+3. **"Artifacts"** bo'limidan `NetworkSecurityAgent-X.Y.Z.zip`ni
+   yuklab oling
+
+Bu arxiv ichida: `NetworkSecurityAgent.exe`, `VERSION`,
+`Deploy-NetworkSecurityAgent.ps1`, `Install-NetworkSecurityAgent.ps1`.
+
+**Qo'lda ham qurish mumkin** (agar Windows kompyuteringiz bo'lsa):
+```powershell
+pip install -r requirements-agent.txt pyinstaller
+pyinstaller windows_agent\build\NetworkSecurityAgent.spec
+# Natija: dist\NetworkSecurityAgent.exe
+```
+
+### 5.2. Qanday ishlaydi
 
 ```
 [Domain Controller]                    [Har bir Windows PC]
   SYSVOL\...\scripts\
     NetworkSecurityAgent\
-      windows_agent/ (fayllar)    ──►   Kompyuter yoqiladi
+      NetworkSecurityAgent.exe   ──►   Kompyuter yoqiladi
       VERSION                            │
       api_key.secret                     ▼
                                     GPO Startup Script ishga tushadi
@@ -133,12 +161,13 @@ ulanganida (yoki keyingi reboot'da) agent avtomatik o'rnatiladi.
                                       │           │
                                      HA           YO'Q
                                       │           │
-                                  Chiqadi    Fayllarni nusxalaydi,
-                                  (jim)      xizmatni o'rnatadi/
-                                             qayta ishga tushiradi
+                                  Chiqadi    .exe'ni nusxalaydi,
+                                  (jim)      xizmatni o'z 'install'
+                                             buyrug'i orqali
+                                             o'rnatadi/yangilaydi
 ```
 
-### 5.2. Sozlash qadamlari
+### 5.3. Sozlash qadamlari
 
 **a) SYSVOL'da agent paketini tayyorlash** (Domain Controller'da):
 
@@ -146,23 +175,25 @@ ulanganida (yoki keyingi reboot'da) agent avtomatik o'rnatiladi.
 $SysvolPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\NetworkSecurityAgent"
 New-Item -ItemType Directory -Path $SysvolPath -Force
 
-# Loyihaning windows_agent/, agent_core/, config/ papkalarini nusxalang
-Copy-Item -Path "C:\Path\To\Repo\windows_agent" -Destination $SysvolPath -Recurse
-Copy-Item -Path "C:\Path\To\Repo\agent_core" -Destination $SysvolPath -Recurse
-Copy-Item -Path "C:\Path\To\Repo\config" -Destination $SysvolPath -Recurse
-
-# Versiya belgisi (har yangilanishda oshiring)
-Set-Content -Path "$SysvolPath\VERSION" -Value "1.0.0"
+# 5.1-bo'limda yuklab olingan/qurilgan arxivdan:
+Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\NetworkSecurityAgent.exe" -Destination $SysvolPath
+Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\VERSION" -Destination $SysvolPath
 
 # API kalitini alohida faylga (bu fayl uchun ACL orqali faqat
 # "Domain Computers" guruhiga O'QISH huquqini bering, boshqa hech kimga)
 Set-Content -Path "$SysvolPath\api_key.secret" -Value "<markazdagi AGENT_API_KEY bilan bir xil>"
 ```
 
+**Yangilanish chiqarganda** (masalan versiya 1.1.0): yangi `.exe`ni
+yuklab oling, `$SysvolPath`dagi eskisini almashtiring, va
+`VERSION` faylini yangi raqamga o'zgartiring - GPO Startup Script
+bu farqni avtomatik payqab, barcha kompyuterlarni keyingi
+reboot'da yangilaydi.
+
 **b) Deploy skriptini SYSVOL'ga qo'yish**:
 
 ```powershell
-Copy-Item -Path "C:\Path\To\Repo\deploy\windows_agent_gpo\Deploy-NetworkSecurityAgent.ps1" `
+Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\Deploy-NetworkSecurityAgent.ps1" `
     -Destination "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\"
 ```
 
@@ -191,7 +222,23 @@ qo'llash uchun (test uchun foydali):
 Invoke-GPUpdate -Computer "PC-NAME" -Force
 ```
 
-### 5.3. Qamrovni kuzatish (Agent Coverage Report)
+### 5.4. Bitta kompyuterda qo'lda test qilish (GPO'ga o'tishdan oldin tavsiya etiladi)
+
+GPO orqali barcha kompyuterlarga tarqatishdan oldin, bitta test
+kompyuterda `Install-NetworkSecurityAgent.ps1` orqali qo'lda sinab
+ko'ring (Administrator PowerShell'da, arxiv ichidagi papkada turib):
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "https://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
+```
+
+Muvaffaqiyatli bo'lsa, `Get-Service NetworkSecurityEndpointAgent`
+"Running" holatini ko'rsatishi va bir necha daqiqadan so'ng
+Dashboard'ning `/asset-inventory` sahifasida shu kompyuter
+`agent_last_heartbeat` bilan ko'rinishi kerak.
+
+### 5.5. Qamrovni kuzatish (Agent Coverage Report)
 
 GPO orqali tarqatish "hamma joyga yetdimi?" savolini avtomatik javob
 berish uchun, tizimda **Agent Coverage Report** mavjud
@@ -208,15 +255,17 @@ Natija - `covered` (agent faol), `stale` (agent o'rnatilgan edi, lekin
 mumkin), `missing` (hali umuman o'rnatilmagan). Dashboard'da
 `/agent-coverage` sahifasida (faqat admin) vizual ko'rinishda.
 
-**MUHIM (halol tushuntirish)**: `Deploy-NetworkSecurityAgent.ps1`
-skripti Windows/PowerShell/Active Directory infratuzilmasini talab
-qiladi - bu loyiha tayyorlangan Linux sandbox muhitida ijro etib
-sinalmagan (Zeek/Grafana bilan bir xil holat). Kod PowerShell
-sintaksisi va GPO konventsiyalariga ehtiyotkorlik bilan mos yozilgan
-(qavslar/tirnoq balansi qo'lda tekshirilgan), lekin **production'ga
-qo'yishdan oldin bitta test kompyuterda albatta qo'lda sinab
-ko'ring**. Agent Coverage Report (Python/LDAP qismi) esa haqiqiy
-OpenLDAP server bilan to'liq test qilingan.
+### 5.6. Test holati (halol tushuntirish)
+
+| Qism | Holat |
+|---|---|
+| `NetworkSecurityAgent.exe` (PyInstaller build) | ✅ **HAQIQIY Windows'da** (GitHub Actions `windows-latest` runner) qurilgan va `--help` bilan ishga tushirilgani tasdiqlangan |
+| `Deploy-NetworkSecurityAgent.ps1` / `Install-NetworkSecurityAgent.ps1` (o'zi) | ⚠️ Faqat qavslar/tirnoq balansi qo'lda tekshirilgan - to'liq ijro (xizmat sifatida o'rnatish, GPO orqali ishga tushish) sinalmagan, chunki bu Active Directory domeni va Group Policy infratuzilmasini talab qiladi |
+| Agent Coverage Report (Python/LDAP qismi) | ✅ Haqiqiy OpenLDAP server bilan to'liq test qilingan |
+| Agent Heartbeat (`/api/v1/agent_heartbeat`) | ✅ To'liq real HTTP orqali test qilingan |
+
+**Tavsiya**: GPO'ga o'tishdan oldin, 5.4-bo'limdagi kabi kamida bitta
+test kompyuterda qo'lda sinab ko'ring.
 
 ## 6. Xavfsizlik va cheklovlar (halol tushuntirish)
 
