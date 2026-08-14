@@ -22,7 +22,6 @@
 param(
     [string]$ServerShare = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\NetworkSecurityAgent",
     [string]$ApiServerUrl = "https://172.16.0.5:8443",
-    [string]$ApiKeyRegistryPath = "HKLM:\SOFTWARE\NetworkSecuritySystem",
     [string]$InstallDir = "C:\Program Files\NetworkSecurityAgent",
     [string]$ServiceName = "NetworkSecurityEndpointAgent",
     [string]$LogFile = "C:\ProgramData\NetworkSecurityAgent\deploy.log"
@@ -77,11 +76,21 @@ if ($installedVersion -eq $availableVersion) {
 
 Write-DeployLog "Yangilanish kerak: o'rnatilgan='$installedVersion' -> mavjud='$availableVersion'. O'rnatish boshlanmoqda..."
 
-# --- 2) Mavjud xizmatni to'xtatish (agar bor bo'lsa) ---
+# --- 2) Mavjud xizmatni to'g'ri o'chirish (raw Stop-Service emas -
+#         pywin32 xizmatlari uchun exe'ning o'z 'stop'/'remove'
+#         buyruqlari ISHLATILISHI SHART, aks holda pywin32 saqlagan
+#         xizmat ro'yxatga olish ma'lumotlari (Python sinf yo'li)
+#         "yetim" bo'lib qolib, keyingi 'install' xato beradi) ---
 $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($existingService -and $existingService.Status -eq "Running") {
-    Write-DeployLog "Mavjud xizmat to'xtatilmoqda..."
-    Stop-Service -Name $ServiceName -Force
+$exePath = Join-Path $InstallDir "NetworkSecurityAgent.exe"
+if ($existingService) {
+    Write-DeployLog "Mavjud xizmat to'xtatilmoqda va olib tashlanmoqda..."
+    if (Test-Path $exePath) {
+        & $exePath stop 2>&1 | Out-Null
+        & $exePath remove 2>&1 | Out-Null
+    } else {
+        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    }
     Start-Sleep -Seconds 2
 }
 
@@ -101,48 +110,55 @@ try {
     exit 1
 }
 
-# --- 4) API kalitini xavfsiz saqlash (registry, ochiq matn fayl emas) ---
-if (-not (Test-Path $ApiKeyRegistryPath)) {
-    New-Item -Path $ApiKeyRegistryPath -Force | Out-Null
-}
-Set-ItemProperty -Path $ApiKeyRegistryPath -Name "ApiServerUrl" -Value $ApiServerUrl
+# --- 4) API sozlamalarini MUHIT O'ZGARUVCHISI sifatida o'rnatish ---
+# MUHIM: Python kodi (agent_core/agent.py) API_SERVER_URL va
+# AGENT_API_KEY qiymatlarini `os.getenv()` orqali o'qiydi - REGISTRY'DAN
+# EMAS. Shuning uchun bu qiymatlar aynan tizim (Machine-scope) muhit
+# o'zgaruvchisi sifatida o'rnatilishi SHART, aks holda agent ularni
+# hech qachon topmaydi. Machine-scope o'zgaruvchi xizmat ishga
+# tushirilganda avtomatik meros olinadi - alohida reboot shart emas,
+# lekin xizmatni QAYTA ishga tushirish kerak (buni pastda 6-bosqichda
+# qilamiz).
+[Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
 
 # MUHIM: AGENT_API_KEY qiymati bu skriptda HECH QACHON qattiq
 # kodlanmagan (GPO orqali tarqatiladigan skript domendagi barcha
 # kompyuterlarda o'qilishi mumkin bo'lgani uchun bu jiddiy xavfsizlik
-# xatosi bo'lardi). Kalit alohida, cheklangan ACL bilan himoyalangan
-# GPO Preference (Registry item) orqali yoki alohida, faqat
-# kompyuter hisobiga o'qish huquqi berilgan SYSVOL faylidan olinishi
-# kerak - buni tashkilotingizning AD administratori sozlashi kerak.
+# xatosi bo'lardi). Kalit alohida, faqat kompyuter hisoblariga o'qish
+# huquqi berilgan SYSVOL faylidan (`api_key.secret`) olinadi - ushbu
+# faylning ACL'ini cheklash tashkilotingizning AD administratori
+# tomonidan amalga oshirilishi kerak.
 $apiKeyFile = Join-Path $ServerShare "api_key.secret"
 if (Test-Path $apiKeyFile) {
     $apiKey = (Get-Content $apiKeyFile -Raw).Trim()
-    Set-ItemProperty -Path $ApiKeyRegistryPath -Name "ApiKey" -Value $apiKey
+    [Environment]::SetEnvironmentVariable("AGENT_API_KEY", $apiKey, "Machine")
 } else {
     Write-DeployLog "OGOHLANTIRISH: api_key.secret topilmadi - agent kalitsiz ishga tushishi mumkin"
 }
+[Environment]::SetEnvironmentVariable("AGENT_VERSION", $availableVersion, "Machine")
 
-# --- 5) Windows Service sifatida o'rnatish/qayta o'rnatish ---
+# --- 5) Windows Service sifatida o'rnatish (exe'ning O'Z 'install'
+#         buyrug'i orqali - raw sc.exe EMAS, chunki pywin32 xizmatlari
+#         qo'shimcha registry ma'lumotini o'zi yozishi kerak) ---
 $pythonExe = Get-Command python.exe -ErrorAction SilentlyContinue
-if ($pythonExe) {
-    # Python o'rnatilgan holat
-    if ($existingService) {
-        & python.exe "$InstallDir\windows_agent\service_wrapper.py" remove
-    }
+if (Test-Path $exePath) {
+    # Asosiy yo'l: mustaqil .exe (Python o'rnatish shart emas)
+    & $exePath install
+    Write-DeployLog "Xizmat .exe orqali o'rnatildi: $exePath"
+} elseif ($pythonExe) {
+    # Zaxira yo'l: agar .exe topilmasa, lekin Python o'rnatilgan bo'lsa
     & python.exe "$InstallDir\windows_agent\service_wrapper.py" install
-    & python.exe "$InstallDir\windows_agent\service_wrapper.py" start
-} elseif (Test-Path "$InstallDir\NetworkSecurityAgent.exe") {
-    # PyInstaller bilan quril
-    if (-not $existingService) {
-        & sc.exe create $ServiceName binPath= "`"$InstallDir\NetworkSecurityAgent.exe`"" start= auto
-    }
-    & sc.exe start $ServiceName
+    Write-DeployLog "Xizmat Python orqali o'rnatildi (zaxira yo'l)"
 } else {
-    Write-DeployLog "XATOLIK: na Python, na NetworkSecurityAgent.exe topilmadi - o'rnatib bo'lmadi"
+    Write-DeployLog "XATOLIK: na NetworkSecurityAgent.exe, na Python topilmadi - o'rnatib bo'lmadi"
     exit 1
 }
 
-# --- 6) Versiyani belgilash (keyingi ishga tushishda idempotentlik uchun) ---
+# --- 6) Xizmatni ishga tushirish (muhit o'zgaruvchilari yangi
+#         jarayonga meros olinishi uchun) ---
+Start-Service -Name $ServiceName
+
+# --- 7) Versiyani belgilash (keyingi ishga tushishda idempotentlik uchun) ---
 Set-Content -Path (Join-Path $InstallDir "VERSION") -Value $availableVersion
 
 Write-DeployLog "✅ Deploy muvaffaqiyatli yakunlandi: versiya $availableVersion"

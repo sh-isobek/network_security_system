@@ -1,0 +1,85 @@
+name: Build Windows Agent
+
+# Windows Agent'ni haqiqiy Windows muhitida (GitHub'ning windows-latest
+# runner'i) .exe fayliga aylantiradi - bu Linux sandbox'da mumkin
+# bo'lmagan yagona real test yo'li (Wine emas, haqiqiy Windows).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows_agent/**"
+      - "agent_core/**"
+      - "requirements-agent.txt"
+      - ".github/workflows/build-windows-agent.yml"
+  workflow_dispatch: {}   # qo'lda ham ishga tushirish mumkin
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bog'liqliklarni o'rnatish
+        run: |
+          pip install -r requirements-agent.txt
+          pip install pyinstaller
+
+      - name: .exe qurish (PyInstaller)
+        run: |
+          pyinstaller windows_agent/build/NetworkSecurityAgent.spec --distpath dist --workpath build/pyinstaller-work
+
+      - name: .exe haqiqatan yaratilganini tekshirish
+        run: |
+          if (-not (Test-Path "dist/NetworkSecurityAgent.exe")) {
+            Write-Error ".exe fayli yaratilmadi!"
+            exit 1
+          }
+          $size = (Get-Item "dist/NetworkSecurityAgent.exe").Length
+          Write-Host "NetworkSecurityAgent.exe yaratildi: $size bayt"
+          if ($size -lt 1000000) {
+            Write-Error ".exe fayli shubhali kichik ($size bayt) - to'liq qurilmagan bo'lishi mumkin"
+            exit 1
+          }
+
+      - name: .exe'ning haqiqatan ishga tushishini tekshirish (--help)
+        run: |
+          # Haqiqiy Windows binary'ni ishga tushirib, kamida chaqirilishini
+          # (crash bo'lmasligini) tasdiqlaymiz. pywin32 xizmat wrapper'lari
+          # argumentsiz chaqirilganda odatda foydalanish (usage) xabarini
+          # chiqarib, muvaffaqiyatli chiqadi.
+          $proc = Start-Process -FilePath "dist/NetworkSecurityAgent.exe" -ArgumentList "--help" -NoNewWindow -PassThru -Wait -RedirectStandardOutput "help_output.txt" -RedirectStandardError "help_error.txt"
+          Write-Host "Exit kod: $($proc.ExitCode)"
+          Get-Content help_output.txt, help_error.txt -ErrorAction SilentlyContinue
+
+      - name: Versiyani o'qish (release nomlash uchun)
+        id: version
+        run: |
+          $version = Get-Content windows_agent/VERSION -Raw
+          $version = $version.Trim()
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "AGENT_VERSION=$version"
+
+      - name: Release paketini yig'ish (exe + o'rnatuvchi + VERSION)
+        run: |
+          $releaseDir = "release/NetworkSecurityAgent"
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          Copy-Item "dist/NetworkSecurityAgent.exe" -Destination $releaseDir
+          Copy-Item "windows_agent/VERSION" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Deploy-NetworkSecurityAgent.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1" -Destination $releaseDir -ErrorAction SilentlyContinue
+          Compress-Archive -Path $releaseDir -DestinationPath "NetworkSecurityAgent-$($env:AGENT_VERSION).zip" -Force
+        env:
+          AGENT_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Artifact sifatida saqlash
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetworkSecurityAgent-${{ steps.version.outputs.version }}
+          path: NetworkSecurityAgent-*.zip
+          retention-days: 90
