@@ -30,7 +30,7 @@
     </tr>
     {% for a in recent_alerts %}
     <tr>
-        <td class="mono">{{ a.timestamp.strftime('%Y-%m-%d %H:%M:%S') if a.timestamp else '' }}</td>
+        <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
         <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
         <td>{{ a.hostname or a.ip_address or 'Nomalum' }}</td>
         <td>{{ (a.reason or '')[:80] }}{% if (a.reason or '')|length > 80 %}...{% endif %}</td>

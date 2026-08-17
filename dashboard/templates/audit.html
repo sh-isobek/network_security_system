@@ -18,7 +18,7 @@
     </tr>
     {% for e in entries %}
     <tr>
-        <td class="mono">{{ e.timestamp.strftime('%Y-%m-%d %H:%M:%S') if e.timestamp else '' }}</td>
+        <td class="mono">{{ e.timestamp | local_dt(fallback='') }}</td>
         <td>{{ e.username }}</td>
         <td class="mono">{{ e.action }}</td>
         <td class="mono">{% if e.target_type %}{{ e.target_type }}#{{ e.target_id }}{% else %}-{% endif %}</td>

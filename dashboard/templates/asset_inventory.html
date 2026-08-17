@@ -30,7 +30,7 @@
             {% for p in d.open_ports[:5] %}<span class="mono" style="font-size:11px; background:#f4f6f8; padding:1px 5px; border-radius:3px; margin-right:3px;">{{ p.port }}/{{ p.service or '?' }}</span>{% endfor %}
             {% else %}-{% endif %}
         </td>
-        <td class="mono">{{ d.last_discovered_at.strftime('%Y-%m-%d %H:%M') if d.last_discovered_at else '-' }}</td>
+        <td class="mono">{{ d.last_discovered_at | local_dt('%Y-%m-%d %H:%M') }}</td>
     </tr>
     {% endfor %}
 </table>
@@ -48,7 +48,7 @@
         <td>{{ t.neighbor_system_name or '-' }}</td>
         <td class="mono">{{ t.neighbor_chassis_id or '-' }}</td>
         <td class="mono">{{ t.neighbor_port_id or '-' }}</td>
-        <td class="mono">{{ t.discovered_at.strftime('%Y-%m-%d %H:%M') if t.discovered_at else '-' }}</td>
+        <td class="mono">{{ t.discovered_at | local_dt('%Y-%m-%d %H:%M') }}</td>
     </tr>
     {% endfor %}
 </table>

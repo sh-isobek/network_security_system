@@ -3169,6 +3169,62 @@ if __name__ == "__main__":
 check("TO'LIQ ZANJIR: UniFi Wi-Fi qurilma -> virusli fayl -> AVTOMATIK bloklash", _test_unifi_malware_autoblock_e2e)
 
 # ---------------------------------------------------------------------------
+print("\n=== 46) DASHBOARD MAHALLIY VAQT ZONASI (real HTTP orqali +5 soat tekshiruvi) ===")
+
+
+def _test_dashboard_timezone():
+    """
+    Foydalanuvchi so'radi: 'vaqt farqini yo'qot, bizning mintaqa +5:00'.
+    Bazada UTC saqlanadi (log manbalarini to'g'ri solishtirish uchun -
+    standart amaliyot), lekin Dashboard foydalanuvchiga TIMEZONE_OFFSET_
+    HOURS orqali mahalliy vaqtni ko'rsatishi kerak.
+    """
+    from dashboard.app import app as dash_app
+    from datetime import datetime
+
+    with dash_app.app_context():
+        filt = dash_app.jinja_env.filters["local_dt"]
+
+        utc_time = datetime(2026, 1, 15, 10, 0, 0)
+        result = filt(utc_time)
+        assert result == "2026-01-15 15:00:00", f"+5 soat kutilgan edi, keldi: {result}"
+
+        assert filt(None) == "-"
+        assert filt(None, fallback="Hech qachon") == "Hech qachon"
+        assert filt(utc_time, "%Y-%m-%d") == "2026-01-15"
+
+    # --- Real HTTP orqali - Dashboard sahifasida haqiqatan +5 soat ko'rinishi ---
+    from db.database import get_session
+    from db.models import Device, Alert, utcnow
+    from dashboard.create_user import create_user
+
+    s = get_session()
+    dev = Device(ip_address="172.16.51.1", hostname="TZ-CI-TEST-PC")
+    s.add(dev)
+    s.commit()
+    fixed_utc = datetime(2026, 3, 10, 8, 30, 0)
+    alert = Alert(device_id=dev.id, severity="high", reason="TZ CI test",
+                   action_taken="test", timestamp=fixed_utc)
+    s.add(alert)
+    s.commit()
+    s.close()
+
+    create_user("tz_ci_admin", "tzcitest123", "admin")
+    dash_app.secret_key = "test-secret-tz-ci"
+    client = dash_app.test_client()
+    client.post("/login", data={"username": "tz_ci_admin", "password": "tzcitest123"})
+    r = client.get("/alerts")
+    assert r.status_code == 200
+    assert b"2026-03-10 13:30:00" in r.data, (
+        f"Dashboard'da +5 soat siljigan vaqt (13:30:00) topilmadi. "
+        f"Bazadagi UTC vaqt: 08:30:00 edi."
+    )
+    assert b"2026-03-10 08:30:00" not in r.data, "Xom UTC vaqt Dashboard'da ko'rinmasligi kerak edi"
+
+
+check("Dashboard mahalliy vaqt zonasi (+5, real HTTP orqali tasdiqlangan)", _test_dashboard_timezone)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

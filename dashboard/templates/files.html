@@ -17,7 +17,7 @@
     </tr>
     {% for f in files %}
     <tr>
-        <td class="mono">{{ f.timestamp.strftime('%Y-%m-%d %H:%M:%S') if f.timestamp else '' }}</td>
+        <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
         <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
         <td class="mono">{{ f.src_ip }}</td>
         <td>

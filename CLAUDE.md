@@ -90,7 +90,33 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 45/45 test o'tadi (`run_full_test.py`).**
+**Joriy: 46/46 test o'tadi (`run_full_test.py`).**
+
+## Dashboard mahalliy vaqt zonasi (+5:00, Toshkent)
+
+Foydalanuvchi so'radi: "vaqt farqini ham yuqot bizning mintaqa +5:00".
+
+**Arxitektura qarori**: bazada BARCHA vaqt belgilari UTC formatida
+saqlanadi (turli manbalardan - Suricata, Windows Event Log, syslog -
+kelayotgan loglarni to'g'ri solishtirish/korrelyatsiya qilish uchun
+bu standart SIEM amaliyoti). `TIMEZONE_OFFSET_HOURS` (standart 5)
+sozlamasi FAQAT Dashboard'da FOYDALANUVCHIGA ko'rsatishda qo'llaniladi.
+
+Qurilgan:
+- `dashboard/app.py`: yangi `local_dt` Jinja2 filtri - UTC datetime'ni
+  mahalliy vaqtga o'tkazib formatlaydi, `None` holatini xavfsiz
+  boshqaradi.
+- 8 ta shablon fayldagi barcha 11 ta `.strftime()` chaqiruvi
+  `local_dt` filtriga almashtirildi (alerts, api_tokens,
+  asset_inventory, audit, devices, files, index, users).
+- `config/settings.py`: `TIMEZONE_OFFSET_HOURS` sozlamasi.
+- `Dockerfile`: `tzdata` paketi qo'shildi (konteyner darajasidagi
+  `TZ=Asia/Tashkent` nomli qiymatlarning to'g'ri ishlashi uchun).
+
+**Real test qilingan**: filtr to'g'ridan-to'g'ri (+5 soat, None,
+maxsus format) va **to'liq real HTTP orqali** (bazaga UTC 08:30:00
+yozib, Dashboard'da aynan 13:30:00 ko'rinishini, xom UTC vaqt hech
+qachon ko'rinmasligini tasdiqlash) tekshirildi.
 
 ## Avtomatik bloklash zanjirini to'liq tasdiqlash + connection_type xatosi
 

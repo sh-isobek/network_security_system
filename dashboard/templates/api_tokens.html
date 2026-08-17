@@ -22,10 +22,10 @@
     <tr>
         <td>{{ t.name }}</td>
         <td class="mono">{{ t.token_prefix }}...</td>
-        <td class="mono">{{ t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '-' }}</td>
+        <td class="mono">{{ t.created_at | local_dt('%Y-%m-%d %H:%M') }}</td>
         <td>{{ t.created_by or '-' }}</td>
-        <td class="mono">{{ t.last_used_at.strftime('%Y-%m-%d %H:%M') if t.last_used_at else 'Hech qachon' }}</td>
-        <td class="mono">{{ t.expires_at.strftime('%Y-%m-%d') if t.expires_at else 'Muddatsiz' }}</td>
+        <td class="mono">{{ t.last_used_at | local_dt('%Y-%m-%d %H:%M', 'Hech qachon') }}</td>
+        <td class="mono">{{ t.expires_at | local_dt('%Y-%m-%d', 'Muddatsiz') }}</td>
         <td>
             {% if t.revoked %}<span class="badge" style="background:#95a5a6;">Bekor qilingan</span>
             {% else %}<span class="badge" style="background:#27ae60;">Faol</span>{% endif %}

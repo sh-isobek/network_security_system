@@ -16,7 +16,7 @@
         <td>{{ d.hostname or '-' }}</td>
         <td>{{ {'wifi': 'Wi-Fi', 'cable': 'Kabel'}.get(d.connection_type, d.connection_type or 'Nomalum') }}</td>
         <td class="mono">{{ d.source or '-' }}</td>
-        <td class="mono">{{ d.last_seen.strftime('%Y-%m-%d %H:%M:%S') if d.last_seen else '-' }}</td>
+        <td class="mono">{{ d.last_seen | local_dt }}</td>
         <td>
             {% if d.alert_count > 0 %}
             <span class="badge" style="background: #c0392b;">{{ d.alert_count }}</span>

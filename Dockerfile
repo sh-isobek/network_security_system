@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clamav \
         clamav-freshclam \
         snmp \
+        tzdata \
         build-essential \
         libssl-dev \
     && rm -rf /var/lib/apt/lists/*

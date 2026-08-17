@@ -36,6 +36,26 @@ app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + 
 login_manager.init_app(app)
 
 
+@app.template_filter("local_dt")
+def local_dt_filter(dt, fmt="%Y-%m-%d %H:%M:%S", fallback="-"):
+    """
+    UTC datetime'ni Dashboard uchun mahalliy vaqt zonasiga (`config.
+    settings.TIMEZONE_OFFSET_HOURS`, standart +5 - Toshkent) o'tkazib,
+    formatlaydi. MUHIM: bazada saqlangan qiymatning o'zi UTC bo'lib
+    qoladi - bu faqat FOYDALANUVCHIGA KO'RSATISH uchun.
+
+    Shablonda ishlatilishi:
+        {{ alert.timestamp | local_dt }}
+        {{ device.last_seen | local_dt('%Y-%m-%d %H:%M') }}
+    """
+    if dt is None:
+        return fallback
+    from datetime import timedelta
+    from config.settings import TIMEZONE_OFFSET_HOURS
+    local = dt + timedelta(hours=TIMEZONE_OFFSET_HOURS)
+    return local.strftime(fmt)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:

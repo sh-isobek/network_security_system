@@ -30,6 +30,15 @@ RAW_LOG_FILE = os.getenv("RAW_LOG_FILE", "./logs/raw_syslog.log")
 APP_NAME = "Network Security Monitoring System"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# ---- Dashboard'da ko'rsatiladigan mahalliy vaqt zonasi ----
+# MUHIM: bazada BARCHA vaqt belgilari (timestamp) UTC formatida saqlanadi
+# (turli manbalardan - Suricata, Windows Event Log, syslog - kelayotgan
+# loglarni to'g'ri solishtirish/korrelyatsiya qilish uchun bu standart
+# amaliyot). Bu sozlama FAQAT Dashboard'da FOYDALANUVCHIGA ko'rsatilganda
+# qo'llaniladi - baza ichidagi qiymatlarga ta'sir qilmaydi.
+# Misol: Toshkent (UTC+5) uchun TIMEZONE_OFFSET_HOURS=5
+TIMEZONE_OFFSET_HOURS = int(os.getenv("TIMEZONE_OFFSET_HOURS", "5"))
+
 # ---- 5-bosqich: Avtomatik javob choralari ----
 # "dry_run" - hech narsani real o'zgartirmaydi, faqat loglaydi (DEFAULT, xavfsiz)
 # "live"    - haqiqiy uskunalarga ulanadi (faqat ongli ravishda yoqilsin)

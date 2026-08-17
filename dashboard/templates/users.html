@@ -16,7 +16,7 @@
         <td>{{ u.username }}</td>
         <td><span class="badge" style="background: {% if u.role == 'admin' %}#c0392b{% elif u.role == 'analyst' %}#e67e22{% else %}#95a5a6{% endif %};">{{ u.role | upper }}</span></td>
         <td>{% if u.is_active %}✅ Faol{% else %}⛔ Faolsizlantirilgan{% endif %}</td>
-        <td class="mono">{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else '-' }}</td>
+        <td class="mono">{{ u.last_login | local_dt('%Y-%m-%d %H:%M') }}</td>
         <td>
             {% if u.is_active %}
             <form method="POST" action="/users/{{ u.id }}/deactivate" style="display:inline;">

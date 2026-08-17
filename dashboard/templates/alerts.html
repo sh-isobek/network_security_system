@@ -25,7 +25,7 @@
     </tr>
     {% for a in alerts %}
     <tr>
-        <td class="mono">{{ a.timestamp.strftime('%Y-%m-%d %H:%M:%S') if a.timestamp else '' }}</td>
+        <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
         <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
         <td>{{ a.hostname or 'Nomalum' }}</td>
         <td class="mono">{{ a.ip_address or '-' }}</td>
