@@ -82,30 +82,34 @@ python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --lo
 `DISCOVERY_MISSING_THRESHOLD_HOURS` (standart 24) - qurilma necha
 soat ko'rinmasa "yo'qolgan" deb belgilanishi.
 
-## UniFi Controller'dan Asset Inventory'ga (ixtiyoriy)
+## UniFi Controller'dan Asset Inventory'ga (avtomatik, standart holatda yoqilgan)
 
 Agar `.env`da `UNIFI_CONTROLLER_URL`/`UNIFI_API_KEY`/`UNIFI_SITE_ID`
-sozlangan bo'lsa (`docs_...`ga qarang, yoki shu faylning UniFi
-bo'limi), UniFi Controller'dagi barcha ulangan klientlar Asset
-Inventory'ga qo'shilishi mumkin:
+sozlangan bo'lsa, UniFi Controller'dagi barcha ulangan klientlar
+**avtomatik, davriy ravishda** (standart har 5 daqiqada,
+`UNIFI_POLL_INTERVAL` orqali sozlanadi) Asset Inventory'ga qo'shiladi -
+`docker-compose.yml`dagi **`unifi_sync`** xizmati orqali.
 
+**MUHIM**: `unifi_sync` xizmati oddiy `docker compose up -d` bilan
+**avtomatik ishga tushadi** - hech qanday `--profile` kerak emas
+(chunki bu shunchaki UniFi Controller'ga HTTPS API so'rovi, host
+tarmoq yoki maxsus huquq talab qilmaydi - `network_discovery`
+xizmatidan (ARP/LLDP uchun `--profile discovery` kerak) farqli).
+
+Tekshirish:
 ```bash
-# Faqat UniFi'dan (tarmoq interfeysi/ARP/ICMP shart emas)
-docker compose exec dashboard python -m network_discovery.asset_inventory --unifi-only
+docker compose logs unifi_sync --tail 20
+```
+Bu yerda "UniFi sync: N ta qurilma yangilandi" kabi xabarlarni
+ko'rishingiz kerak.
 
-# Yoki to'liq discovery siklining bir qismi sifatida (UNIFI_CONTROLLER_URL
-# sozlangan bo'lsa avtomatik qo'shiladi)
-docker compose exec dashboard python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
+Qo'lda, bir martalik ishga tushirish (masalan darhol tekshirish uchun):
+```bash
+docker compose exec dashboard python -m network_discovery.unifi_sync_loop --once
 ```
 
 Natijani `/asset-inventory` sahifasida (`discovery_source: unifi`)
 ko'rish mumkin.
-
-**Davriy avtomatik yangilanish uchun** (masalan har 15 daqiqada) - host
-mashinada cron orqali:
-```bash
-*/15 * * * * cd /path/to/project && docker compose exec -T dashboard python -m network_discovery.asset_inventory --unifi-only >> /var/log/unifi_discovery.log 2>&1
-```
 
 ## Docker'da ishga tushirish (MUHIM: tarmoq rejimi)
 

@@ -3225,6 +3225,90 @@ def _test_dashboard_timezone():
 check("Dashboard mahalliy vaqt zonasi (+5, real HTTP orqali tasdiqlangan)", _test_dashboard_timezone)
 
 # ---------------------------------------------------------------------------
+print("\n=== 47) UniFi Sync Loop - standart holatda avtomatik ishlashi (production bo'shlig'i topilgan) ===")
+
+
+def _test_unifi_sync_loop():
+    """
+    Real production'da topilgan bo'shliq: discover_via_unifi() to'g'ri
+    ishlar edi, lekin uni chaqiruvchi YAGONA docker-compose xizmat
+    (`network_discovery`) `--profile discovery` ortida yashiringan edi
+    - foydalanuvchi oddiy `docker compose up -d` bilan uni hech qachon
+    ishga tushirmagan. Bundan tashqari, o'sha xizmatning o'zi
+    (`scheduler.py`) UniFi'ni umuman chaqirmasdi.
+
+    Bu test yangi `unifi_sync_loop.py`ni (docker-compose'da PROFILSIZ,
+    standart holatda ishlaydigan `unifi_sync` xizmati orqali) real
+    HTTP bilan tekshiradi.
+    """
+    import subprocess
+    import time as _time
+
+    # 1) docker-compose.yml'da unifi_sync xizmati PROFILSIZ ekanini tasdiqlash
+    import yaml
+    with open("docker-compose.yml") as f:
+        compose = yaml.safe_load(f)
+    assert "unifi_sync" in compose["services"], "unifi_sync xizmati docker-compose.yml'da yo'q"
+    assert "profiles" not in compose["services"]["unifi_sync"], (
+        "unifi_sync PROFILSIZ bo'lishi kerak (standart 'docker compose up -d' bilan ishga tushishi uchun)"
+    )
+
+    # 2) Real HTTP orqali sinxronizatsiya ishlashini tekshirish
+    mock_script = "/tmp/_ci_mock_unifi_sync.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+@app.route("/proxy/network/integration/v1/sites/ci-sync-site/clients", methods=["GET"])
+def clients():
+    if request.headers.get("X-API-Key") != "ci-sync-key":
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"data": [
+        {"macAddress": "aa:bb:cc:dd:ee:80", "ipAddress": "172.16.41.80", "name": "CI-SYNC-PC", "type": "WIRELESS"},
+    ]})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=19800)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+        os.environ["UNIFI_CONTROLLER_URL"] = "http://127.0.0.1:19800"
+        os.environ["UNIFI_API_KEY"] = "ci-sync-key"
+        os.environ["UNIFI_SITE_ID"] = "ci-sync-site"
+        os.environ["UNIFI_VERIFY_SSL"] = "false"
+
+        from network_discovery.unifi_sync_loop import run_once
+        n = run_once()
+        assert n == 1, f"1 ta qurilma kutilgan edi, {n} keldi"
+
+        s = get_session()
+        d = s.query(Device).filter(Device.ip_address == "172.16.41.80").first()
+        assert d is not None, "unifi_sync_loop.py DB'ga yozmadi"
+        assert d.hostname == "CI-SYNC-PC"
+        s.close()
+
+        # 3) UniFi sozlanmagan holatda ham xato bermasligi
+        os.environ.pop("UNIFI_CONTROLLER_URL")
+        n2 = run_once()
+        assert n2 == 0
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["UNIFI_CONTROLLER_URL", "UNIFI_API_KEY", "UNIFI_SITE_ID", "UNIFI_VERIFY_SSL"]:
+            os.environ.pop(k, None)
+
+
+check("UniFi Sync Loop - standart docker-compose xizmati sifatida (production bo'shlig'i tuzatilgan)", _test_unifi_sync_loop)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

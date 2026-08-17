@@ -255,6 +255,23 @@ services:
   # ---------------------------------------------------------------------
   # Network Discovery (yangi TZ 5-bo'lim) - ixtiyoriy, --profile discovery
   # ---------------------------------------------------------------------
+  # ---------------------------------------------------------------------
+  # UniFi Sync (standart holatda avtomatik ishlaydi - profil TALAB
+  # QILINMAYDI, `network_discovery`dan farqli). Sabab: bu shunchaki
+  # UniFi Controller'ga HTTPS API so'rovi - host tarmoq yoki maxsus
+  # huquq (NET_ADMIN/NET_RAW) talab qilmaydi.
+  # ---------------------------------------------------------------------
+  unifi_sync:
+    build: .
+    restart: unless-stopped
+    command: python -m network_discovery.unifi_sync_loop --loop --interval ${UNIFI_POLL_INTERVAL:-300}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   network_discovery:
     build: .
     restart: unless-stopped

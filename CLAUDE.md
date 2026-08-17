@@ -90,7 +90,38 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 46/46 test o'tadi (`run_full_test.py`).**
+**Joriy: 47/47 test o'tadi (`run_full_test.py`).**
+
+## BESHINCHI marta topilgan xato turkumi: UniFi ma'lumoti hali ham Dashboard'da ko'rinmasdi
+
+Foydalanuvchi: "unifi controllerdan olingan ma'lumotlar dashbordda
+ko'rinmayabdi" - avvalgi tuzatishimdan (`discover_via_unifi()`)
+KEYIN ham. Sabab ikki qatlamli edi:
+
+1. `docker-compose.yml`dagi yagona `discover_via_unifi()`ni chaqiruvchi
+   xizmat (`network_discovery`) `profiles: ["discovery"]` bilan
+   belgilangan edi - foydalanuvchining oddiy `docker compose up -d`
+   buyrug'i bilan HECH QACHON ishga tushmagan.
+2. Hatto ishga tushsa ham, o'sha xizmatning ichidagi kod
+   (`scheduler.py`) UniFi'ni umuman chaqirmasdi - faqat ARP/ICMP.
+
+**Tuzatish**: UniFi uchun ALOHIDA, `network_discovery/unifi_sync_
+loop.py` - bu HECH QANDAY host tarmoq yoki maxsus huquq talab
+qilmaydi (shunchaki HTTPS API so'rovi), shuning uchun yangi
+`unifi_sync` docker-compose xizmati **PROFILSIZ** (standart `docker
+compose up -d` bilan avtomatik ishga tushadigan) qilib qo'shildi.
+
+**Real test qilingan**: docker-compose.yml'da profilsiz ekanligi
+tasdiqlangan + real HTTP orqali sinxronizatsiya (DB'ga yozish) va
+UniFi sozlanmagan holatda xato bermasligi tekshirildi.
+
+**Beshinchi marta tasdiqlangan saboq**: "funksiya to'g'ri ishlaydi"
+bilan "funksiya production'da haqiqatan ishga tushadi" - ikki
+BUTUNLAY BOSHQA savol. Bu safar bo'shliq HATTO oldingi maxsus
+tuzatishdan (a4489ef) keyin ham qolib ketgan edi - chunki men
+funksiyaning o'zini test qilgandim, lekin uni ChAQIRUVCHI
+infratuzilma (docker-compose profil sozlamasi) qatoriga yetarlicha
+chuqur bormagandim.
 
 ## Dashboard mahalliy vaqt zonasi (+5:00, Toshkent)
 
