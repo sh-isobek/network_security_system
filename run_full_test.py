@@ -2682,6 +2682,109 @@ dNSHostName: CI-MISSING.covci.local
 check("Windows Agent Heartbeat + AD Coverage Report (real HTTP + real OpenLDAP)", _test_agent_coverage)
 
 # ---------------------------------------------------------------------------
+print("\n=== 42) UNIFI API KEY INTEGRATSIYASI (real HTTP, soxta Integration API server) ===")
+
+
+def _test_unifi_api_key():
+    import subprocess
+    import time as _time
+
+    mock_script = "/tmp/_ci_mock_unifi.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+@app.route("/proxy/network/integration/v1/sites/ci-site-uuid/clients", methods=["GET"])
+def clients():
+    if request.headers.get("X-API-Key") != "ci-real-key":
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"data": [
+        {"macAddress": "aa:bb:cc:dd:ee:01", "ipAddress": "172.16.20.1", "name": "CI-PC-1", "type": "WIRED"},
+        {"macAddress": "aa:bb:cc:dd:ee:02", "ipAddress": "172.16.20.2", "name": "CI-PC-2", "type": "WIRELESS"},
+    ]})
+
+@app.route("/proxy/network/integration/v1/sites/ci-site-uuid/clients/<mac>/actions", methods=["POST"])
+def action(mac):
+    if request.headers.get("X-API-Key") != "ci-real-key":
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"status": "ok"}), 200
+
+@app.route("/api/login", methods=["POST"])
+def legacy_login():
+    body = request.get_json()
+    if body.get("username") == "ci_admin" and body.get("password") == "ci_pass":
+        return jsonify({"meta": {"rc": "ok"}}), 200
+    return jsonify({"meta": {"rc": "error"}}), 401
+
+@app.route("/api/s/default/cmd/stamgr", methods=["POST"])
+def legacy_cmd():
+    return jsonify({"meta": {"rc": "ok"}}), 200
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=18777)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+
+        # --- 1) Discovery: to'g'ri API Key bilan real klientlar ro'yxati ---
+        os.environ["UNIFI_CONTROLLER_URL"] = "http://127.0.0.1:18777"
+        os.environ["UNIFI_API_KEY"] = "ci-real-key"
+        os.environ["UNIFI_SITE_ID"] = "ci-site-uuid"
+        os.environ["UNIFI_VERIFY_SSL"] = "false"
+
+        from network_discovery.unifi_discovery import get_unifi_clients
+        clients = get_unifi_clients()
+        assert len(clients) == 2, f"2 ta klient kutilgan edi, {len(clients)} keldi"
+        assert clients[0].mac == "AA:BB:CC:DD:EE:01"
+        assert clients[0].is_wired is True
+        assert clients[1].is_wired is False
+
+        # --- 2) Discovery: noto'g'ri API Key -> bo'sh ro'yxat (crash yo'q) ---
+        os.environ["UNIFI_API_KEY"] = "notogri-kalit"
+        clients_bad = get_unifi_clients()
+        assert clients_bad == []
+
+        # --- 3) Response Adapter: to'g'ri API Key bilan bloklash ---
+        os.environ["UNIFI_API_KEY"] = "ci-real-key"
+        from response.unifi_adapter import UniFiAdapter
+        from response.base_adapter import TargetDevice
+
+        adapter = UniFiAdapter()
+        device = TargetDevice(mac_address="AA:BB:CC:DD:EE:03", ip_address="172.16.20.3", connection_type="wifi")
+        result = adapter.quarantine(device)
+        assert result.success is True
+        assert "API Key" in result.message
+
+        # --- 4) Response Adapter: API Key noto'g'ri, legacy login/parol'ga avtomatik o'tish ---
+        os.environ["UNIFI_API_KEY"] = "notogri-kalit"
+        os.environ["UNIFI_USERNAME"] = "ci_admin"
+        os.environ["UNIFI_PASSWORD"] = "ci_pass"
+        os.environ["UNIFI_OS_CONSOLE"] = "false"
+
+        adapter2 = UniFiAdapter()
+        device2 = TargetDevice(mac_address="AA:BB:CC:DD:EE:04", ip_address="172.16.20.4", connection_type="wifi")
+        result2 = adapter2.restore(device2)
+        assert result2.success is True, f"Legacy fallback muvaffaqiyatli bo'lishi kerak edi: {result2}"
+        assert "legacy" in result2.message
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["UNIFI_CONTROLLER_URL", "UNIFI_API_KEY", "UNIFI_SITE_ID", "UNIFI_VERIFY_SSL",
+                  "UNIFI_USERNAME", "UNIFI_PASSWORD", "UNIFI_OS_CONSOLE"]:
+            os.environ.pop(k, None)
+
+
+check("UniFi API Key integratsiyasi (discovery + response adapter + legacy fallback)", _test_unifi_api_key)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

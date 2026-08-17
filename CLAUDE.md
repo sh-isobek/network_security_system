@@ -90,7 +90,39 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 41/41 test o'tadi (`run_full_test.py`).**
+**Joriy: 42/42 test o'tadi (`run_full_test.py`).**
+
+## UniFi API Key integratsiyasi (foydalanuvchining production so'rovi)
+
+Foydalanuvchi haqiqiy UniFi Controller manzilini berdi
+(`172.16.0.64:11443`) va API Key asosida integratsiya qilishni so'radi
+(login/parol o'rniga - `UNIFI_API_KEY`, `UNIFI_SITE_ID` UUID
+ko'rinishida, `UNIFI_VERIFY_SSL`, `UNIFI_POLL_INTERVAL`).
+
+Web qidiruv orqali (bir nechta mustaqil manba, jumladan rasmiy
+Ubiquiti Help Center) UniFi'ning **yangi Integration API (v1)**
+tuzilishi tasdiqlandi: login bosqichisiz, `X-API-Key` sarlavhasi
+orqali, manzil `{controller}/proxy/network/integration/v1/...`, sayt
+NOMI emas UUID orqali.
+
+Qurilgan:
+- `network_discovery/unifi_discovery.py` - API Key ASOSIY usul,
+  login/parol ZAXIRA usul (agar API Key muvaffaqiyatsiz bo'lsa).
+- `response/unifi_adapter.py` - bloklash/uzish uchun ham xuddi shu
+  ustuvorlik (API Key -> muvaffaqiyatsiz bo'lsa avtomatik legacy).
+  MUHIM (halol izoh): block/kick amal nomlari yangi Integration
+  API'da hali to'liq rasmiy hujjatlashtirilmagan ("Early Access", 2025)
+  - shuning uchun bu yerda ayniqsa zaxira mexanizmi muhim.
+
+**Real test qilingan**: ikkalasi ham HAQIQIY HTTP (Flask soxta server,
+UniFi Integration API'ni to'liq taqlid qiluvchi) orqali - 4 stsenariy:
+to'g'ri API Key (klientlar ro'yxati + bloklash), noto'g'ri API Key
+(graceful fail), va eng muhimi - **API Key muvaffaqiyatsiz bo'lganda
+avtomatik legacy usulga o'tish** (barchasi tasdiqlangan).
+
+**Muhim dizayn qarori**: barcha UniFi muhit o'zgaruvchilari funksiya
+ichida DINAMIK o'qiladi (modul darajasidagi konstanta emas) - bu
+loyihada bir necha marta uchragan xato turkumini oldindan oldini oldi.
 
 ## Windows Agent AD-orqali avtomatlashtirish (foydalanuvchining production so'rovi)
 
