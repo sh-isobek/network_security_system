@@ -10,11 +10,14 @@ Jadvallar:
   - blacklist  : ma'lum zararli IP/domenlar ro'yxati
 """
 from datetime import datetime, timezone
+import logging
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Text,
-    ForeignKey, Boolean, Index
+    ForeignKey, Boolean, Index, inspect, text
 )
 from sqlalchemy.orm import declarative_base, relationship
+
+logger = logging.getLogger("db.models")
 
 Base = declarative_base()
 
@@ -344,8 +347,60 @@ class User(Base):
     mfa_enabled = Column(Boolean, default=False)
 
 
+def _sync_missing_columns(engine):
+    """
+    "Kamtarona migratsiya" - Alembic o'rniga. `Base.metadata.create_all()`
+    FAQAT yangi jadvallarni yaratadi, MAVJUD jadvallarga yangi ustun
+    hech qachon qo'shmaydi. Loyiha rivojlanib borgan sari (masalan
+    Device jadvaliga risk_score, device_type, agent_last_heartbeat va
+    h.k. turli bosqichlarda qo'shilgan) - eski o'rnatishlarda baza
+    sxemasi ORM modellaridan orqada qolib ketadi, va bu SQLAlchemy
+    xatoligiga olib keladi: "column X does not exist" (bu real
+    production'da aniqlangan xato edi).
+
+    Bu funksiya har bir jadval uchun modelda e'lon qilingan ustunlarni
+    haqiqiy bazadagilar bilan solishtiradi, va YETISHMAYOTGAN ustunlarni
+    avtomatik `ALTER TABLE ... ADD COLUMN` orqali qo'shadi. Faqat
+    NULLABLE (majburiy bo'lmagan) ustunlar uchun xavfsiz - bu loyihada
+    keyinroq qo'shilgan barcha ustunlar shunday (mavjud qatorlar uchun
+    standart qiymat talab qilinmaydi).
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue  # yangi jadval - create_all() allaqachon yaratgan
+
+            existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                if not column.nullable:
+                    # Xavfsizlik: majburiy (NOT NULL) ustunni avtomatik
+                    # qo'shish mavjud qatorlar uchun standart qiymat
+                    # talab qiladi - bu holatni qo'lda hal qilish
+                    # kerak, jim ravishda o'tkazib yuborilmaydi.
+                    logger.warning(
+                        f"'{table.name}.{column.name}' yetishmayapti, lekin NOT NULL - "
+                        f"avtomatik qo'shilmadi, qo'lda migratsiya kerak"
+                    )
+                    continue
+
+                col_type = column.type.compile(dialect=engine.dialect)
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}"
+                try:
+                    conn.execute(text(ddl))
+                    logger.info(f"Avtomatik migratsiya: '{table.name}.{column.name}' ustuni qo'shildi")
+                except Exception as exc:
+                    logger.error(f"'{table.name}.{column.name}' ustunini qo'shib bo'lmadi: {exc}")
+
+
 def init_db(database_url: str):
-    """Bazani va barcha jadvallarni yaratadi (agar mavjud bo'lmasa)."""
+    """Bazani va barcha jadvallarni yaratadi (agar mavjud bo'lmasa), va
+    mavjud jadvallardagi yetishmayotgan ustunlarni avtomatik qo'shadi."""
     engine = create_engine(database_url, echo=False)
     Base.metadata.create_all(engine)
+    _sync_missing_columns(engine)
     return engine

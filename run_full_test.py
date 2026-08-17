@@ -2828,6 +2828,139 @@ if __name__ == "__main__":
 check("UniFi API Key integratsiyasi (discovery + response adapter + legacy fallback)", _test_unifi_api_key)
 
 # ---------------------------------------------------------------------------
+print("\n=== 43) AVTOMATIK USTUN-MIGRATSIYA (real production xatosini takrorlaydi) ===")
+
+
+def _test_auto_column_migration():
+    """
+    Real production'da (foydalanuvchi PostgreSQL server) topilgan xato:
+    'column devices.agent_last_heartbeat does not exist' - Device
+    jadvali loyiha rivojlanishi davomida yangi ustunlar bilan
+    kengaytirilgan, lekin ESKI o'rnatishlardagi baza bu ustunlarsiz
+    qolib ketgan (Base.metadata.create_all() FAQAT yangi jadval
+    yaratadi, mavjudiga ustun qo'shmaydi).
+
+    Bu test aynan shu stsenariyni takrorlaydi: eski (ustunlar
+    yetishmaydigan) sxema bilan jadval yaratib, YANGI kod bilan
+    init_db()ni chaqirib, ustunlar avtomatik qo'shilishini va mavjud
+    ma'lumot saqlanib qolishini tekshiradi.
+    """
+    import shutil
+    import sqlite3
+    import subprocess
+
+    from db.models import init_db, Device
+    from sqlalchemy.orm import sessionmaker
+
+    work_dir = "/tmp/_test_auto_migration"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+    db_path = os.path.join(work_dir, "old_schema.db")
+
+    # 1) Eski (ustunlar yetishmaydigan) sxema bilan jadval yaratish
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE devices (
+            id INTEGER PRIMARY KEY,
+            ip_address VARCHAR(45) NOT NULL UNIQUE,
+            mac_address VARCHAR(17),
+            hostname VARCHAR(255),
+            connection_type VARCHAR(10),
+            source VARCHAR(50),
+            first_seen DATETIME,
+            last_seen DATETIME
+        )
+    """)
+    conn.execute(
+        "INSERT INTO devices (ip_address, mac_address, hostname) VALUES (?, ?, ?)",
+        ("172.16.99.1", "AA:BB:CC:DD:EE:99", "MIGRATION-TEST-DEVICE"),
+    )
+    conn.commit()
+    cols_before = [r[1] for r in conn.execute("PRAGMA table_info(devices)").fetchall()]
+    conn.close()
+    assert "agent_last_heartbeat" not in cols_before, "Test sozlamasi xato - ustun allaqachon bor"
+
+    # 2) Yangi kod bilan init_db() chaqirish (avtomatik migratsiya)
+    engine = init_db(f"sqlite:///{db_path}")
+
+    # 3) Barcha yangi ustunlar qo'shilganini tekshirish
+    conn = sqlite3.connect(db_path)
+    cols_after = [r[1] for r in conn.execute("PRAGMA table_info(devices)").fetchall()]
+    required = ["risk_score", "device_type", "vendor", "os_guess", "open_ports",
+                "discovery_source", "last_discovered_at", "agent_last_heartbeat",
+                "agent_version", "agent_os"]
+    for col in required:
+        assert col in cols_after, f"'{col}' ustuni avtomatik qo'shilmadi!"
+    conn.close()
+
+    # 4) Mavjud ma'lumot saqlanib qolganini tasdiqlash
+    Session = sessionmaker(bind=engine)
+    s = Session()
+    devices = s.query(Device).all()
+    assert len(devices) == 1, "Mavjud yozuv yo'qolgan"
+    assert devices[0].hostname == "MIGRATION-TEST-DEVICE", "Mavjud ma'lumot buzilgan"
+    assert devices[0].ip_address == "172.16.99.1"
+    assert devices[0].agent_last_heartbeat is None  # yangi ustun, eski qator uchun NULL - to'g'ri
+    s.close()
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+    # 5) Agar PostgreSQL mavjud bo'lsa, xuddi shu stsenariyni real PostgreSQL'da ham tekshirish
+    if subprocess.run(["which", "psql"], capture_output=True).returncode != 0:
+        print("   (PostgreSQL qismi o'tkazib yuborildi - psql o'rnatilmagan)")
+        return
+
+    pg_check = subprocess.run(
+        ["psql", "-h", "localhost", "-U", "postgres", "-c", "SELECT 1"],
+        env={**os.environ, "PGPASSWORD": "testpass123"}, capture_output=True,
+    )
+    if pg_check.returncode != 0:
+        print("   (PostgreSQL qismi o'tkazib yuborildi - server ishlamayapti)")
+        return
+
+    subprocess.run(["dropdb", "-h", "localhost", "-U", "postgres", "_ci_migration_test"],
+                    env={**os.environ, "PGPASSWORD": "testpass123"}, capture_output=True)
+    subprocess.run(["createdb", "-h", "localhost", "-U", "postgres", "_ci_migration_test"],
+                    env={**os.environ, "PGPASSWORD": "testpass123"}, check=True, capture_output=True)
+
+    try:
+        create_sql = """
+        CREATE TABLE devices (
+            id SERIAL PRIMARY KEY,
+            ip_address VARCHAR(45) NOT NULL UNIQUE,
+            mac_address VARCHAR(17),
+            hostname VARCHAR(255),
+            connection_type VARCHAR(10),
+            source VARCHAR(50),
+            first_seen TIMESTAMP,
+            last_seen TIMESTAMP
+        );
+        INSERT INTO devices (ip_address, mac_address, hostname) VALUES ('172.16.99.2', 'BB:CC:DD:EE:FF:01', 'PG-MIGRATION-TEST');
+        """
+        subprocess.run(
+            ["psql", "-h", "localhost", "-U", "postgres", "-d", "_ci_migration_test"],
+            input=create_sql, env={**os.environ, "PGPASSWORD": "testpass123"},
+            capture_output=True, text=True, check=True,
+        )
+
+        pg_engine = init_db("postgresql://postgres:testpass123@localhost:5432/_ci_migration_test")
+        PgSession = sessionmaker(bind=pg_engine)
+        ps = PgSession()
+        pg_devices = ps.query(Device).all()
+        assert len(pg_devices) == 1
+        assert pg_devices[0].hostname == "PG-MIGRATION-TEST"
+        assert pg_devices[0].agent_last_heartbeat is None
+        ps.close()
+
+    finally:
+        subprocess.run(["dropdb", "-h", "localhost", "-U", "postgres", "_ci_migration_test"],
+                        env={**os.environ, "PGPASSWORD": "testpass123"}, capture_output=True)
+
+
+check("Avtomatik ustun-migratsiya (eski sxema -> yangi, real production xatosini takrorlaydi)", _test_auto_column_migration)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

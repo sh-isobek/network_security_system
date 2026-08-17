@@ -90,7 +90,44 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 42/42 test o'tadi (`run_full_test.py`).**
+**Joriy: 43/43 test o'tadi (`run_full_test.py`).**
+
+## Avtomatik ustun-migratsiya - real production xatosi orqali topilgan tizimli bo'shliq
+
+Foydalanuvchi haqiqiy Dashboard xatosini (`Internal Server Error`) va
+uning `docker compose logs dashboard` chiqishini yubordi:
+`sqlalchemy.exc.ProgrammingError: column devices.agent_last_heartbeat
+does not exist`.
+
+**Ildiz sabab**: `db/models.py`dagi `init_db()` faqat `Base.metadata.
+create_all()` chaqirar edi - bu FAQAT yangi jadvallarni yaratadi,
+MAVJUD jadvallarga yangi ustun hech qachon qo'shmaydi. Loyiha oylar
+davomida rivojlanib, `Device` jadvaliga turli bosqichlarda 10 ta yangi
+ustun (`risk_score`, `device_type`, `agent_last_heartbeat` va h.k.)
+qo'shilgan, lekin foydalanuvchining bazasi ancha oldin (bu ustunlar
+mavjud bo'lmagan paytda) yaratilgan edi - loyihada rasmiy migratsiya
+vositasi (Alembic) yo'q edi.
+
+**Tuzatish**: `_sync_missing_columns()` funksiyasi qo'shildi -
+`create_all()`dan keyin har bir jadvalning ORM modelida e'lon
+qilingan ustunlarini haqiqiy bazadagilar bilan solishtiradi, va
+yetishmayotgan (faqat NULLABLE - xavfsizlik uchun) ustunlarni
+avtomatik `ALTER TABLE ... ADD COLUMN` orqali qo'shadi. NOT NULL
+ustun yetishmasa, jim qoldirilmaydi - aniq ogohlantirish bilan
+o'tkazib yuboriladi (qo'lda hal qilish talab etiladi).
+
+**Real test qilingan**: eski sxema (ustunlar yo'q, real ma'lumot
+bilan) qo'lda yaratilib, yangi kod bilan `init_db()` chaqirilganda -
+**ham SQLite'da, ham HAQIQIY PostgreSQL'da** (bu sandbox'ga maxsus
+o'rnatilib) barcha 10 ustun to'g'ri turlar bilan qo'shilgani, mavjud
+ma'lumot to'liq saqlanib qolgani, va ORM so'rovi (aynan Dashboard
+xato bergan turi) endi xatosiz ishlashi tasdiqlandi. Ikkinchi marta
+chaqirilganda ham xatosiz (idempotent) ekanligi tekshirildi.
+
+**MUHIM saboq (uchinchi marta)**: bu loyihada foydalanuvchining
+haqiqiy production muhitidan olingan ma'lumot (1-UniFi/AD ruxsatlari,
+2-UniFi paginatsiya, 3-bu migratsiya xatosi) yana bir marta sof
+mock/test muhitida hech qachon ochilmaydigan tizimli xatoni aniqladi.
 
 ## UniFi paginatsiya xatosi - foydalanuvchining real production ma'lumoti orqali topildi
 
