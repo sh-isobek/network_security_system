@@ -20,6 +20,42 @@ monitor session 1 destination interface Gi0/25
 `Gi0/25` portiga Suricata ishlaydigan serverning tarmoq kartasi ulanadi.
 Bu interfeys **IP manzilsiz, promiscuous rejimda** ishlaydi (faqat tinglaydi).
 
+### UniFi Controller orqali (sizning holatingiz - Switch + UDM)
+
+Sizda alohida **UniFi Switch** va **UDM** bor - eng to'liq qamrov
+uchun Switch'ning **UDM'ga ketuvchi uplink porti**ni oyna (mirror)
+sifatida sozlaymiz (bu orqali ichki va tashqi barcha trafik ko'rinadi).
+
+1. **UniFi Network Controller**ga kiring (`https://172.16.0.64:11443`)
+2. **Devices** → sizning **Switch**ingizni tanlang (UDM emas, Switch)
+3. **Ports** bo'limiga o'ting
+4. Serveringiz ulanadigan (yoki ulanishi kerak bo'lgan) **bo'sh portni**
+   tanlang → **Edit**
+5. **"Operation"** bo'limida → **"Mirroring"**ni tanlang
+6. **"Mirroring Port"** maydonida → Switch'ning **UDM'ga ulangan
+   uplink porti**ni ko'rsating (bu barcha ichki+tashqi trafikni
+   ko'rish imkonini beradi)
+7. **Apply**ni bosing
+
+**MUHIM (jismoniy talab)**: Suricata ishlaydigan serveringizda
+(`172.16.1.206`) buning uchun **ikkinchi, alohida tarmoq kartasi**
+kerak bo'ladi:
+- Birinchi karta (`eth0`, `172.16.1.206`) - odatdagidek, SSH/Docker
+  uchun IP bilan ishlaydi
+- Ikkinchi karta (masalan `eth1`) - **IP manzilsiz**, yuqoridagi
+  6-bosqichda tanlangan mirror portiga jismoniy kabel bilan ulanadi,
+  faqat "tinglash" (promiscuous) rejimida ishlaydi
+
+Agar serveringizda hozircha faqat bitta tarmoq kartasi bo'lsa, yangi
+PCIe/USB tarmoq kartasi qo'shish kerak bo'ladi (bu - standart, arzon
+apparat talabi, Suricata/SPAN sozlashning ajralmas qismi).
+
+**Eslatma**: ba'zi UniFi Switch modellari **bir vaqtning o'zida faqat
+bitta manba portini** oynalashni qo'llab-quvvatlaydi (ko'p-manbali
+mirroring cheklangan bo'lishi mumkin) - agar sizga bir nechta VLAN/
+portni birlashtirib kuzatish kerak bo'lsa, switch modelingiz hujjatini
+tekshiring yoki `community.ui.com`da qidiring.
+
 ## 2. Suricata o'rnatish (Ubuntu/Debian asosidagi server)
 
 ```bash
