@@ -23,6 +23,7 @@ from network_discovery.icmp_scanner import ping_sweep
 from network_discovery.mac_vendor import lookup_vendor
 from network_discovery.snmp_discovery import snmp_discover
 from network_discovery.tcp_scanner import tcp_scan
+from network_discovery.unifi_discovery import get_unifi_clients
 
 logger = logging.getLogger("asset_inventory")
 
@@ -97,6 +98,45 @@ def discover_via_icmp(cidr: str) -> int:
         session.close()
 
 
+def discover_via_unifi() -> int:
+    """
+    UniFi Controller'dan (API Key yoki login/parol orqali,
+    `network_discovery/unifi_discovery.py`ga qarang) hozir ulangan
+    barcha klientlarni olib, DB'ga yozadi. MAC Vendor lookup ham shu
+    yerda avtomatik qo'llaniladi. UniFi ma'lumoti (IP+MAC+hostname)
+    ko'pincha ARP/ICMP'dan ko'ra ANIQROQ va TO'LIQROQ bo'ladi (Wi-Fi
+    orqali ulangan, lekin ARP scan tarmoq segmentidan tashqarida
+    bo'lgan qurilmalar ham kiradi) - shuning uchun discovery_source
+    ustuvorligi (`_upsert_device`dagi) buni ARP bilan bir xil "boy"
+    manba sifatida ko'radi.
+    """
+    clients = get_unifi_clients()
+    session = get_session()
+    count = 0
+    try:
+        for c in clients:
+            if not c.ip:
+                continue  # IP'siz klientni Device jadvaliga yozib bo'lmaydi (ip_address majburiy)
+            vendor = lookup_vendor(c.mac) if c.mac else None
+            _upsert_device(
+                session, c.ip,
+                mac_address=c.mac or None,
+                hostname=c.hostname,
+                vendor=vendor,
+                connection_type="wired" if c.is_wired else "wifi",
+                discovery_source="unifi",
+            )
+            count += 1
+        session.commit()
+        logger.info(f"UniFi discovery: {count} ta qurilma yangilandi")
+        return count
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def enrich_with_snmp(ip_list: list, community: str = "public") -> int:
     """Berilgan IP ro'yxati uchun SNMP orqali qo'shimcha ma'lumot (tur, joylashuv) qo'shadi."""
     session = get_session()
@@ -159,13 +199,21 @@ def enrich_with_tcp_scan(ip_list: list, ports: str = None) -> int:
 
 def full_discovery(cidr: str, interface: str, do_tcp_scan: bool = False, do_snmp: bool = False) -> dict:
     """
-    To'liq discovery aylanishi: ARP -> ICMP -> (ixtiyoriy) SNMP -> (ixtiyoriy) TCP scan.
-    Bu funksiya CLI va boshqa enginelar (masalan davriy discovery) uchun
-    yagona kirish nuqtasi.
+    To'liq discovery aylanishi: ARP -> ICMP -> (agar sozlangan bo'lsa)
+    UniFi -> (ixtiyoriy) SNMP -> (ixtiyoriy) TCP scan. Bu funksiya CLI
+    va boshqa enginelar (masalan davriy discovery) uchun yagona kirish
+    nuqtasi.
     """
     stats = {}
     stats["arp"] = discover_via_arp(interface)
     stats["icmp"] = discover_via_icmp(cidr)
+
+    # UniFi faqat UNIFI_CONTROLLER_URL sozlangan bo'lsa ishga tushadi -
+    # sozlanmagan bo'lsa get_unifi_clients() baribir bo'sh ro'yxat
+    # qaytaradi (xato ko'tarmaydi), shuning uchun bu chaqiruv har doim
+    # xavfsiz.
+    if os.getenv("UNIFI_CONTROLLER_URL"):
+        stats["unifi"] = discover_via_unifi()
 
     session = get_session()
     try:
@@ -186,11 +234,18 @@ if __name__ == "__main__":
     logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cidr", required=True, help="Masalan 172.16.0.0/22")
-    ap.add_argument("--interface", required=True, help="Masalan eth0")
+    ap.add_argument("--cidr", help="Masalan 172.16.0.0/22 (--unifi-only bilan shart emas)")
+    ap.add_argument("--interface", help="Masalan eth0 (--unifi-only bilan shart emas)")
     ap.add_argument("--tcp-scan", action="store_true")
     ap.add_argument("--snmp", action="store_true")
+    ap.add_argument("--unifi-only", action="store_true", help="Faqat UniFi Controller'dan (ARP/ICMP'siz)")
     args = ap.parse_args()
 
-    result = full_discovery(args.cidr, args.interface, do_tcp_scan=args.tcp_scan, do_snmp=args.snmp)
-    print(f"Discovery yakunlandi: {result}")
+    if args.unifi_only:
+        count = discover_via_unifi()
+        print(f"UniFi discovery yakunlandi: {count} ta qurilma")
+    else:
+        if not args.cidr or not args.interface:
+            ap.error("--cidr va --interface talab qilinadi (yoki --unifi-only ishlating)")
+        result = full_discovery(args.cidr, args.interface, do_tcp_scan=args.tcp_scan, do_snmp=args.snmp)
+        print(f"Discovery yakunlandi: {result}")

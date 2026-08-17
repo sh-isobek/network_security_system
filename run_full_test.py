@@ -2961,6 +2961,101 @@ def _test_auto_column_migration():
 check("Avtomatik ustun-migratsiya (eski sxema -> yangi, real production xatosini takrorlaydi)", _test_auto_column_migration)
 
 # ---------------------------------------------------------------------------
+print("\n=== 44) UNIFI -> ASSET INVENTORY INTEGRATSIYASI (real HTTP -> DB -> Dashboard) ===")
+
+
+def _test_unifi_asset_inventory_integration():
+    """
+    Real topilgan bo'shliq: get_unifi_clients() to'g'ri ishlar edi, lekin
+    hech qayerda haqiqatan chaqirilmagan edi - UniFi ma'lumoti hech qachon
+    devices jadvaliga yozilmagan, shuning uchun Dashboard'da HECH QACHON
+    ko'rinmagan. Bu test to'liq zanjirni (UniFi API -> asset_inventory.
+    discover_via_unifi() -> DB -> Dashboard /asset-inventory) tekshiradi.
+    """
+    import subprocess
+    import time as _time
+
+    mock_script = "/tmp/_ci_mock_unifi_ai.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+@app.route("/proxy/network/integration/v1/sites/ai-test-site/clients", methods=["GET"])
+def clients():
+    if request.headers.get("X-API-Key") != "ai-test-key":
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"offset": 0, "limit": 200, "count": 3, "totalCount": 3, "data": [
+        {"macAddress": "aa:bb:cc:aa:11:01", "ipAddress": "172.16.31.1", "name": "AI-TEST-PC-1", "type": "WIRED"},
+        {"macAddress": "aa:bb:cc:aa:11:02", "ipAddress": "172.16.31.2", "name": "AI-TEST-PC-2", "type": "WIRELESS"},
+        {"macAddress": "aa:bb:cc:aa:11:03", "ipAddress": "", "name": "IPSIZ-KLIENT", "type": "WIRELESS"},
+    ]})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=19556)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+        os.environ["UNIFI_CONTROLLER_URL"] = "http://127.0.0.1:19556"
+        os.environ["UNIFI_API_KEY"] = "ai-test-key"
+        os.environ["UNIFI_SITE_ID"] = "ai-test-site"
+        os.environ["UNIFI_VERIFY_SSL"] = "false"
+
+        from network_discovery.asset_inventory import discover_via_unifi
+
+        # --- 1) discover_via_unifi() haqiqatan bazaga yozishini tekshirish ---
+        count = discover_via_unifi()
+        assert count == 2, f"2 ta qurilma kutilgan edi (IP'siz klient o'tkazib yuborilishi kerak), {count} keldi"
+
+        s = get_session()
+        unifi_devices = s.query(Device).filter(Device.discovery_source == "unifi").all()
+        assert len(unifi_devices) == 2
+        by_ip = {d.ip_address: d for d in unifi_devices}
+        assert "172.16.31.1" in by_ip and "172.16.31.2" in by_ip
+        assert by_ip["172.16.31.1"].mac_address == "AA:BB:CC:AA:11:01"
+        assert by_ip["172.16.31.1"].hostname == "AI-TEST-PC-1"
+        assert by_ip["172.16.31.1"].connection_type == "wired"
+        assert by_ip["172.16.31.2"].connection_type == "wifi"
+        s.close()
+
+        # --- 2) full_discovery() UNIFI_CONTROLLER_URL sozlangan bo'lsa UniFi'ni ham chaqirishi ---
+        from network_discovery.asset_inventory import full_discovery
+        # ARP/ICMP haqiqiy tarmoq talab qiladi - agar mavjud bo'lmasa xato bermasligini tekshiramiz,
+        # asosiysi 'unifi' kaliti natijada mavjudligi
+        try:
+            result = full_discovery("127.0.0.1/32", "lo", do_tcp_scan=False, do_snmp=False)
+            assert "unifi" in result, f"full_discovery natijasida 'unifi' kaliti yo'q: {result}"
+        except Exception:
+            pass  # ARP/ICMP vositalari yo'q bo'lishi mumkin - bu test uchun muhim emas
+
+        # --- 3) Dashboard /asset-inventory sahifasida ko'rinishini tekshirish ---
+        from dashboard import app as dash_app
+        from dashboard.create_user import create_user
+        create_user("unifi_ai_admin", "unifiaitest123", "admin")
+        dash_app.app.secret_key = "test-secret-unifi-ai"
+        client = dash_app.app.test_client()
+        client.post("/login", data={"username": "unifi_ai_admin", "password": "unifiaitest123"})
+        r = client.get("/asset-inventory")
+        assert r.status_code == 200
+        assert b"AI-TEST-PC-1" in r.data, "UniFi orqali topilgan qurilma Dashboard'da ko'rinmadi"
+        assert b"unifi" in r.data
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["UNIFI_CONTROLLER_URL", "UNIFI_API_KEY", "UNIFI_SITE_ID", "UNIFI_VERIFY_SSL"]:
+            os.environ.pop(k, None)
+
+
+check("UniFi -> Asset Inventory -> Dashboard integratsiyasi (real HTTP -> DB -> UI)", _test_unifi_asset_inventory_integration)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

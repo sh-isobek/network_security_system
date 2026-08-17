@@ -82,6 +82,31 @@ python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --lo
 `DISCOVERY_MISSING_THRESHOLD_HOURS` (standart 24) - qurilma necha
 soat ko'rinmasa "yo'qolgan" deb belgilanishi.
 
+## UniFi Controller'dan Asset Inventory'ga (ixtiyoriy)
+
+Agar `.env`da `UNIFI_CONTROLLER_URL`/`UNIFI_API_KEY`/`UNIFI_SITE_ID`
+sozlangan bo'lsa (`docs_...`ga qarang, yoki shu faylning UniFi
+bo'limi), UniFi Controller'dagi barcha ulangan klientlar Asset
+Inventory'ga qo'shilishi mumkin:
+
+```bash
+# Faqat UniFi'dan (tarmoq interfeysi/ARP/ICMP shart emas)
+docker compose exec dashboard python -m network_discovery.asset_inventory --unifi-only
+
+# Yoki to'liq discovery siklining bir qismi sifatida (UNIFI_CONTROLLER_URL
+# sozlangan bo'lsa avtomatik qo'shiladi)
+docker compose exec dashboard python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
+```
+
+Natijani `/asset-inventory` sahifasida (`discovery_source: unifi`)
+ko'rish mumkin.
+
+**Davriy avtomatik yangilanish uchun** (masalan har 15 daqiqada) - host
+mashinada cron orqali:
+```bash
+*/15 * * * * cd /path/to/project && docker compose exec -T dashboard python -m network_discovery.asset_inventory --unifi-only >> /var/log/unifi_discovery.log 2>&1
+```
+
 ## Docker'da ishga tushirish (MUHIM: tarmoq rejimi)
 
 Agar Network Discovery **Docker konteynerida** ishga tushirilsa, standart

@@ -90,7 +90,41 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 43/43 test o'tadi (`run_full_test.py`).**
+**Joriy: 44/44 test o'tadi (`run_full_test.py`).**
+
+## UniFi -> Asset Inventory integratsiya bo'shlig'i (to'rtinchi real production topilma)
+
+Foydalanuvchi: "unifi os controllerdan olindan malumotlar dashbord da
+ko'rinmayabdi" (Dashboard'ni to'g'ri xato bermayotganini, `get_unifi_
+clients()`ni to'g'ridan-to'g'ri chaqirganda 207 ta klient qaytishini
+tasdiqlagandan keyin).
+
+**Ildiz sabab**: `network_discovery/unifi_discovery.py`ning `get_unifi_
+clients()` funksiyasi to'g'ri ishlar edi, lekin loyihaning HECH QANDAY
+joyida haqiqatan CHAQIRILMAGAN edi (faqat izohlarda tilga olingan) -
+`network_discovery/asset_inventory.py` (bazaga yozuvchi markaziy
+modul) UniFi'ni umuman bilmas edi. Shuning uchun UniFi ma'lumoti hech
+qachon `devices` jadvaliga yozilmagan, Dashboard'da ko'rinishi mumkin
+emas edi.
+
+**Tuzatish**: `asset_inventory.py`ga `discover_via_unifi()` qo'shildi
+(UniFi klientlarini olib, DB'ga yozadi - IP'siz klientlar to'g'ri
+o'tkazib yuboriladi), `full_discovery()`ga integratsiya qilindi
+(`UNIFI_CONTROLLER_URL` sozlangan bo'lsa avtomatik), va CLI'ga
+`--unifi-only` bayrog'i qo'shildi (faqat UniFi'dan, ARP/ICMP tarmoq
+interfeysisiz).
+
+**Real test**: to'liq zanjir (soxta UniFi server -> `discover_via_
+unifi()` -> real DB yozuvi -> Dashboard `/asset-inventory` sahifasida
+haqiqatan ko'rinishi) tasdiqlangan.
+
+**To'rtinchi marta tasdiqlangan saboq**: foydalanuvchining "funksiya
+to'g'ri ishlaydi, lekin natija ko'rinmayapti" degan real kuzatuvi -
+funksiyaning o'zi to'g'ri bo'lsa ham, uni **hech kim chaqirmasligi**
+mumkinligini (integratsiya bo'shlig'i) ochib berdi. Bu turdagi xato
+alohida unit-testlarda (masalan "UniFi API Key integratsiyasi" testi)
+umuman ko'rinmaydi, chunki ular funksiyani to'g'ridan-to'g'ri
+chaqiradi - end-to-end (CLI/Dashboard'dan boshlab) test kerak edi.
 
 ## Avtomatik ustun-migratsiya - real production xatosi orqali topilgan tizimli bo'shliq
 
