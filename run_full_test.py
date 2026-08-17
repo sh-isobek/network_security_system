@@ -3309,6 +3309,50 @@ if __name__ == "__main__":
 check("UniFi Sync Loop - standart docker-compose xizmati sifatida (production bo'shlig'i tuzatilgan)", _test_unifi_sync_loop)
 
 # ---------------------------------------------------------------------------
+print("\n=== 48) API_SERVER_URL: https:// EMAS http:// (real production xatosi, regressiya himoyasi) ===")
+
+
+def _test_api_server_url_uses_http_not_https():
+    """
+    Real production'da topilgan xato: docker-compose.yml'dagi gunicorn
+    HECH QANDAY SSL/TLS sertifikatisiz oddiy HTTP orqali ishlaydi, lekin
+    hujjatlar/skriptlarda standart qiymat sifatida 'https://' yozilgan
+    edi - bu Windows Agent'ning serverga ulanishini JIM ravishda
+    (aniq xatosiz) muvaffaqiyatsizlikka olib kelardi.
+
+    Bu test barcha tegishli fayllarda 'https://172.16.0.5:8443' (yoki
+    shunga o'xshash) endi qolmaganini tekshiradi.
+    """
+    files_to_check = [
+        "agent_core/agent.py",
+        "deploy/windows_agent_gpo/Deploy-NetworkSecurityAgent.ps1",
+        "deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1",
+        "docs_WINDOWS_AGENT_SETUP.md",
+        "docs_LINUX_AGENT_SETUP.md",
+        ".env.example",
+    ]
+    for filepath in files_to_check:
+        full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filepath)
+        if not os.path.isfile(full_path):
+            continue
+        with open(full_path) as f:
+            content = f.read()
+        assert "https://172.16.0.5:8443" not in content, (
+            f"{filepath}'da hali ham noto'g'ri 'https://172.16.0.5:8443' bor - "
+            f"server SSL/TLS'siz, bu jim ravishda ulanish xatosiga olib keladi"
+        )
+
+    # agent_core/agent.py'ning standart qiymati aynan http:// bilan boshlanishini tasdiqlash
+    from agent_core.agent import API_SERVER_URL
+    assert API_SERVER_URL.startswith("http://"), (
+        f"API_SERVER_URL standart qiymati http:// bilan boshlanishi kerak, "
+        f"hozirgi qiymat: {API_SERVER_URL}"
+    )
+
+
+check("API_SERVER_URL http:// (https:// emas) - real production ulanish xatosi tuzatilgan", _test_api_server_url_uses_http_not_https)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

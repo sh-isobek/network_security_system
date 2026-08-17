@@ -8,7 +8,7 @@
 # bajaradi.
 #
 # Ishlatish (Administrator PowerShell'da, paket papkasida turib):
-#     .\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "https://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
+#     .\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "http://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
 #
 # MUHIM: bu skript Administrator huquqi bilan ishga tushirilishi kerak
 # (xizmat o'rnatish uchun). Agar PowerShell skript ijrosi bloklangan

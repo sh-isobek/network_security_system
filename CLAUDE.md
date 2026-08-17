@@ -90,7 +90,40 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 47/47 test o'tadi (`run_full_test.py`).**
+**Joriy: 48/48 test o'tadi (`run_full_test.py`).**
+
+## OLTINCHI marta topilgan xato: API_SERVER_URL noto'g'ri protokol (https:// o'rniga http://)
+
+Foydalanuvchi: "fayillarni tekshirmayabdi zararli zararsiz" - fayl
+tekshirish ishlamayapti. Tekshirish jarayonida foydalanuvchining o'zi
+`curl -sk https://172.16.1.206:8443/api/v1/check_hash` bilan sinaganida
+**hech qanday javob (hatto xato ham) qaytmadi** - `-s` bayrog'i xatoni
+yashirgan edi.
+
+**ILDIZ SABAB**: `docker-compose.yml`dagi `gunicorn` HECH QANDAY SSL/
+TLS sertifikatisiz oddiy HTTP orqali ishlaydi - lekin loyihaning **5
+ta joyida** (`agent_core/agent.py`ning standart qiymati, ikkala GPO
+PowerShell skripti, `docs_WINDOWS_AGENT_SETUP.md`, `docs_LINUX_AGENT_
+SETUP.md`) `https://` yozilgan edi. Bu Windows/Linux Agent'larning
+serverga ulanishini **jim ravishda, aniq xatosiz** muvaffaqiyatsiz
+qilardi - fayl xeshlari hech qachon serverga yetmagan, shuning uchun
+"fayllarni tekshirmayapti" degan taassurot paydo bo'lgan.
+
+**Ikkinchi bo'shliq**: `API_SERVER_URL` `.env.example`da hech qachon
+hujjatlashtirilmagan edi - foydalanuvchi buni sozlashi kerakligini
+bilmagan bo'lardi.
+
+**Tuzatish**: barcha 5 joy `http://`ga o'zgartirildi, `.env.example`ga
+`API_SERVER_URL` qo'shildi (aniq izoh bilan: nega http, https emas),
+`docs_WINDOWS_AGENT_SETUP.md`ga ochiq ogohlantirish qo'shildi.
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi - kelajakda
+kimdir bexosdan `https://172.16.0.5:8443`ni qaytarsa, test darhol
+ushlaydi.
+
+**OLTINCHI MARTA TASDIQLANGAN SABOQ**: foydalanuvchining o'z qo'lda
+ishga tushirgan `curl` buyrug'i (hatto **muvaffaqiyatsiz**, natija
+bermagan bo'lsa ham) yana bir marta faqat production muhitida
+ochiladigan real xatoni fosh qildi.
 
 ## BESHINCHI marta topilgan xato turkumi: UniFi ma'lumoti hali ham Dashboard'da ko'rinmasdi
 

@@ -21,7 +21,7 @@
 
 param(
     [string]$ServerShare = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\NetworkSecurityAgent",
-    [string]$ApiServerUrl = "https://172.16.0.5:8443",
+    [string]$ApiServerUrl = "http://172.16.0.5:8443",
     [string]$InstallDir = "C:\Program Files\NetworkSecurityAgent",
     [string]$ServiceName = "NetworkSecurityEndpointAgent",
     [string]$LogFile = "C:\ProgramData\NetworkSecurityAgent\deploy.log"

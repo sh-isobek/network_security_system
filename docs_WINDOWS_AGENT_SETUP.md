@@ -60,8 +60,14 @@ pip install watchdog psutil requests pywin32
 
 ### d) Sozlash (muhit o'zgaruvchilari)
 
+**MUHIM**: `http://` ishlating, **`https://` EMAS**. Standart holatda
+server (docker-compose.yml'dagi gunicorn) hech qanday SSL/TLS
+sertifikati bilan sozlanmagan - faqat oddiy HTTP orqali ishlaydi.
+`https://` bilan ulanishga urinish **jim ravishda muvaffaqiyatsiz**
+bo'ladi (TLS handshake xatosi, aniq xato xabarisiz).
+
 ```powershell
-setx API_SERVER_URL "https://172.16.0.5:8443"
+setx API_SERVER_URL "http://172.16.0.5:8443"
 setx AGENT_API_KEY "<markazdagi bilan bir xil kalit>"
 ```
 
@@ -230,7 +236,7 @@ ko'ring (Administrator PowerShell'da, arxiv ichidagi papkada turib):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "https://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
+.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "http://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
 ```
 
 Muvaffaqiyatli bo'lsa, `Get-Service NetworkSecurityEndpointAgent`
