@@ -2,13 +2,18 @@
 UniFi Controller API adapteri - Wi-Fi orqali ulangan qurilmalar uchun.
 
 UniFi Network Controller (UDM Pro / Cloud Key / self-hosted) standart
-REST API'ga ega. Asosiy endpoint'lar (Controller versiyasi 7+, UniFi OS):
+REST API'ga ega. MUHIM: ikki xil "shakl" bor, va API yo'llari BOSHQACHA:
 
-    POST /api/auth/login                                  - autentifikatsiya
-    POST /proxy/network/api/s/{site}/cmd/stamgr            - klient buyruqlari
-         {"cmd": "block-sta", "mac": "aa:bb:cc:dd:ee:ff"}  - blokировка
-         {"cmd": "unblock-sta", "mac": "..."}              - blokdan chiqarish
-         {"cmd": "kick-sta", "mac": "..."}                 - darhol uzish (qayta ulanishi mumkin)
+  1. UniFi OS konsoli (UDM, UDM-Pro, UDR, Cloud Key Gen2+) - standart
+     443-port, login POST /api/auth/login, buyruqlar
+     POST /proxy/network/api/s/{site}/cmd/stamgr
+
+  2. Self-hosted / klassik dastur (masalan Docker orqali) - odatda
+     8443 (yoki boshqa portga moslashtirilgan), login POST /api/login,
+     buyruqlar to'g'ridan-to'g'ri POST /api/s/{site}/cmd/stamgr
+
+`UNIFI_OS_CONSOLE=false` muhit o'zgaruvchisi orqali self-hosted
+rejimga o'ting (standart bo'lmagan port ishlatilsa, odatda shu kerak).
 
 Hujjat: https://ubntwiki.com/products/software/unifi-controller/api
 """
@@ -18,10 +23,11 @@ import requests
 
 from response.base_adapter import BlockingAdapter, ActionResult, TargetDevice
 
-UNIFI_CONTROLLER_URL = os.getenv("UNIFI_CONTROLLER_URL", "")   # masalan https://172.16.0.5
+UNIFI_CONTROLLER_URL = os.getenv("UNIFI_CONTROLLER_URL", "")   # masalan https://172.16.0.64:11443
 UNIFI_USERNAME = os.getenv("UNIFI_USERNAME", "")
 UNIFI_PASSWORD = os.getenv("UNIFI_PASSWORD", "")
 UNIFI_SITE = os.getenv("UNIFI_SITE", "default")
+UNIFI_OS_CONSOLE = os.getenv("UNIFI_OS_CONSOLE", "true").lower() in ("true", "1", "yes")
 
 
 class UniFiAdapter(BlockingAdapter):
@@ -37,9 +43,10 @@ class UniFiAdapter(BlockingAdapter):
     def _login(self) -> bool:
         if not UNIFI_CONTROLLER_URL or not UNIFI_USERNAME:
             return False
+        login_path = "/api/auth/login" if UNIFI_OS_CONSOLE else "/api/login"
         try:
             resp = self._session.post(
-                f"{UNIFI_CONTROLLER_URL}/api/auth/login",
+                f"{UNIFI_CONTROLLER_URL}{login_path}",
                 json={"username": UNIFI_USERNAME, "password": UNIFI_PASSWORD},
                 verify=False,
                 timeout=10,
@@ -53,9 +60,10 @@ class UniFiAdapter(BlockingAdapter):
         if not self._logged_in and not self._login():
             return ActionResult(False, "UniFi Controller'ga ulanib bo'lmadi (sozlama yoki tarmoq xatoligi)", self.name)
 
+        cmd_path = f"/proxy/network/api/s/{UNIFI_SITE}/cmd/stamgr" if UNIFI_OS_CONSOLE else f"/api/s/{UNIFI_SITE}/cmd/stamgr"
         try:
             resp = self._session.post(
-                f"{UNIFI_CONTROLLER_URL}/proxy/network/api/s/{UNIFI_SITE}/cmd/stamgr",
+                f"{UNIFI_CONTROLLER_URL}{cmd_path}",
                 json={"cmd": cmd, "mac": mac.lower()},
                 verify=False,
                 timeout=10,
