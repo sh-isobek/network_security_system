@@ -90,7 +90,40 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 48/48 test o'tadi (`run_full_test.py`).**
+**Joriy: 49/49 test o'tadi (`run_full_test.py`).**
+
+## YETTINCHI marta topilgan xato turkumi: Suricata reader hech kim tomonidan chaqirilmagan
+
+Foydalanuvchi "fayillarni tekshirmayabdi" muammosini davom ettirib,
+fayl tekshirish uchun **ikkalasini ham** (Windows Agent + Suricata)
+sozlashni so'radi. Suricata infratuzilmasini tekshirishda:
+
+**ILDIZ SABAB**: `collectors/suricata_reader.py` to'g'ri yozilgan edi,
+lekin `docker-compose.yml`da uni ishga tushiruvchi HECH QANDAY xizmat
+yo'q edi (faqat `deep_scan_engine`ning `/var/log/suricata/files`
+bind-mount'i bor edi - bu Suricata'ning ekstrakt qilingan fayllar
+papkasi, `eve.json` emas). Bu - loyihada **yettinchi marta** uchragan
+"kod to'g'ri, lekin hech kim uni ishga tushirmaydi" xato turkumi.
+
+**Tuzatish**: yangi `suricata_reader` docker-compose xizmati -
+host'dagi `/var/log/suricata/eve.json`ni faqat-o'qish rejimida
+bog'laydi. `docs_SURICATA_SETUP.md`ga Docker integratsiyasi bo'limi
+va muhim Docker nozik nuqtasi (fayl oldindan yaratilishi kerak, aks
+holda Docker uni bo'sh papka sifatida yaratib qo'yishi mumkin)
+qo'shildi.
+
+**Real test qilingan (to'liq zanjir)**: haqiqiy Suricata `eve.json`
+formatidagi test yozuvi bilan `suricata_reader.py --once` →
+`FileEvent` yaratilishi → `file_analysis_engine.py` uni tekshirishi
+to'liq real ishga tushirilib tasdiqlandi (fayl VirusTotal/MalwareBazaar
+orqali "checked=True" bo'ldi - faqat sandbox internetga cheklangani
+sabab "malicious" natijasi bo'lmadi, bu kutilgan cheklov).
+
+**Bonus - real xato topildi va tuzatildi**: shu tekshiruv jarayonida
+`read_existing()` funksiyasi HAR BIR fileinfo hodisasini (hatto
+TAKRORIY bo'lsa ham) "qayta ishlangan" deb sanardi - `process_
+fileinfo_event()` `bool` qaytaradigan qilib o'zgartirildi, `read_
+existing()` faqat HAQIQATAN qo'shilgan yozuvlarni sanaydigan bo'ldi.
 
 ## OLTINCHI marta topilgan xato: API_SERVER_URL noto'g'ri protokol (https:// o'rniga http://)
 

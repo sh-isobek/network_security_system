@@ -106,10 +106,45 @@ fayl uchun `"event_type":"fileinfo"` yozuvi, ichida `sha256`, `filename`,
 
 ## 5. Bizning tizim bilan integratsiya
 
-Python tomonda `collectors/suricata_reader.py` (keyingi qadamda yoziladi)
-`eve.json` faylini doimiy o'qib turadi (`tail -f` uslubida), faqat
-`fileinfo` event'larni oladi va bazamizdagi `file_events` jadvaliga yozadi.
-Undan keyin `engine/file_analysis_engine.py` hash'larni tekshiradi.
+Python tomonda `collectors/suricata_reader.py` `eve.json` faylini
+doimiy o'qib turadi (`tail -f` uslubida), faqat `fileinfo` event'larni
+oladi va bazamizdagi `file_events` jadvaliga yozadi. Undan keyin
+`engine/file_analysis_engine.py` hash'larni tekshiradi.
+
+### Docker orqali ishga tushirish
+
+`docker-compose.yml`da `suricata_reader` xizmati allaqachon sozlangan -
+u host'dagi `/var/log/suricata/eve.json`ni konteynerga faqat-o'qish
+(`:ro`) rejimida bog'laydi.
+
+**MUHIM (Docker'ning tanilgan nozik nuqtasi)**: agar `eve.json` fayli
+Suricata tomonidan hali yaratilmagan bo'lsa, Docker uni **bo'sh papka**
+sifatida avtomatik yaratib qo'yishi mumkin (fayl o'rniga) - bu keyinroq
+haqiqiy Suricata faylni yoza olmay qolishiga olib keladi. Shuning
+uchun **Suricata o'rnatishdan oldin ham, keyin ham**, `docker compose
+up`dan oldin quyidagini bajaring:
+
+```bash
+sudo mkdir -p /var/log/suricata
+sudo touch /var/log/suricata/eve.json
+docker compose up -d suricata_reader
+```
+
+Tekshirish:
+```bash
+docker compose logs suricata_reader --tail 20
+```
+Suricata haqiqiy fayl aniqlasa, "Fayl aniqlandi: ..." kabi xabarlar
+ko'rinishi kerak.
+
+### Real fayl bilan qo'lda sinash (Suricata'siz ham)
+
+Suricata to'liq sozlanmasdan oldin ham, zanjirning Python qismini
+sinab ko'rish mumkin - haqiqiy formatdagi `eve.json` qatori bilan:
+```bash
+docker compose exec dashboard python -m collectors.suricata_reader --file /path/to/test_eve.json --once
+docker compose exec dashboard python -m engine.file_analysis_engine
+```
 
 ## Muhim cheklov (HTTPS haqida, siz to'g'ri ta'kidlagansiz)
 

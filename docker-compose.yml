@@ -129,6 +129,28 @@ services:
   # 4-bosqich: Chuqur tekshiruv (YARA + ClamAV + Office + ZIP)
   # Suricata'ning file-store papkasi HOST'dan volume orqali beriladi
   # ---------------------------------------------------------------------
+  # ---------------------------------------------------------------------
+  # Suricata eve.json Reader - Suricata HOST'da (SPAN port bilan) alohida
+  # ishlashi kerak (docs_SURICATA_SETUP.md'ga qarang). Bu xizmat FAQAT
+  # host'dagi eve.json faylini o'qib, file_events jadvaliga yozadi -
+  # Suricata'ning o'zi konteynerda EMAS.
+  # ---------------------------------------------------------------------
+  suricata_reader:
+    build: .
+    restart: unless-stopped
+    command: python -m collectors.suricata_reader --file /var/log/suricata/eve.json
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    volumes:
+      # Host'dagi Suricata eve.json faylini shu yerga bog'lang (Suricata
+      # o'rnatilmagan/ishga tushirilmagan bo'lsa, bu xizmat shunchaki
+      # faylni kutib turadi - xato bermaydi).
+      - /var/log/suricata/eve.json:/var/log/suricata/eve.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   deep_scan_engine:
     build: .
     restart: unless-stopped

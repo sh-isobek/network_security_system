@@ -38,12 +38,14 @@ def _guess_channel(filename: str, dest_ip: str = None) -> str:
     return "web"
 
 
-def process_fileinfo_event(session, event: dict):
-    """Bitta Suricata fileinfo JSON yozuvini file_events jadvaliga yozadi."""
+def process_fileinfo_event(session, event: dict) -> bool:
+    """Bitta Suricata fileinfo JSON yozuvini file_events jadvaliga yozadi.
+    Qaytaradi: True - yangi yozuv qo'shildi, False - o'tkazib yuborildi
+    (hash yo'q yoki takroriy)."""
     fileinfo = event.get("fileinfo", {})
     sha256 = fileinfo.get("sha256")
     if not sha256:
-        return  # hash hisoblanmagan fayl - o'tkazib yuboramiz
+        return False  # hash hisoblanmagan fayl - o'tkazib yuboramiz
 
     # Bir xil hash+src_ip juftligi qayta yozilmasligi uchun oddiy tekshiruv
     exists = (
@@ -52,7 +54,7 @@ def process_fileinfo_event(session, event: dict):
         .first()
     )
     if exists:
-        return
+        return False
 
     filename = fileinfo.get("filename", "")
     file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else None
@@ -72,6 +74,7 @@ def process_fileinfo_event(session, event: dict):
     )
     session.add(entry)
     logger.info(f"Fayl aniqlandi: {filename} ({sha256[:12]}...) {event.get('src_ip')} -> {event.get('dest_ip')}")
+    return True
 
 
 def read_existing(filepath: str):
@@ -89,8 +92,8 @@ def read_existing(filepath: str):
                 except json.JSONDecodeError:
                     continue
                 if event.get("event_type") == "fileinfo":
-                    process_fileinfo_event(session, event)
-                    count += 1
+                    if process_fileinfo_event(session, event):
+                        count += 1
         session.commit()
     except Exception:
         session.rollback()

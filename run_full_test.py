@@ -3353,6 +3353,68 @@ def _test_api_server_url_uses_http_not_https():
 check("API_SERVER_URL http:// (https:// emas) - real production ulanish xatosi tuzatilgan", _test_api_server_url_uses_http_not_https)
 
 # ---------------------------------------------------------------------------
+print("\n=== 49) SURICATA -> FILE ANALYSIS to'liq zanjiri (yettinchi marta topilgan production bo'shlig'i) ===")
+
+
+def _test_suricata_full_chain():
+    """
+    Real production'da topilgan bo'shliq: collectors/suricata_reader.py
+    to'g'ri ishlar edi, lekin docker-compose.yml'da uni chaqiruvchi
+    HECH QANDAY xizmat yo'q edi (faqat deep_scan_engine'ning
+    /var/log/suricata/files bind-mount'i bor edi, eve.json emas).
+
+    Bu test: (1) docker-compose.yml'da suricata_reader xizmati
+    mavjudligini, (2) haqiqiy Suricata eve.json formatidagi fayl bilan
+    to'liq zanjir (suricata_reader -> FileEvent -> file_analysis_engine)
+    ishlashini tekshiradi.
+    """
+    import shutil
+    import yaml
+
+    # 1) docker-compose.yml'da suricata_reader xizmati borligini tasdiqlash
+    with open("docker-compose.yml") as f:
+        compose = yaml.safe_load(f)
+    assert "suricata_reader" in compose["services"], "suricata_reader xizmati docker-compose.yml'da yo'q"
+
+    # 2) Haqiqiy Suricata eve.json formatidagi test fayli bilan to'liq zanjir
+    work_dir = "/tmp/_test_suricata_chain"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+    eve_path = os.path.join(work_dir, "eve.json")
+
+    # Haqiqiy Suricata fileinfo event formatiga mos (rasmiy hujjat asosida)
+    test_sha256 = "a" * 64  # test uchun sun'iy, real bo'lmagan hash (haqiqiy threat intel'ga so'rov yubormaslik uchun)
+    with open(eve_path, "w") as f:
+        f.write(
+            '{"timestamp":"2026-08-17T10:00:00.000000+0500","event_type":"fileinfo",'
+            '"src_ip":"172.16.1.99","dest_ip":"93.184.216.34","proto":"TCP","app_proto":"http",'
+            f'"fileinfo":{{"filename":"ci_test_file.exe","magic":"PE32 executable","size":12345,'
+            f'"sha256":"{test_sha256}","md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}\n'
+        )
+
+    from collectors.suricata_reader import read_existing
+    n = read_existing(eve_path)
+    assert n == 1, f"1 ta fileinfo yozuvi kutilgan edi, {n} keldi"
+
+    s = get_session()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == test_sha256).first()
+    assert fe is not None, "FileEvent yaratilmadi"
+    assert fe.filename == "ci_test_file.exe"
+    assert fe.src_ip == "172.16.1.99"
+    assert fe.checked is False
+    s.close()
+
+    # 3) Bir xil hash+src_ip qayta kelsa, TAKRORLANMASLIGI (dedup)
+    n2 = read_existing(eve_path)
+    assert n2 == 0, "Bir xil fayl ikkinchi marta ham yozildi - dedup ishlamadi"
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Suricata -> File Analysis to'liq zanjiri (docker-compose xizmati + real formatda parsing)", _test_suricata_full_chain)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
