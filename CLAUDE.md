@@ -90,7 +90,33 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 44/44 test o'tadi (`run_full_test.py`).**
+**Joriy: 45/45 test o'tadi (`run_full_test.py`).**
+
+## Avtomatik bloklash zanjirini to'liq tasdiqlash + connection_type xatosi
+
+Foydalanuvchi so'radi: "UniFi orqali wirusli fayl yuklab olganini
+tekshirish va agar virusli fayl bo'lsa IP'ni bloklash imkonini qilsa
+bo'ladimi?" - tekshirilganda, infratuzilma (`response_engine.py` +
+`adapter_registry.py` + `UniFiAdapter`) **allaqachon to'g'ri ulangan**
+edi, lekin buni tekshirish jarayonida **real xato topildi**:
+
+`discover_via_unifi()` simli klientlarni `connection_type="wired"` deb
+belgilar edi, lekin `SwitchSNMPAdapter.can_handle()` `"cable"`ni kutadi
+- bu satr nomuvofiqligi simli UniFi qurilmalarini **hech qanday
+adapter tomonidan tanilmaydigan, "himoyasiz"** holatga keltirar edi.
+`"wired"` -> `"cable"`ga tuzatildi. (Simli UniFi klientlari uchun
+to'liq avtomatik bloklash hali ham `switch_port` yetishmagani sabab
+ishlamaydi - bu alohida, kelajakdagi ish, halol izohlangan.)
+
+**Real end-to-end test qilingan (Wi-Fi holat uchun, ko'pchilik holat)**:
+UniFi orqali qurilma kashf qilinadi -> virusli fayl alerti (severity=
+critical) yaratiladi -> Response Engine avtomatik ishga tushadi ->
+**UniFi serverining o'ziga haqiqiy HTTP bloklash so'rovi yetib boradi**
+(soxta server orqali tasdiqlangan) -> `alert.action_taken`da
+"AVTOMATIK CHORA: UniFi... muvaffaqiyatli bajarildi" ko'rinadi.
+
+**Javob foydalanuvchiga**: HA, bu funksiya allaqachon mavjud va ishlab
+turibdi - Wi-Fi orqali ulangan qurilmalar uchun to'liq avtomatik.
 
 ## UniFi -> Asset Inventory integratsiya bo'shlig'i (to'rtinchi real production topilma)
 

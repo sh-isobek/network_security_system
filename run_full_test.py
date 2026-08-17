@@ -3016,7 +3016,7 @@ if __name__ == "__main__":
         assert "172.16.31.1" in by_ip and "172.16.31.2" in by_ip
         assert by_ip["172.16.31.1"].mac_address == "AA:BB:CC:AA:11:01"
         assert by_ip["172.16.31.1"].hostname == "AI-TEST-PC-1"
-        assert by_ip["172.16.31.1"].connection_type == "wired"
+        assert by_ip["172.16.31.1"].connection_type == "cable"
         assert by_ip["172.16.31.2"].connection_type == "wifi"
         s.close()
 
@@ -3054,6 +3054,119 @@ if __name__ == "__main__":
 
 
 check("UniFi -> Asset Inventory -> Dashboard integratsiyasi (real HTTP -> DB -> UI)", _test_unifi_asset_inventory_integration)
+
+# ---------------------------------------------------------------------------
+print("\n=== 45) TO'LIQ ZANJIR: UniFi Wi-Fi qurilma -> virusli fayl -> AVTOMATIK bloklash ===")
+
+
+def _test_unifi_malware_autoblock_e2e():
+    """
+    Foydalanuvchi so'ragan aynan shu ish jarayoni: UniFi orqali ulangan
+    Wi-Fi qurilma virusli fayl yuklab oladi -> tizim buni aniqlaydi ->
+    Response Engine avtomatik ravishda UniFi orqali qurilmani bloklaydi.
+
+    Bu test asset_inventory.py (UniFi discovery -> DB) + response_engine.py
+    (Alert -> adapter_registry -> UniFiAdapter) + unifi_adapter.py
+    (haqiqiy HTTP bloklash so'rovi) orasidagi TO'LIQ integratsiyani
+    haqiqiy HTTP orqali (soxta UniFi server) tekshiradi.
+    """
+    import subprocess
+    import time as _time
+
+    mock_script = "/tmp/_ci_mock_unifi_block.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+blocked_macs = []
+
+@app.route("/proxy/network/integration/v1/sites/ci-e2e-site/clients", methods=["GET"])
+def clients():
+    if request.headers.get("X-API-Key") != "ci-e2e-key":
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"data": [
+        {"macAddress": "aa:bb:cc:dd:ee:60", "ipAddress": "172.16.31.60", "name": "CI-EMPLOYEE-LAPTOP", "type": "WIRELESS"},
+    ]})
+
+@app.route("/proxy/network/integration/v1/sites/ci-e2e-site/clients/<mac>/actions", methods=["POST"])
+def block_action(mac):
+    if request.headers.get("X-API-Key") != "ci-e2e-key":
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json()
+    if body.get("action") == "BLOCK":
+        blocked_macs.append(mac.lower())
+    return jsonify({"status": "ok"}), 200
+
+@app.route("/_check_blocked/<mac>")
+def check_blocked(mac):
+    return jsonify({"blocked": mac.lower() in blocked_macs})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=19600)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+
+        os.environ["UNIFI_CONTROLLER_URL"] = "http://127.0.0.1:19600"
+        os.environ["UNIFI_API_KEY"] = "ci-e2e-key"
+        os.environ["UNIFI_SITE_ID"] = "ci-e2e-site"
+        os.environ["UNIFI_VERIFY_SSL"] = "false"
+
+        from network_discovery.asset_inventory import discover_via_unifi
+        from engine.response_engine import run_once as response_run_once
+
+        # 1) UniFi orqali qurilmani kashf qilish
+        n = discover_via_unifi()
+        assert n == 1, f"1 ta qurilma kashf qilinishi kerak edi, {n} keldi"
+
+        s = get_session()
+        device = s.query(Device).filter(Device.ip_address == "172.16.31.60").first()
+        assert device is not None, "UniFi orqali qurilma DB'ga yozilmadi"
+        assert device.connection_type == "wifi", f"connection_type='wifi' kutilgan edi, '{device.connection_type}' keldi"
+        device_id = device.id
+        s.close()
+
+        # 2) Virusli fayl aniqlanishi (deep_scan_engine natijasi kabi)
+        s = get_session()
+        alert = Alert(
+            device_id=device_id, severity="critical",
+            reason="CI-TEST: Trojan.GenericKD aniqlandi",
+            action_taken="TODO: hali chora ko'rilmagan",
+        )
+        s.add(alert)
+        s.commit()
+        alert_id = alert.id
+        s.close()
+
+        # 3) Response Engine - avtomatik bloklash
+        response_run_once()
+
+        # 4) alert.action_taken tekshiruvi
+        s = get_session()
+        alert = s.query(Alert).filter(Alert.id == alert_id).first()
+        assert "AVTOMATIK CHORA" in alert.action_taken, f"Avtomatik chora ko'rilmadi: {alert.action_taken}"
+        assert "unifi" in alert.action_taken.lower()
+        s.close()
+
+        # 5) ENG MUHIMI: UniFi serveriga haqiqiy bloklash so'rovi yetib borganini tasdiqlash
+        import requests
+        resp = requests.get("http://127.0.0.1:19600/_check_blocked/aa:bb:cc:dd:ee:60")
+        assert resp.json()["blocked"] is True, "UniFi serveriga HAQIQIY bloklash so'rovi yetib bormadi!"
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["UNIFI_CONTROLLER_URL", "UNIFI_API_KEY", "UNIFI_SITE_ID", "UNIFI_VERIFY_SSL"]:
+            os.environ.pop(k, None)
+
+
+check("TO'LIQ ZANJIR: UniFi Wi-Fi qurilma -> virusli fayl -> AVTOMATIK bloklash", _test_unifi_malware_autoblock_e2e)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

@@ -118,12 +118,18 @@ def discover_via_unifi() -> int:
             if not c.ip:
                 continue  # IP'siz klientni Device jadvaliga yozib bo'lmaydi (ip_address majburiy)
             vendor = lookup_vendor(c.mac) if c.mac else None
+            # MUHIM (halol cheklov): simli ("cable") UniFi klientlari uchun
+            # avtomatik bloklash HALI ISHLAMAYDI - SwitchSNMPAdapter
+            # `switch_port`ni talab qiladi, UniFi Integration API esa buni
+            # bermaydi (faqat uplinkDeviceId - qaysi AP/switch'ga ulangani,
+            # aniq port raqami emas). Wi-Fi klientlar uchun (UniFiAdapter)
+            # to'liq ishlaydi - bu ko'pchilik holat.
             _upsert_device(
                 session, c.ip,
                 mac_address=c.mac or None,
                 hostname=c.hostname,
                 vendor=vendor,
-                connection_type="wired" if c.is_wired else "wifi",
+                connection_type="cable" if c.is_wired else "wifi",
                 discovery_source="unifi",
             )
             count += 1
