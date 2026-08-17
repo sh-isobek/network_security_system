@@ -39,7 +39,11 @@ class UnifiClient:
     mac: str
     hostname: Optional[str]
     is_wired: bool
-    ap_mac: Optional[str] = None  # ulangan Access Point
+    uplink_device_id: Optional[str] = None  # ulangan AP/switch'ning UUID'si
+                                               # (MAC EMAS - real API javobida
+                                               # "uplinkDeviceId" nomi bilan
+                                               # UUID sifatida keladi, bu real
+                                               # test orqali aniqlangan)
 
 
 def _get_clients_via_api_key(controller_url: str, api_key: str, site_id: str,
@@ -49,45 +53,73 @@ def _get_clients_via_api_key(controller_url: str, api_key: str, site_id: str,
     to'g'ri API Key bilan. Muvaffaqiyatsiz bo'lsa `None` qaytaradi
     (chaqiruvchisi zaxira usulga o'tishi mumkin bo'lishi uchun -
     bo'sh ro'yxat `[]` esa "muvaffaqiyatli, lekin klient yo'q" degani).
+
+    MUHIM (real testda topilgan jiddiy xato, tuzatilgan): bu API
+    natijalarni SAHIFALAB (paginate) qaytaradi - standart sahifa
+    hajmi 25 ta, hatto jami 195 ta klient bo'lsa ham. Shuning uchun
+    BARCHA sahifalar `offset` ortirilib, to'liq yig'ib olinishi SHART
+    - aks holda faqat birinchi ~25 ta klient qaytarilib, qolganlari
+    "yo'qolib" ketadi (bu aynan shu xato avval mavjud edi).
     """
     url = f"{controller_url}/proxy/network/integration/v1/sites/{site_id}/clients"
     headers = {"X-API-Key": api_key, "Accept": "application/json"}
 
-    try:
-        resp = requests.get(url, headers=headers, verify=verify_ssl, timeout=timeout)
-    except requests.RequestException as exc:
-        logger.error(f"UniFi Integration API'ga ulanib bo'lmadi: {exc}")
-        return None
+    all_raw_clients = []
+    offset = 0
+    page_limit = 200  # so'rov limitini kattaroq qilib, sahifalar sonini kamaytiramiz
+    max_pages = 50     # cheksiz tsikldan himoya (masalan API xato javob qaytarsa)
 
-    if resp.status_code != 200:
-        logger.error(f"UniFi Integration API xatoligi: HTTP {resp.status_code} ({url}) - {resp.text[:200]}")
-        return None
+    for _ in range(max_pages):
+        try:
+            resp = requests.get(
+                url, headers=headers, verify=verify_ssl, timeout=timeout,
+                params={"offset": offset, "limit": page_limit},
+            )
+        except requests.RequestException as exc:
+            logger.error(f"UniFi Integration API'ga ulanib bo'lmadi: {exc}")
+            return None
 
-    try:
-        payload = resp.json()
-    except ValueError:
-        logger.error("UniFi Integration API javobi JSON emas")
-        return None
+        if resp.status_code != 200:
+            logger.error(f"UniFi Integration API xatoligi: HTTP {resp.status_code} ({url}) - {resp.text[:200]}")
+            return None
 
-    # Integration API v1 javob formati: {"data": [...], "count": N, ...}
-    # yoki ba'zi versiyalarda to'g'ridan-to'g'ri ro'yxat - ikkalasini ham qamraymiz
-    raw_clients = payload.get("data", payload) if isinstance(payload, dict) else payload
-    if not isinstance(raw_clients, list):
-        logger.error(f"UniFi Integration API kutilmagan javob formati: {type(raw_clients)}")
-        return None
+        try:
+            payload = resp.json()
+        except ValueError:
+            logger.error("UniFi Integration API javobi JSON emas")
+            return None
+
+        if not isinstance(payload, dict):
+            logger.error(f"UniFi Integration API kutilmagan javob formati: {type(payload)}")
+            return None
+
+        page_clients = payload.get("data", [])
+        if not isinstance(page_clients, list):
+            logger.error(f"UniFi Integration API 'data' maydoni ro'yxat emas: {type(page_clients)}")
+            return None
+
+        all_raw_clients.extend(page_clients)
+
+        total_count = payload.get("totalCount", len(all_raw_clients))
+        if len(all_raw_clients) >= total_count or not page_clients:
+            break
+
+        offset += len(page_clients)
+    else:
+        logger.warning(f"UniFi Integration API: {max_pages} sahifadan keyin ham to'xtamadi - qisman natija ishlatilmoqda")
 
     clients = []
-    for c in raw_clients:
+    for c in all_raw_clients:
         mac = c.get("macAddress") or c.get("mac", "")
         clients.append(UnifiClient(
             ip=c.get("ipAddress") or c.get("ip"),
             mac=mac.upper(),
             hostname=c.get("name") or c.get("hostname"),
             is_wired=(c.get("type", "").upper() == "WIRED") if "type" in c else bool(c.get("is_wired", False)),
-            ap_mac=c.get("uplinkDeviceId") or c.get("ap_mac"),
+            uplink_device_id=c.get("uplinkDeviceId"),
         ))
 
-    logger.info(f"UniFi (API Key): {len(clients)} ta klient topildi")
+    logger.info(f"UniFi (API Key): {len(clients)} ta klient topildi (barcha sahifalar)")
     return clients
 
 
@@ -131,7 +163,7 @@ def _get_clients_via_login(controller_url: str, username: str, password: str,
                 mac=c.get("mac", "").upper(),
                 hostname=c.get("hostname") or c.get("name"),
                 is_wired=c.get("is_wired", False),
-                ap_mac=c.get("ap_mac"),
+                uplink_device_id=c.get("ap_mac"),  # legacy API'da bu haqiqatan AP MAC manzili
             )
             for c in data
         ]

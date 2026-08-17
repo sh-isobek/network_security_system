@@ -92,6 +92,35 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 
 **Joriy: 42/42 test o'tadi (`run_full_test.py`).**
 
+## UniFi paginatsiya xatosi - foydalanuvchining real production ma'lumoti orqali topildi
+
+Foydalanuvchi `curl` orqali haqiqiy UniFi Integration API javobini
+yubordi: `"count":25,"totalCount":195` - bu mening kodim **faqat
+birinchi 25 ta klientni olib, qolgan ~170 tasini jimgina yo'qotib
+qo'yayotganini** ochib berdi (API natijalarni sahifalab qaytaradi,
+mening kodim esa sahifalashni umuman hisobga olmagan edi).
+
+Tuzatildi: `network_discovery/unifi_discovery.py`ga to'liq paginatsiya
+tsikli qo'shildi (`offset`ni oshirib, `totalCount`ga yetguncha davom
+etadi, maksimal 50 sahifa xavfsizlik chegarasi bilan).
+
+**Real test** (soxta server orqali): eng qiyin holat - server mening
+so'ragan `limit=200`ni E'TIBORSIZ qoldirib, har doim majburiy 25/30
+tadan qaytarsa ham - barcha yozuvlar (195 va alohida 73 ta test bilan)
+to'g'ri, takrorsiz yig'ib olinishi tasdiqlandi (8 va 3 ta ketma-ket
+HTTP so'rov orqali, `offset`lar aniq nazorat qilindi).
+
+Shuningdek `ap_mac` maydoni `uplink_device_id`ga o'zgartirildi - real
+API javobida bu MAC manzil emas, balki qurilma UUID'si ekanligi
+aniqlandi (`uplinkDeviceId: "3fe055db-580c-3ea6-bc10-5a88e0f71fe8"`).
+
+**MUHIM saboq**: bu loyihada **ikkinchi marta** foydalanuvchining
+haqiqiy production muhitidan olingan real ma'lumot (birinchisi - GPO
+ruxsatlari) kod yozuvchisi (men) uchun mavjud bo'lmagan sinov
+sharoitini (195 ta real UniFi klienti) ochib berdi va jiddiy xatoni
+aniqladi. Bu sinf xatolar faqat sof mock/soxta ma'lumot bilan
+sinalganda ko'p hollarda yashiringan qoladi.
+
 ## UniFi API Key integratsiyasi (foydalanuvchining production so'rovi)
 
 Foydalanuvchi haqiqiy UniFi Controller manzilini berdi

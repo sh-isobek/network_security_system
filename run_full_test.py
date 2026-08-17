@@ -2704,6 +2704,32 @@ def clients():
         {"macAddress": "aa:bb:cc:dd:ee:02", "ipAddress": "172.16.20.2", "name": "CI-PC-2", "type": "WIRELESS"},
     ]})
 
+# MUHIM: paginatsiya sinovi uchun alohida sayt - real production'da
+# (foydalanuvchining haqiqiy natijasida) 195 ta klient 25talab
+# sahifalanib qaytgan edi, mening avvalgi kodim faqat BIRINCHI
+# sahifani (25 tasini) olib, qolgan 170 tasini yo'qotib qo'yardi.
+# Bu server HAR DOIM 30tadan qaytaradi (so'ralgan `limit`ni e'tiborsiz
+# qoldirib) - real UniFi'ning eng qattiq xatti-harakatini taqlid qiladi.
+PAGINATION_TOTAL = 73
+PAGINATION_CLIENTS = [
+    {"macAddress": f"aa:bb:cc:dd:{i//256:02x}:{i%256:02x}", "ipAddress": f"172.16.21.{i}",
+     "name": f"PAG-DEVICE-{i}", "type": "WIRED" if i % 2 == 0 else "WIRELESS"}
+    for i in range(PAGINATION_TOTAL)
+]
+
+@app.route("/proxy/network/integration/v1/sites/ci-pagination-site/clients", methods=["GET"])
+def clients_paginated():
+    if request.headers.get("X-API-Key") != "ci-real-key":
+        return jsonify({"error": "unauthorized"}), 401
+    offset = int(request.args.get("offset", 0))
+    FORCED_PAGE_SIZE = 30
+    page = PAGINATION_CLIENTS[offset:offset + FORCED_PAGE_SIZE]
+    return jsonify({
+        "offset": offset, "limit": FORCED_PAGE_SIZE,
+        "count": len(page), "totalCount": PAGINATION_TOTAL,
+        "data": page,
+    })
+
 @app.route("/proxy/network/integration/v1/sites/ci-site-uuid/clients/<mac>/actions", methods=["POST"])
 def action(mac):
     if request.headers.get("X-API-Key") != "ci-real-key":
@@ -2746,6 +2772,23 @@ if __name__ == "__main__":
         os.environ["UNIFI_API_KEY"] = "notogri-kalit"
         clients_bad = get_unifi_clients()
         assert clients_bad == []
+        os.environ["UNIFI_API_KEY"] = "ci-real-key"
+
+        # --- 2.5) MUHIM: paginatsiya - real production'da topilgan jiddiy
+        # xato (195 ta qurilmadan faqat 25 tasi olinardi). Server har doim
+        # 30tadan (so'ralgan limit'ni e'tiborsiz qoldirib) qaytarsa ham,
+        # BARCHA 73 ta yozuv to'g'ri yig'ib olinishi kerak.
+        os.environ["UNIFI_SITE_ID"] = "ci-pagination-site"
+        clients_paginated = get_unifi_clients()
+        assert len(clients_paginated) == 73, (
+            f"73 ta klient kutilgan edi (barcha sahifalar), {len(clients_paginated)} ta keldi - "
+            f"PAGINATSIYA BUZILGAN (bu real production'da topilgan xato)"
+        )
+        macs = {c.mac for c in clients_paginated}
+        assert len(macs) == 73, "Takroriy yoki yo'qolgan yozuvlar bor"
+        assert clients_paginated[0].hostname == "PAG-DEVICE-0"
+        assert clients_paginated[-1].hostname == "PAG-DEVICE-72"
+        os.environ["UNIFI_SITE_ID"] = "ci-site-uuid"
 
         # --- 3) Response Adapter: to'g'ri API Key bilan bloklash ---
         os.environ["UNIFI_API_KEY"] = "ci-real-key"
