@@ -77,7 +77,41 @@ jobs:
             Write-Error "NetworkSecurityEndpointAgent SCM'da topilmadi"
             exit 1
           }
-          & "dist/NetworkSecurityAgent.exe" remove
+
+      - name: Windows Service HAQIQATAN ishga tushishini tekshirish (Start-Service)
+        shell: powershell
+        run: |
+          # MUHIM: yuqoridagi qadam faqat REGISTRATSIYANI tekshiradi
+          # (sc.exe query) - bu xizmat HAQIQATAN "Running" holatiga
+          # o'ta olishini KAFOLATLAMAYDI. Real production'da aynan shu
+          # farq katta muammoga sabab bo'ldi: xizmat to'g'ri ro'yxatga
+          # olingan, lekin Start-Service "Cannot start service" bilan
+          # muvaffaqiyatsiz bo'lgan (SCM Control Dispatcher bilan
+          # bog'liq, PyInstaller+pywin32'ga xos muammo). Shuning uchun
+          # bu yerda HAQIQIY Start-Service chaqirilib, xizmat holati
+          # "Running"ga o'tishi TASDIQLANADI - bu bizning butun
+          # muammoni HAR PUSH'DA, foydalanuvchi production'da sinamasdan
+          # OLDIN avtomatik ushlaydi.
+          try {
+            Start-Service -Name NetworkSecurityEndpointAgent -ErrorAction Stop
+            Start-Sleep -Seconds 5
+            $svc = Get-Service -Name NetworkSecurityEndpointAgent -ErrorAction Stop
+            Write-Host "Xizmat holati: $($svc.Status)"
+            if ($svc.Status -ne "Running") {
+              Write-Error "Xizmat ishga tushdi, lekin holati '$($svc.Status)' (Running emas)"
+              exit 1
+            }
+            Write-Host "✅ Xizmat HAQIQATAN 'Running' holatiga o'tdi"
+          } catch {
+            Write-Error "Start-Service muvaffaqiyatsiz: $_"
+            Get-WinEvent -LogName System -MaxEvents 5 -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -eq "Service Control Manager" } |
+              Format-List TimeCreated, Message
+            exit 1
+          } finally {
+            Stop-Service -Name NetworkSecurityEndpointAgent -ErrorAction SilentlyContinue
+            & "dist/NetworkSecurityAgent.exe" remove
+          }
 
       - name: Versiyani o'qish (release nomlash uchun)
         id: version

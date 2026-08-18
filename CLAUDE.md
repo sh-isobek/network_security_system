@@ -90,7 +90,50 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 56/56 test o'tadi (`run_full_test.py`).**
+**Joriy: 57/57 test o'tadi (`run_full_test.py`).**
+
+## O'N UCHINCHI marta topilgan xato: SCM Control Dispatcher aniq chaqirilmagan (PyInstaller+pywin32 muammosi)
+
+`ReportServiceStatus(SERVICE_RUNNING)` va `--startup auto`
+tuzatilgandan (tashqi manba integratsiyasi) KEYIN ham, foydalanuvchi
+xizmatni yangi `1.0.3` bilan sinaganida, deploy.log **aynan bir xil**
+umumiy xatoni ko'rsatdi: `"Cannot start service NetworkSecurityEndpointAgent
+on computer '.'"`.
+
+**Muhim kuzatuv**: `install`/`remove`/`debug` (argumentlar bilan
+chaqirilganda) har doim mukammal ishlagan - bu `win32serviceutil.
+HandleCommandLine()`ning argumentlarni to'g'ri qayta ishlashini
+tasdiqlaydi. Lekin Windows SCM xizmatni HAQIQATAN ishga tushirganda,
+uni **hech qanday argumentsiz** chaqiradi - bu holatda dastur o'zi
+"men Service Control Dispatcher orqali chaqirilyapman" deb tushunishi
+kerak. Bu - PyInstaller bilan "muzlatilgan" (frozen) yagona-fayl
+`pywin32` xizmatlarining **tanilgan muammosi**: `HandleCommandLine()`
+buni avtomatik aniqlashi kerak edi, lekin frozen exe'larda bu
+aniqlash ishonchsiz bo'lishi mumkin.
+
+**Tuzatish**: `sys.argv` uzunligini ANIQ tekshirib, argument
+bo'lmasa (`len(sys.argv) == 1`) `servicemanager.Initialize()` /
+`PrepareToHostSingle()` / `StartServiceCtrlDispatcher()`ni QO'LDA
+chaqirish - `HandleCommandLine()`ning ichki avtomatik aniqlashiga
+tayanmasdan.
+
+**CI'ga ham muhim kuchaytirish**: avvalgi CI tekshiruvim faqat
+xizmatning **ro'yxatdan o'tishini** (`sc.exe query`) tekshirardi -
+bu xizmat **haqiqatan ishga tushishi**ni kafolatlamaydi (aynan shu
+farq real production xatosining o'zi edi!). Endi CI'ga **haqiqiy
+`Start-Service`** chaqiruvi va holatning `"Running"`ga o'tishini
+tasdiqlovchi qadam qo'shildi - bu, agar bu tuzatish ham yetarli
+bo'lmasa, keyingi push'da avtomatik ushlanadi.
+
+VERSION 1.0.3 -> 1.0.4.
+
+**O'N UCHINCHI MARTA TASDIQLANGAN SABOQ**: bu holatda avvalgi
+"to'g'ri" tuzatish (`ReportServiceStatus`) HAQIQATAN to'g'ri edi,
+lekin **yetarli emas edi** - muammoning ikkinchi, chuqurroq qatlami
+bor edi (SCM dispatcher chaqiruv mexanizmi). Bu shuni ko'rsatadiki,
+"bitta ishonchli tuzatish topilgach ham" - real production sinovi
+orqali tasdiqlanmaguncha, muammo to'liq hal bo'lgan deb hisoblash
+xato bo'lishi mumkin.
 
 ## Tashqi manbadan qo'shimcha tuzatishlar integratsiyasi (foydalanuvchi yuborgan zip)
 

@@ -132,4 +132,35 @@ class EndpointAgentService(win32serviceutil.ServiceFramework):
 
 
 if __name__ == "__main__":
-    win32serviceutil.HandleCommandLine(EndpointAgentService)
+    # MUHIM (real production'da aniqlangan, PyInstaller+pywin32'ning
+    # tanilgan muammosi): `install`/`remove`/`debug` (argumentlar bilan
+    # chaqirilganda) mukammal ishlaydi - bu HandleCommandLine()ning
+    # argumentlarni to'g'ri qayta ishlaganini tasdiqlaydi. Lekin Windows
+    # SCM xizmatni HAQIQATAN ishga tushirganda, uni HECH QANDAY
+    # argumentsiz chaqiradi (faqat ro'yxatga olingan ImagePath orqali) -
+    # bu holatda dastur "men Service Control Dispatcher orqali
+    # chaqirilyapman" deb ANIQ tushunishi kerak. `HandleCommandLine()`ning
+    # o'zi buni avtomatik aniqlashi kerak edi, lekin PyInstaller bilan
+    # "muzlatilgan" (frozen) yagona-fayl exe'larda bu avtomatik aniqlash
+    # ishonchsiz bo'lishi ma'lum (bu - real production'da aynan shu
+    # sabab bilan "Cannot start service" xatosi uchraganini tushuntiradi -
+    # install/remove/debug argumentlar bilan ishlaganidan, lekin haqiqiy
+    # SCM ishga tushirish argumentsiz muvaffaqiyatsiz bo'lganidan aniq
+    # ko'rinadi). Shuning uchun bu holatni ANIQ, qo'lda tekshiramiz va
+    # past darajadagi dispatcher'ni o'zimiz chaqiramiz.
+    if len(sys.argv) == 1:
+        try:
+            servicemanager.Initialize()
+            servicemanager.PrepareToHostSingle(EndpointAgentService)
+            servicemanager.StartServiceCtrlDispatcher()
+        except Exception as exc:
+            # Agar past darajadagi dispatcher ham muvaffaqiyatsiz bo'lsa,
+            # xatoni Windows Event Log'ga yozamiz (aks holda hech qanday
+            # iz qolmasdan jim qulab tushishi mumkin edi).
+            try:
+                servicemanager.LogErrorMsg(f"Service dispatcher xatoligi: {exc!r}")
+            except Exception:
+                pass
+            raise
+    else:
+        win32serviceutil.HandleCommandLine(EndpointAgentService)

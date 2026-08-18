@@ -3779,6 +3779,64 @@ def _test_endpoint_agent_start_background_stop():
 check("EndpointAgent start_background()/stop() - real thread-asosli heartbeat (HTTP orqali tasdiqlangan)", _test_endpoint_agent_start_background_stop)
 
 # ---------------------------------------------------------------------------
+print("\n=== 57) service_wrapper.py: SCM Control Dispatcher aniq chaqiruvi (PyInstaller+pywin32 muammosi) ===")
+
+
+def _test_service_wrapper_explicit_dispatcher():
+    """
+    Real production'da topilgan xato: ReportServiceStatus(SERVICE_RUNNING)
+    va --startup auto tuzatilgandan KEYIN ham, xizmat hali "Cannot start
+    service" bilan muvaffaqiyatsiz bo'lardi - garchi install/remove/debug
+    (argumentlar bilan chaqirilganda) mukammal ishlagan bo'lsa ham.
+
+    Bu - PyInstaller bilan "muzlatilgan" (frozen) pywin32 xizmatlarining
+    tanilgan muammosi: Windows SCM xizmatni HECH QANDAY argumentsiz
+    chaqiradi, va win32serviceutil.HandleCommandLine()ning bu holatni
+    avtomatik aniqlashi frozen exe'larda ishonchsiz bo'lishi mumkin.
+
+    Tuzatish: sys.argv uzunligini ANIQ tekshirib, argument bo'lmasa
+    servicemanager.Initialize()/PrepareToHostSingle()/
+    StartServiceCtrlDispatcher()ni QO'LDA chaqirish.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "windows_agent", "service_wrapper.py",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert "len(sys.argv) == 1" in content, (
+        "Argumentsiz chaqirilish holati ANIQ tekshirilishi kerak (SCM "
+        "xizmatni argumentsiz ishga tushiradi)"
+    )
+    assert "servicemanager.Initialize()" in content
+    assert "PrepareToHostSingle" in content
+    assert "StartServiceCtrlDispatcher" in content
+
+    # CI workflow'da HAQIQIY Start-Service tekshiruvi borligini tasdiqlash
+    # (faqat ro'yxatdan o'tish emas - bu farq real production xatosining
+    # aynan o'zi edi)
+    workflow_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".github", "workflows", "build-windows-agent.yml",
+    )
+    with open(workflow_path) as f:
+        workflow_content = f.read()
+    assert "Start-Service -Name NetworkSecurityEndpointAgent" in workflow_content, (
+        "CI workflow'da xizmatning HAQIQATAN 'Running' holatiga o'tishini "
+        "tekshiruvchi Start-Service chaqiruvi bo'lishi kerak - faqat "
+        "ro'yxatdan o'tish (sc.exe query) yetarli emas"
+    )
+    assert '"Running"' in workflow_content or "'Running'" in workflow_content
+
+    # Sintaksis to'g'riligini qayta tasdiqlash
+    import ast
+    ast.parse(content)
+
+
+check("service_wrapper.py: SCM Control Dispatcher aniq chaqiruvi + CI haqiqiy Start-Service tekshiruvi", _test_service_wrapper_explicit_dispatcher)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
