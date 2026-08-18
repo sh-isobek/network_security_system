@@ -20,7 +20,7 @@
 # (versiya solishtirish orqali).
 
 param(
-    [string]$ServerShare = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\scripts\NetworkSecurityAgent",
+    [string]$ServerShare = "",
     [string]$ApiServerUrl = "http://172.16.0.5:8443",
     [string]$InstallDir = "C:\Program Files\NetworkSecurityAgent",
     [string]$ServiceName = "NetworkSecurityEndpointAgent",
@@ -28,6 +28,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# MUHIM (real production'da aniqlangan xato): $env:USERDNSDOMAIN GPO
+# Computer Startup Script SYSTEM kontekstida (foydalanuvchi hali login
+# qilmasdan OLDIN, kompyuter yoqilganda) ISHONCHLI EMAS - bo'sh qiymat
+# qaytarishi mumkin, chunki bu o'zgaruvchi foydalanuvchi sessiyasiga
+# bog'liq, SYSTEM'ning esa "foydalanuvchi sessiyasi" yo'q. Natijada
+# $ServerShare "\\\SYSVOL\\scripts\..." kabi buzilgan yo'lga aylanadi.
+#
+# [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+# kompyuterning AD'dagi domen a'zoligidan TO'G'RIDAN-TO'G'RI o'qiydi -
+# foydalanuvchi sessiyasiga bog'liq emas, SYSTEM kontekstida ham
+# (login'dan oldin ham) ishonchli ishlaydi.
+if (-not $ServerShare) {
+    try {
+        $DomainName = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name
+    } catch {
+        # Zaxira: agar domen bilan aloqa vaqtincha yo'q bo'lsa (masalan
+        # tarmoq hali to'liq ko'tarilmagan bo'lsa), USERDNSDOMAIN'ga qaytamiz
+        $DomainName = $env:USERDNSDOMAIN
+    }
+    $ServerShare = "\\$DomainName\SYSVOL\$DomainName\scripts\NetworkSecurityAgent"
+}
 
 function Write-DeployLog {
     param([string]$Message)

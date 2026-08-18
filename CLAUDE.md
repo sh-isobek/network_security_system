@@ -90,7 +90,46 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 49/49 test o'tadi (`run_full_test.py`).**
+**Joriy: 50/50 test o'tadi (`run_full_test.py`).**
+
+## SAKKIZINCHI marta topilgan xato: GPO skriptida $env:USERDNSDOMAIN SYSTEM kontekstida ishonchsiz
+
+Foydalanuvchi Domain Controller'da to'liq GPO oqimini (SYSVOL tayyorlash,
+GPO yaratish, Startup Script bog'lash) bosqichma-bosqich bajarib,
+**haqiqiy test kompyuterida qayta yoqish orqali** sinadi. `deploy.log`
+faylini yuborganida:
+
+**ILDIZ SABAB**: `Deploy-NetworkSecurityAgent.ps1`ning `param()`
+blokida `$ServerShare` standart qiymati `$env:USERDNSDOMAIN`ga
+to'g'ridan-to'g'ri bog'liq edi. GPO **Computer Startup Script**
+foydalanuvchi hali login qilmasdan OLDIN, **SYSTEM** konteksti bilan
+ishga tushadi - bu holatda `$env:USERDNSDOMAIN` (foydalanuvchi
+sessiyasiga bog'liq muhit o'zgaruvchisi) **bo'sh qiymat** qaytardi.
+Natijada `$ServerShare` domen nomisiz, buzilgan yo'lga aylanib,
+`"VERSION topilmadi"` xatosi bilan deploy butunlay to'xtardi -
+foydalanuvchining o'z `deploy.log` fayli buni aniq tasdiqladi
+(birinchi, qo'lda/interaktiv urinishda ishlagan, lekin haqiqiy
+avtomatik reboot'da muvaffaqiyatsiz bo'lgan - bu farq aynan SYSTEM
+vs foydalanuvchi konteksti farqini ko'rsatadi).
+
+**Tuzatish**: `param()` blokidan `$env:USERDNSDOMAIN` olib tashlandi,
+buning o'rniga `[System.DirectoryServices.ActiveDirectory.Domain]::
+GetCurrentDomain().Name` ishlatildi - bu kompyuterning AD'dagi domen
+a'zoligidan to'g'ridan-to'g'ri o'qiydi, foydalanuvchi sessiyasiga
+bog'liq emas, SYSTEM kontekstida (login'dan oldin ham) ishonchli
+ishlaydi. `$env:USERDNSDOMAIN`ga faqat zaxira (fallback) sifatida
+qaytiladi.
+
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi - `param()`
+blokida `$env:USERDNSDOMAIN` to'g'ridan-to'g'ri qolmaganini va
+`GetCurrentDomain()` ishlatilishini tekshiradi.
+
+**SAKKIZINCHI MARTA TASDIQLANGAN SABOQ**: bu safar xato PowerShell/
+Windows Service-ga xos, chuqur "kontekst farqi" muammosi edi (SYSTEM
+vs interaktiv foydalanuvchi) - buni faqat foydalanuvchining haqiqiy,
+to'liq GPO ish jarayonini (Domain Controller'dan tortib, haqiqiy
+kompyuterni qayta yoqishgacha) sinab ko'rishi orqaligina aniqlash
+mumkin edi.
 
 ## YETTINCHI marta topilgan xato turkumi: Suricata reader hech kim tomonidan chaqirilmagan
 

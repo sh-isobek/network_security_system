@@ -3415,6 +3415,56 @@ def _test_suricata_full_chain():
 check("Suricata -> File Analysis to'liq zanjiri (docker-compose xizmati + real formatda parsing)", _test_suricata_full_chain)
 
 # ---------------------------------------------------------------------------
+print("\n=== 50) GPO Deploy skripti: $env:USERDNSDOMAIN SYSTEM kontekstida ishonchsiz (real production xatosi) ===")
+
+
+def _test_gpo_script_no_direct_userdnsdomain_in_param():
+    """
+    Real production'da (Domain Controller, haqiqiy GPO Startup Script
+    orqali) topilgan xato: $env:USERDNSDOMAIN GPO Computer Startup
+    Script SYSTEM kontekstida (foydalanuvchi hali login qilmasdan
+    OLDIN) bo'sh qiymat qaytardi - natijada $ServerShare buzilgan
+    (SYSVOL, domen nomisiz) yo'lga aylanib, "VERSION topilmadi"
+    xatosiga olib keldi (log fayl orqali tasdiqlangan).
+
+    Bu test param() blokida $env:USERDNSDOMAIN'ning TO'G'RIDAN-TO'G'RI
+    ishlatilmasligini (buning o'rniga [System.DirectoryServices.
+    ActiveDirectory.Domain]::GetCurrentDomain() orqali ishonchli
+    aniqlanishini) tekshiradi.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    param_block_end = content.find(")\n\n$ErrorActionPreference")
+    assert param_block_end != -1, "param() blokining oxiri topilmadi - skript strukturasi o'zgargan bo'lishi mumkin"
+    param_block = content[:param_block_end]
+
+    assert "$env:USERDNSDOMAIN" not in param_block, (
+        "param() blokida $env:USERDNSDOMAIN to'g'ridan-to'g'ri ishlatilmasligi kerak - "
+        "bu SYSTEM kontekstida (GPO Startup Script, login'dan oldin) ishonchsiz "
+        "(real production'da aniqlangan xato)"
+    )
+    assert "GetCurrentDomain" in content, (
+        "Domen nomini ishonchli aniqlash uchun [System.DirectoryServices."
+        "ActiveDirectory.Domain]::GetCurrentDomain() ishlatilishi kerak"
+    )
+
+    # Qavslar balansini ham qayta tasdiqlaymiz (avvalgi tekshiruv usuli)
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c), (
+            f"Qavslar balansi buzilgan: {open_c}={code_content.count(open_c)}, {close_c}={code_content.count(close_c)}"
+        )
+
+
+check("GPO Deploy skripti: USERDNSDOMAIN SYSTEM kontekstida ishonchsizligi tuzatilgan", _test_gpo_script_no_direct_userdnsdomain_in_param)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
