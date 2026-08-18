@@ -43,12 +43,42 @@ import requests
 from agent_core.file_monitor import FileMonitor
 from agent_core.process_killer import kill_process_holding_file
 
+
+def _default_log_file() -> str:
+    """
+    MUHIM (real production'da aniqlangan xato): standart nisbiy yo'l
+    ("./agent.log") interaktiv rejimda ishlaganda joriy katalogga
+    nisbatan muammosiz ishlaydi, lekin Windows Service LocalSystem
+    hisobi ostida ishga tushirilganda standart ish katalogi
+    "C:\\Windows\\System32\\" bo'ladi - bu yerga yozish (yoki modul
+    import qilinayotganda FileHandler yaratish) xizmatning DARHOL,
+    tushunarsiz "Cannot start service" xatosi bilan qulashiga olib
+    keldi (chunki bu logging.basicConfig() chaqiruvi MODUL IMPORT
+    vaqtida, hech qanday try/except'siz ishga tushadi).
+
+    Windows'da ProgramData'ga (LocalSystem uchun ham yoziladigan,
+    ish katalogiga bog'liq bo'lmagan) mutlaq yo'l ishlatamiz. Har
+    qanday kutilmagan xatoda ham (masalan ProgramData'ga yoza
+    olmasa) import BUZILMASLIGI uchun keng try/except bilan
+    o'raymiz - eng yomon holatda oddiy nisbiy yo'lga qaytamiz.
+    """
+    if platform.system() != "Windows":
+        return "./agent.log"
+    try:
+        program_data = os.environ.get("ProgramData", r"C:\ProgramData")
+        log_dir = os.path.join(program_data, "NetworkSecurityAgent")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, "agent.log")
+    except OSError:
+        return "./agent.log"
+
+
 logging.basicConfig(
     level=os.getenv("AGENT_LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.getenv("AGENT_LOG_FILE", "./agent.log"), encoding="utf-8"),
+        logging.FileHandler(os.getenv("AGENT_LOG_FILE", _default_log_file()), encoding="utf-8"),
     ],
 )
 logger = logging.getLogger("endpoint_agent")

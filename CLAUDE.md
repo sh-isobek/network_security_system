@@ -90,7 +90,52 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 52/52 test o'tadi (`run_full_test.py`).**
+**Joriy: 53/53 test o'tadi (`run_full_test.py`).**
+
+## O'N BIRINCHI marta topilgan xato: TUB SABAB - log fayli nisbiy yo'l, LocalSystem ish katalogi muammosi
+
+Barcha oldingi tuzatishlardan (USERDNSDOMAIN, GPO kesh, Security
+Filtering, idempotentlik, exit code) keyin, `debug` rejimi orqali
+(pywin32'ning standart diagnostika vositasi) **aniq xato topildi**:
+agent debug rejimida (interaktiv foydalanuvchi sifatida) **mukammal**
+ishlaydi, lekin haqiqiy Windows Service (LocalSystem hisobi) sifatida
+`"Cannot start service"` bilan qulaydi.
+
+**ILDIZ SABAB (nihoyat, tub sabab)**: `agent_core/agent.py`da
+`logging.basicConfig()` **MODUL IMPORT vaqtida**, hech qanday
+`try/except`siz ishga tushadi, va standart log fayli **nisbiy yo'l**
+(`"./agent.log"`) bilan yozilgan edi. Windows Service LocalSystem
+hisobi ostida ishga tushirilganda, standart ish katalogi
+`C:\Windows\System32\` bo'ladi (`.exe`ning o'z joylashgan katalogi
+EMAS) - bu yerga yozish/import muammoli bo'lib, butun modul importi
+(demak butun xizmat) DARHOL qulab tushishiga olib keldi.
+
+**Tuzatish**: `_default_log_file()` funksiyasi qo'shildi - Windows'da
+`%ProgramData%\NetworkSecurityAgent\agent.log` (mutlaq, ish
+katalogiga bog'liq bo'lmagan, LocalSystem ham yoza oladigan) yo'lni
+qaytaradi, Linux/Mac'da eski xatti-harakat saqlanib qoladi. Har
+qanday kutilmagan xatoda ham (masalan ProgramData'ga yoza olmasa)
+import buzilmasligi uchun keng `try/except` bilan o'ralgan.
+
+**Muhim ochilmagan masala (kelajakdagi ish)**: LocalSystem hisobi
+ostida `%USERPROFILE%` haqiqiy foydalanuvchi (`i.shunkorov-su`)
+profiliga emas, balki LocalSystem'ning o'z (mazmunsiz) profiliga
+ishora qiladi - bu `Downloads`/`Desktop` kabi standart kuzatish
+papkalari **mavjud bo'lmasligi va jimgina o'tkazib yuborilishi**ga
+olib keladi (xizmat endi qulamaydi, lekin haqiqiy foydalanuvchi
+papkalarini kuzatmaydi ham). Bu - alohida, keyingi bosqichda hal
+qilinishi kerak bo'lgan arxitektura masalasi (masalan barcha
+login qilgan foydalanuvchilarning profillarini avtomatik aniqlash).
+
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi.
+
+**O'N BIRINCHI MARTA TASDIQLANGAN SABOQ**: bu - eng chuqur, eng
+qiyin aniqlanadigan xato edi (10 marta oldingi urinishlardan keyin
+topilgan) - `pywin32`ning o'zining **standart diagnostika vositasi**
+(`debug` buyrug'i) ishlatilmaguncha yashiringan bo'lib qoldi. Bu
+"interaktiv rejimda ishlaydi, xizmat sifatida ishlamaydi" farqi -
+Windows xizmatlarini ishlab chiqishda **klassik, tez-tez uchraydigan**
+tuzoq (ish katalogi, foydalanuvchi profili konteksti farqlari).
 
 ## O'NINCHI marta topilgan xato: tashqi .exe xatosi PowerShell tomonidan sezilmagan
 

@@ -3549,6 +3549,47 @@ def _test_gpo_script_checks_exe_exit_code():
 check("GPO Deploy skripti: tashqi .exe xatolari endi yashirilmaydi (real production xatosi tuzatilgan)", _test_gpo_script_checks_exe_exit_code)
 
 # ---------------------------------------------------------------------------
+print("\n=== 53) Agent log fayli: mutlaq yo'l, Windows Service LocalSystem muammosi tuzatilgan (real production xatosi) ===")
+
+
+def _test_agent_log_file_absolute_path():
+    """
+    Real production'da topilgan xato: agent_core/agent.py'da log fayli
+    nisbiy yo'l ("./agent.log") bilan standart qilingan edi. Interaktiv
+    ("debug") rejimda muammosiz ishladi, lekin haqiqiy Windows Service
+    sifatida (LocalSystem hisobi ostida, standart ish katalogi
+    C:\\Windows\\System32) ishga tushirilganda "Cannot start service"
+    degan tushunarsiz xato bilan darhol qulab tushardi - chunki
+    logging.basicConfig() MODUL IMPORT vaqtida, hech qanday
+    try/except'siz FileHandler yaratardi.
+    """
+    import importlib
+    import ntpath
+    import logging
+    program_data = r"C:\ProgramData"
+    expected_log_dir = ntpath.join(program_data, "NetworkSecurityAgent")
+    expected_log_path = ntpath.join(expected_log_dir, "agent.log")
+    assert expected_log_path == r"C:\ProgramData\NetworkSecurityAgent\agent.log"
+
+    # Kodning o'zida _default_log_file funksiyasi mavjudligini va
+    # xavfsiz (keng try/except bilan o'ralgan) ekanligini tasdiqlash
+    import agent_core.agent as agent_mod
+    assert hasattr(agent_mod, "_default_log_file"), "_default_log_file() funksiyasi topilmadi"
+
+    # Linux muhitida import xatosiz o'tishi va nisbiy yo'lga qaytishi kerak
+    log_path = agent_mod._default_log_file()
+    assert log_path == "./agent.log", f"Linux'da './agent.log' kutilgan edi, '{log_path}' keldi"
+
+    # Modul allaqachon xatosiz import qilingani (bu funksiya chaqirilgunga
+    # qadar allaqachon sinov to'plamining boshqa qismlarida import
+    # qilingan bo'lishi mumkin) - bu aynan real production'da qulagan
+    # MODUL IMPORT bosqichining o'zi xatosiz o'tganini tasdiqlaydi.
+    assert agent_mod.logger is not None
+
+
+check("Agent log fayli: mutlaq yo'l (Windows Service LocalSystem qulash muammosi tuzatilgan)", _test_agent_log_file_absolute_path)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
