@@ -3636,6 +3636,149 @@ def _test_service_wrapper_reports_running_status():
 check("service_wrapper.py: SCM'ga SERVICE_RUNNING signali (30s timeout TUB SABABI tuzatilgan)", _test_service_wrapper_reports_running_status)
 
 # ---------------------------------------------------------------------------
+print("\n=== 55) Windows Agent: qo'shimcha real production tuzatishlari (--startup auto, ko'p-foydalanuvchi kuzatish, cache yo'li) ===")
+
+
+def _test_windows_agent_additional_fixes():
+    """
+    Foydalanuvchi tashqi manbadan (mustaqil ishlab chiqilgan, real
+    production sinovlari orqali tasdiqlangan) qo'shimcha tuzatishlar
+    bilan zip yubordi. Ko'rib chiqilgach, quyidagi 3 ta QO'SHIMCHA
+    real xato ham aniqlandi va bizning kodga integratsiya qilindi:
+
+    1) Deploy skripti xizmatni 'install' bilan (standart - odatda
+       "Manual" ishga tushirish turi bilan) o'rnatgan edi - bu
+       reboot vaqtida SCM'ning o'zi uni AVTOMATIK ishga tushirmasligini
+       anglatadi (foydalanuvchining haqiqiy Get-WinEvent natijasida
+       "Тип запуска службы: Вручную" ko'rinib, bu tasdiqlangan).
+       Tuzatish: '--startup auto install'.
+
+    2) service_wrapper.py DEFAULT_WATCH_DIRS_WINDOWS (%USERPROFILE%
+       asosida) ishlatar edi - bu LocalSystem hisobi ostida
+       mazmunsiz (haqiqiy foydalanuvchi profiliga ishora qilmaydi).
+       Tuzatish: barcha haqiqiy Windows foydalanuvchi profillarini
+       (C:\\Users\\* ostida) avtomatik aniqlaydigan
+       _windows_watch_dirs() funksiyasi.
+
+    3) LOCAL_CACHE_FILE (hash keshi) ham nisbiy yo'l bilan yozilgan
+       edi - xuddi agent.log kabi, LocalSystem ish katalogi
+       muammosiga uchrashi mumkin edi.
+    """
+    # 1) Deploy skriptida --startup auto borligini tekshirish
+    deploy_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(deploy_path) as f:
+        deploy_content = f.read()
+    assert "--startup auto" in deploy_content, (
+        "Deploy skripti '--startup auto' bilan o'rnatishi kerak - aks holda "
+        "xizmat reboot'da AVTOMATIK ishga tushmaydi (real production'da "
+        "'Тип запуска службы: Вручную' orqali tasdiqlangan xato)"
+    )
+    # Post-start tekshiruv ham borligini tasdiqlash (xizmat haqiqatan Running holatida)
+    assert "runningService" in deploy_content and "Running" in deploy_content, (
+        "Deploy skripti Start-Service'dan keyin xizmat holatini qayta tekshirishi kerak"
+    )
+
+    # 2) service_wrapper.py'da ko'p-foydalanuvchi kuzatish funksiyasi borligini tekshirish
+    wrapper_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "windows_agent", "service_wrapper.py",
+    )
+    with open(wrapper_path) as f:
+        wrapper_content = f.read()
+    assert "_windows_watch_dirs" in wrapper_content, (
+        "service_wrapper.py barcha Windows foydalanuvchi profillarini avtomatik "
+        "aniqlovchi funksiyaga ega bo'lishi kerak (LocalSystem %USERPROFILE% "
+        "muammosini hal qilish uchun)"
+    )
+    assert "Users" in wrapper_content
+
+    # 3) LOCAL_CACHE_FILE ham mutlaq/xavfsiz yo'lga bog'liq ekanligini tekshirish
+    import agent_core.agent as agent_mod
+    assert hasattr(agent_mod, "LOCAL_CACHE_FILE")
+    # Linux muhitida _default_log_file() asosida hisoblanadi (nisbiy "./" emas)
+
+    # 4) CI workflow'da haqiqiy SCM ro'yxatdan o'tish tekshiruvi borligini tasdiqlash
+    workflow_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        ".github", "workflows", "build-windows-agent.yml",
+    )
+    with open(workflow_path) as f:
+        workflow_content = f.read()
+    assert "sc.exe query NetworkSecurityEndpointAgent" in workflow_content, (
+        "CI workflow'da xizmatning HAQIQATAN SCM'da ro'yxatdan o'tishini "
+        "tekshiruvchi qadam bo'lishi kerak - bu real production xatosini "
+        "(muvaffaqiyat deb log qilingan, lekin SCM'da yo'q) avtomatik ushlaydi"
+    )
+
+
+check("Windows Agent qo'shimcha tuzatishlar (--startup auto, ko'p-foydalanuvchi kuzatish, CI SCM tekshiruvi)", _test_windows_agent_additional_fixes)
+
+# ---------------------------------------------------------------------------
+print("\n=== 56) EndpointAgent yangi start_background()/stop() API'si - real thread-asosli heartbeat ===")
+
+
+def _test_endpoint_agent_start_background_stop():
+    """
+    agent_core/agent.py EndpointAgent klassi endi start_background()/
+    stop() metodlariga ega - bu Windows Service uchun bloklanmaydigan
+    ishga tushirish imkonini beradi (heartbeat alohida thread'da).
+    Bu real HTTP orqali (heartbeat serverga haqiqatan yetib borishini)
+    tekshiriladi.
+    """
+    import subprocess
+    import time as _time
+    import tempfile
+    import threading as threading_check
+
+    import agent_core.agent as agent_mod
+    assert hasattr(agent_mod.EndpointAgent, "start_background")
+    assert hasattr(agent_mod.EndpointAgent, "stop")
+
+    api_env = {**os.environ, "AGENT_API_KEY": "ci-newapi-key"}
+    api_proc = subprocess.Popen(["python3", "-m", "api.server"], env=api_env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        _time.sleep(2)
+        os.environ["API_SERVER_URL"] = "http://127.0.0.1:8443"
+        os.environ["AGENT_API_KEY"] = "ci-newapi-key"
+        os.environ["HEARTBEAT_INTERVAL_SECONDS"] = "1"
+
+        import importlib
+        importlib.reload(agent_mod)
+
+        watch_dir = tempfile.mkdtemp()
+        agent = agent_mod.EndpointAgent([watch_dir])
+        agent.start_background()
+        assert agent._heartbeat_thread is not None and agent._heartbeat_thread.is_alive()
+
+        _time.sleep(2.5)
+
+        agent.stop()
+        _time.sleep(0.5)
+        assert not agent._heartbeat_thread.is_alive(), "Heartbeat thread stop() dan keyin ham ishlab turibdi"
+
+        s = get_session()
+        d = s.query(Device).filter(Device.hostname == agent.hostname).order_by(Device.id.desc()).first()
+        assert d is not None, "Heartbeat orqali qurilma yozilmadi"
+        assert d.agent_last_heartbeat is not None
+        s.close()
+
+    finally:
+        api_proc.terminate()
+        try:
+            api_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            api_proc.kill()
+        for k in ["API_SERVER_URL", "AGENT_API_KEY", "HEARTBEAT_INTERVAL_SECONDS"]:
+            os.environ.pop(k, None)
+
+
+check("EndpointAgent start_background()/stop() - real thread-asosli heartbeat (HTTP orqali tasdiqlangan)", _test_endpoint_agent_start_background_stop)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

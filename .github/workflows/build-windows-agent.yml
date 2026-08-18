@@ -11,6 +11,7 @@ on:
       - "windows_agent/**"
       - "agent_core/**"
       - "requirements-agent.txt"
+      - "deploy/windows_agent_gpo/**"
       - ".github/workflows/build-windows-agent.yml"
   workflow_dispatch: {}   # qo'lda ham ishga tushirish mumkin
 
@@ -56,6 +57,27 @@ jobs:
           $proc = Start-Process -FilePath "dist/NetworkSecurityAgent.exe" -ArgumentList "--help" -NoNewWindow -PassThru -Wait -RedirectStandardOutput "help_output.txt" -RedirectStandardError "help_error.txt"
           Write-Host "Exit kod: $($proc.ExitCode)"
           Get-Content help_output.txt, help_error.txt -ErrorAction SilentlyContinue
+
+      - name: Windows Service ro'yxatdan o'tishini tekshirish
+        shell: powershell
+        run: |
+          # MUHIM: bu qadam aynan real production'da topilgan xatoni
+          # (xizmat "muvaffaqiyatli o'rnatildi" deb log qilingan, lekin
+          # SCM'da HAQIQATAN topilmagan) avtomatik ravishda, HAR PUSH'DA
+          # ushlab turadi - haqiqiy Windows runner'da, haqiqiy Service
+          # Control Manager orqali.
+          $out = & "dist/NetworkSecurityAgent.exe" --startup manual install 2>&1
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Service install failed: exit code $LASTEXITCODE"
+            exit 1
+          }
+          sc.exe query NetworkSecurityEndpointAgent
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "NetworkSecurityEndpointAgent SCM'da topilmadi"
+            exit 1
+          }
+          & "dist/NetworkSecurityAgent.exe" remove
 
       - name: Versiyani o'qish (release nomlash uchun)
         id: version

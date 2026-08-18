@@ -1,45 +1,81 @@
 """
-Windows Service Wrapper - agent.py'ni Windows xizmati (service) sifatida
-ishga tushiradi (foydalanuvchi login qilmagan bo'lsa ham, kompyuter
-yoqilishi bilan avtomatik ishlaydi).
+Windows Service wrapper for NetworkSecurityEndpointAgent.
 
-MUHIM: Bu fayl faqat Windows'da ishlaydi (pywin32 kutubxonasi talab
-qilinadi). Linux/test muhitida import qilinmaydi va ishlatilmaydi -
-production Windows kompyuterida ishlatiladi.
-
-O'rnatish:
-    pip install pywin32
-    python service_wrapper.py install
-    python service_wrapper.py start
-
-O'chirish:
-    python service_wrapper.py stop
-    python service_wrapper.py remove
+The service is designed for AD/GPO deployment and runs under LocalSystem.
+It deliberately avoids user-session dependent paths and stores its state in
+ProgramData. The service reports RUNNING before starting file monitoring so
+Windows SCM does not hit the 30-second startup timeout while Python/watchdog
+initialises.
 """
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Service processes normally start in C:\Windows\System32. Keep logs/cache in
+# a writable, stable location before importing agent_core (which configures
+# logging at import time).
+PROGRAM_DATA = os.environ.get("ProgramData", r"C:\ProgramData")
+AGENT_DATA_DIR = os.path.join(PROGRAM_DATA, "NetworkSecurityAgent")
+os.makedirs(AGENT_DATA_DIR, exist_ok=True)
+os.environ.setdefault("AGENT_LOG_FILE", os.path.join(AGENT_DATA_DIR, "agent.log"))
+os.environ.setdefault("AGENT_CACHE_FILE", os.path.join(AGENT_DATA_DIR, "agent_hash_cache.json"))
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import win32serviceutil
-    import win32service
     import win32event
+    import win32service
+    import win32serviceutil
     import servicemanager
 except ImportError:
     print("XATO: pywin32 o'rnatilmagan. Bu fayl faqat Windows'da ishlaydi.")
-    print("O'rnatish: pip install pywin32")
     sys.exit(1)
 
-from windows_agent.agent import EndpointAgent, _default_watch_dirs
+from windows_agent.agent import EndpointAgent
+
+
+SERVICE_NAME = "NetworkSecurityEndpointAgent"
+
+
+def _windows_watch_dirs():
+    """Enumerate real Windows user profiles plus system temp directories."""
+    result = []
+    users_root = os.path.join(os.environ.get("SystemDrive", "C:"), "Users")
+
+    if os.path.isdir(users_root):
+        for username in os.listdir(users_root):
+            profile = os.path.join(users_root, username)
+            if not os.path.isdir(profile):
+                continue
+            # Ignore system profiles that are not useful for endpoint file monitoring.
+            if username.lower() in {"default", "default user", "public", "all users"}:
+                continue
+            for folder in ("Downloads", "Desktop"):
+                path = os.path.join(profile, folder)
+                if os.path.isdir(path):
+                    result.append(path)
+
+            outlook = os.path.join(
+                profile, "AppData", "Local", "Microsoft", "Outlook"
+            )
+            if os.path.isdir(outlook):
+                result.append(outlook)
+
+    for path in (
+        os.environ.get("TEMP", r"C:\Windows\Temp"),
+        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Temp"),
+    ):
+        if os.path.isdir(path):
+            result.append(path)
+
+    # Preserve order and remove duplicates.
+    return list(dict.fromkeys(result))
 
 
 class EndpointAgentService(win32serviceutil.ServiceFramework):
-    _svc_name_ = "NetworkSecurityEndpointAgent"
+    _svc_name_ = SERVICE_NAME
     _svc_display_name_ = "Network Security Endpoint Agent"
     _svc_description_ = (
-        "Tarmoq xavfsizligi tizimi - fayl monitoring va avtomatik "
-        "zararli dasturlarni bloklash xizmati."
+        "Network Security System endpoint file monitoring and malicious-file protection."
     )
 
     def __init__(self, args):
@@ -49,28 +85,50 @@ class EndpointAgentService(win32serviceutil.ServiceFramework):
 
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        if self.agent:
-            self.agent.monitor.stop()
-        win32event.SetEvent(self.stop_event)
+        try:
+            if self.agent is not None:
+                self.agent.stop()
+        except Exception as exc:
+            servicemanager.LogErrorMsg(
+                f"Agent stop error: {exc!r}"
+            )
+        finally:
+            win32event.SetEvent(self.stop_event)
 
     def SvcDoRun(self):
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STARTED,
-            (self._svc_name_, ""),
-        )
-        # MUHIM (real production'da aniqlangan tub sabab): Windows Service
-        # Control Manager (SCM) xizmatni ishga tushirgandan keyin 30 soniya
-        # ichida ANIQ "men ishlayapman" (SERVICE_RUNNING) signalini kutadi.
-        # Bu chaqiruv YETISHMAGAN edi - shuning uchun SCM har doim
-        # "The service did not respond to the start or control request in
-        # a timely fashion" (30000 ms) xatosi bilan xizmatni majburan
-        # o'chirar edi, garchi pastdagi kod o'zi to'g'ri ishlagan bo'lsa ham.
+        # Tell SCM immediately that the service has crossed startup. This is
+        # critical for PyInstaller/watchdog startup on slower PCs.
         self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+        servicemanager.LogInfoMsg(
+            f"{SERVICE_NAME} service started"
+        )
 
-        self.agent = EndpointAgent(_default_watch_dirs())
-        self.agent.monitor.start()
-        win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+        try:
+            watch_dirs = _windows_watch_dirs()
+            if not watch_dirs:
+                servicemanager.LogWarningMsg(
+                    "No Windows user folders found; monitoring system Temp only if available."
+                )
+
+            self.agent = EndpointAgent(watch_dirs)
+            self.agent.start_background(self.stop_event)
+
+            # Wait until SvcStop signals the event.
+            win32event.WaitForSingleObject(
+                self.stop_event,
+                win32event.INFINITE,
+            )
+        except Exception as exc:
+            servicemanager.LogErrorMsg(
+                f"{SERVICE_NAME} fatal error: {exc!r}"
+            )
+            raise
+        finally:
+            try:
+                if self.agent is not None:
+                    self.agent.stop()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

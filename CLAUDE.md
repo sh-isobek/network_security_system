@@ -90,7 +90,64 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 54/54 test o'tadi (`run_full_test.py`).**
+**Joriy: 56/56 test o'tadi (`run_full_test.py`).**
+
+## Tashqi manbadan qo'shimcha tuzatishlar integratsiyasi (foydalanuvchi yuborgan zip)
+
+Foydalanuvchi mustaqil ishlab chiqilgan (boshqa vosita/hamkasb orqali)
+tuzatishlar to'plamini zip fayl sifatida yubordi. Diqqat bilan tekshirib
+chiqilgach (barcha farqlar `diff` orqali), bu zip:
+
+1. Mening barcha oldingi tuzatishlarimni (USERDNSDOMAIN, idempotentlik,
+   exit code, ReportServiceStatus) **to'g'ri** o'z ichiga olgan edi.
+2. **3 ta qo'shimcha, haqiqiy real production xatosini** ham topib
+   tuzatgan edi:
+
+   a) **`--startup auto`** yetishmasligi - Deploy skripti xizmatni
+      standart (odatda "Manual") ishga tushirish turi bilan o'rnatar
+      edi. Bu, foydalanuvchining haqiqiy `Get-WinEvent` natijasida
+      "Тип запуска службы: Вручную" orqali tasdiqlangan - xizmat hatto
+      ishga tushirilgandan keyin ham, KEYINGI qayta yoqilishlarda SCM
+      tomonidan avtomatik ishga tushirilmasdi.
+
+   b) **Ko'p-foydalanuvchi kuzatish** - `service_wrapper.py` avvalgi
+      `_default_watch_dirs()` (`%USERPROFILE%` asosida) ishlatar edi -
+      bu LocalSystem hisobi ostida mazmunsiz edi (bu allaqachon
+      "hal qilinmagan masala" sifatida hujjatlashtirilgan edi). Yangi
+      `_windows_watch_dirs()` funksiyasi `C:\Users\*` ostidagi BARCHA
+      haqiqiy foydalanuvchi profillarini avtomatik aniqlaydi.
+
+   c) **`LOCAL_CACHE_FILE`** (hash keshi) ham `agent.log` bilan bir
+      xil nisbiy-yo'l muammosiga ega edi - endi mutlaq, xavfsiz yo'lga
+      bog'liq.
+
+   d) **CI workflow'ga** haqiqiy Windows runner'ida SCM ro'yxatdan
+      o'tishini tekshiruvchi (`sc.exe query`) yangi qadam qo'shilgan -
+      bu bizning butun "xizmat 'muvaffaqiyat' deb log qilingan, lekin
+      SCM'da yo'q" muammosini HAR PUSH'DA avtomatik ushlaydi.
+
+3. `agent_core/agent.py`ga yangi, tozaroq arxitektura: `EndpointAgent.
+   start_background()`/`.stop()` metodlari - heartbeat alohida
+   `threading.Thread`da, Windows Service'ning bloklanmasdan ishga
+   tushishini ta'minlaydi.
+
+**Integratsiya jarayoni**: barcha 3 fayl (`agent_core/agent.py`,
+`windows_agent/service_wrapper.py`, `deploy/windows_agent_gpo/Deploy-
+NetworkSecurityAgent.ps1`) va CI workflow'i bizning repo'ga
+qo'shildi, YANGI kod uchun 2 ta qo'shimcha regressiya testi yozildi
+(`start_background`/`stop`ni real HTTP orqali, va `--startup auto`/
+ko'p-foydalanuvchi funksiyasi/CI SCM tekshiruvi borligini tasdiqlovchi
+testlar). Mening avvalgi test #54 (ReportServiceStatus) ham
+saqlanib qoldi va yangi fayllar bilan muvaffaqiyatli o'tdi.
+
+VERSION 1.0.2 -> 1.0.3.
+
+**MUHIM SABOQ**: bu holat shuni ko'rsatdiki, tashqi manbadan kelgan
+tuzatishlarni **ko'r-ko'rona qabul qilish yoki rad etish** o'rniga,
+har doim **diqqat bilan diff qilish, to'liq o'qib chiqish, va o'z
+test to'plamiga qarshi sinash** kerak - bu holatda tashqi manba
+haqiqatan yuqori sifatli, qo'shimcha qiymat keltiruvchi ish bo'lib
+chiqdi.
 
 ## O'N IKKINCHI marta topilgan xato: HAQIQIY TUB SABAB - ReportServiceStatus(SERVICE_RUNNING) yetishmagan edi
 

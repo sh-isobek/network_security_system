@@ -187,12 +187,14 @@ if (Test-Path $exePath) {
     # QO'LDA tekshirish SHART - aks holda "muvaffaqiyat" deb noto'g'ri
     # log yozilib, xizmat aslida umuman ro'yxatga olinmagan holatda
     # qoladi (bu aynan sodir bo'lgan real xato edi).
-    $installOutput = & $exePath install 2>&1
+    # Pywin32/pyinstaller CLI'da option command'dan OLDIN kelishi kerak:
+    #   NetworkSecurityAgent.exe --startup auto install
+    $installOutput = & $exePath --startup auto install 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-DeployLog "XATOLIK: '$exePath install' muvaffaqiyatsiz tugadi (chiqish kodi: $LASTEXITCODE). Natija: $installOutput"
+        Write-DeployLog "XATOLIK: '$exePath --startup auto install' muvaffaqiyatsiz tugadi (chiqish kodi: $LASTEXITCODE). Natija: $installOutput"
         exit 1
     }
-    Write-DeployLog "Xizmat .exe orqali o'rnatildi: $exePath (chiqish: $installOutput)"
+    Write-DeployLog "Xizmat .exe orqali AUTO_START bilan o'rnatildi: $exePath (chiqish: $installOutput)"
 } elseif ($pythonExe) {
     # Zaxira yo'l: agar .exe topilmasa, lekin Python o'rnatilgan bo'lsa
     & python.exe "$InstallDir\windows_agent\service_wrapper.py" install
@@ -214,9 +216,15 @@ if ($null -eq $registeredService) {
 # --- 6) Xizmatni ishga tushirish (muhit o'zgaruvchilari yangi
 #         jarayonga meros olinishi uchun) ---
 try {
-    Start-Service -Name $ServiceName
+    Start-Service -Name $ServiceName -ErrorAction Stop
+    Start-Sleep -Seconds 3
+    $runningService = Get-Service -Name $ServiceName -ErrorAction Stop
+    if ($runningService.Status -ne 'Running') {
+        throw "Xizmat ishga tushdi, lekin holati '$($runningService.Status)' bo'lib qoldi."
+    }
 } catch {
     Write-DeployLog "XATOLIK: xizmatni ishga tushirib bo'lmadi: $_"
+    Write-DeployLog "SCM diagnostikasi: sc.exe query $ServiceName"
     exit 1
 }
 

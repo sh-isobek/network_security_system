@@ -35,6 +35,7 @@ import platform
 import socket
 import sys
 import time
+import threading
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -88,7 +89,10 @@ API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
 AGENT_VERSION = os.getenv("AGENT_VERSION", "1.0.0")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "300"))  # 5 daqiqa
-LOCAL_CACHE_FILE = os.getenv("AGENT_CACHE_FILE", "./agent_hash_cache.json")
+LOCAL_CACHE_FILE = os.getenv(
+    "AGENT_CACHE_FILE",
+    os.path.join(os.path.dirname(_default_log_file()), "agent_hash_cache.json"),
+)
 API_TIMEOUT = 5  # soniya - server sekin javob bersa ham foydalanuvchini kutdirmaslik uchun
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
@@ -243,6 +247,8 @@ class EndpointAgent:
         self.ip_address = _get_local_ip()
         self.cache = _load_cache()
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread = None
         logger.info(f"Agent ishga tushmoqda: host={self.hostname}, ip={self.ip_address}")
 
     def _on_new_file(self, filepath: str):
@@ -262,10 +268,8 @@ class EndpointAgent:
         threat_name = result.get("threat_name", "Noma'lum tahdid")
         logger.warning(f"ZARARLI FAYL ANIQLANDI: {filepath} [{threat_name}]")
 
-        # 1) Jarayonni to'xtatish
         kill_result = kill_process_holding_file(filepath)
 
-        # 2) Faylni o'chirish
         file_deleted = False
         try:
             os.remove(filepath)
@@ -274,7 +278,6 @@ class EndpointAgent:
         except OSError as exc:
             logger.error(f"Faylni o'chirib bo'lmadi: {exc}")
 
-        # 3) Markazga xabar berish
         report_incident(
             hostname=self.hostname,
             ip_address=self.ip_address,
@@ -286,21 +289,40 @@ class EndpointAgent:
             process_name=kill_result.process_name,
         )
 
-    def run(self):
+    def _heartbeat_loop(self):
+        # Send one heartbeat immediately, then periodically.
+        send_heartbeat(self.hostname, self.ip_address)
+        while not self._heartbeat_stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            send_heartbeat(self.hostname, self.ip_address)
+
+    def start_background(self, stop_event=None):
+        """Start monitoring + heartbeat without blocking Windows SCM startup."""
         self.monitor.start()
         logger.info("Agent ishga tushdi, fayllar kuzatilmoqda...")
-        send_heartbeat(self.hostname, self.ip_address)  # ishga tushganda darhol bir marta
-        last_heartbeat = time.time()
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="AgentHeartbeat",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def stop(self):
+        self._heartbeat_stop.set()
+        try:
+            self.monitor.stop()
+        finally:
+            if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join(timeout=5)
+
+    def run(self):
+        self.start_background()
         try:
             while True:
                 time.sleep(1)
-                if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
-                    send_heartbeat(self.hostname, self.ip_address)
-                    last_heartbeat = time.time()
         except KeyboardInterrupt:
             logger.info("Agent to'xtatilmoqda...")
-            self.monitor.stop()
-
+            self.stop()
 
 def _default_watch_dirs():
     system = platform.system()
