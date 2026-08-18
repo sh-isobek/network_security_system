@@ -90,7 +90,40 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 51/51 test o'tadi (`run_full_test.py`).**
+**Joriy: 52/52 test o'tadi (`run_full_test.py`).**
+
+## O'NINCHI marta topilgan xato: tashqi .exe xatosi PowerShell tomonidan sezilmagan
+
+Idempotentlik tuzatilgandan keyin foydalanuvchi qayta sinadi -
+`deploy.log`da yana **"Xizmat .exe orqali o'rnatildi"** yozildi, lekin
+`Get-Service` xizmat **umuman topilmasligini** ko'rsatdi.
+
+**ILDIZ SABAB**: PowerShell'da `& $exePath install` (tashqi dastur
+chaqiruvi) `$ErrorActionPreference = "Stop"`ga **BO'YSUNMAYDI** - bu
+faqat PowerShell'ning o'z cmdlet'lariga tegishli. Agar tashqi `.exe`
+ichki xatolik bilan muvaffaqiyatsiz bo'lsa (nolinchi bo'lmagan chiqish
+kodi bilan chiqsa), PowerShell buni avtomatik "xato" deb bilmaydi -
+keyingi qatorga o'tib ketaveradi. Natijada skript **har doim**
+"Xizmat .exe orqali o'rnatildi" deb log yozardi, `.exe install`ning
+o'zi muvaffaqiyatsiz bo'lgan taqdirda ham.
+
+**Tuzatish**: `$LASTEXITCODE`ni aniq tekshirish qo'shildi (tashqi
+dastur chiqish kodi), va - eng muhimi - `install`dan keyin xizmat
+**HAQIQATAN SCM'da ro'yxatga olinganini** (`Get-Service` orqali)
+alohida tasdiqlash qo'shildi. Shuningdek `Start-Service` atrofiga
+`try/catch` qo'shilib, xatolar aniq log qilinadigan bo'ldi.
+
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi.
+
+**O'NINCHI MARTA TASDIQLANGAN SABOQ**: bu safar xato PowerShell'ning
+o'zining chuqur til semantikasi (tashqi jarayon chaqiruvlari
+`$ErrorActionPreference`ga bo'ysunmasligi) bilan bog'liq edi - bu
+klassik, ko'p tajribali PowerShell dasturchilar ham duch keladigan
+tuzoq, va faqat **haqiqiy, bosqichma-bosqich production sinovi**
+orqali ochilib qoldi. Asosiy sabab (pywin32/PyInstaller'ning o'z
+`install` buyrug'i nima uchun muvaffaqiyatsiz bo'layotgani) hali
+tekshirilmoqda - foydalanuvchidan `.exe install`ni to'g'ridan-to'g'ri
+ishga tushirib, xom xato xabarini so'radim.
 
 ## TO'QQIZINCHI marta topilgan xato: idempotentlik faqat VERSION solishtirar edi, xizmat mavjudligini tekshirmasdi
 

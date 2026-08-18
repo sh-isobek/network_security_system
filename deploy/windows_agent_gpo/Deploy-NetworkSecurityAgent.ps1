@@ -178,8 +178,21 @@ if (Test-Path $apiKeyFile) {
 $pythonExe = Get-Command python.exe -ErrorAction SilentlyContinue
 if (Test-Path $exePath) {
     # Asosiy yo'l: mustaqil .exe (Python o'rnatish shart emas)
-    & $exePath install
-    Write-DeployLog "Xizmat .exe orqali o'rnatildi: $exePath"
+    #
+    # MUHIM (real production'da aniqlangan xato): tashqi dastur (.exe)
+    # chaqiruvi PowerShell'ning $ErrorActionPreference'iga BO'YSUNMAYDI -
+    # agar `install` buyrug'i ichki xatolik bilan muvaffaqiyatsiz
+    # bo'lsa ham, PowerShell buni avtomatik "xato" deb bilmaydi va
+    # keyingi qatorga o'tib ketaveradi. Shuning uchun $LASTEXITCODE'ni
+    # QO'LDA tekshirish SHART - aks holda "muvaffaqiyat" deb noto'g'ri
+    # log yozilib, xizmat aslida umuman ro'yxatga olinmagan holatda
+    # qoladi (bu aynan sodir bo'lgan real xato edi).
+    $installOutput = & $exePath install 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-DeployLog "XATOLIK: '$exePath install' muvaffaqiyatsiz tugadi (chiqish kodi: $LASTEXITCODE). Natija: $installOutput"
+        exit 1
+    }
+    Write-DeployLog "Xizmat .exe orqali o'rnatildi: $exePath (chiqish: $installOutput)"
 } elseif ($pythonExe) {
     # Zaxira yo'l: agar .exe topilmasa, lekin Python o'rnatilgan bo'lsa
     & python.exe "$InstallDir\windows_agent\service_wrapper.py" install
@@ -189,9 +202,23 @@ if (Test-Path $exePath) {
     exit 1
 }
 
+# --- 5.5) Xizmat HAQIQATAN ro'yxatga olinganini tasdiqlash (install
+#          buyrug'i "muvaffaqiyatli" ko'rinsa ham, SCM'da yo'q bo'lishi
+#          mumkin edi - bu aynan sodir bo'lgan real xato) ---
+$registeredService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($null -eq $registeredService) {
+    Write-DeployLog "XATOLIK: 'install' buyrug'i xato bermadi, lekin xizmat SCM'da topilmadi ($ServiceName). Qo'lda tekshiring: & '$exePath' install"
+    exit 1
+}
+
 # --- 6) Xizmatni ishga tushirish (muhit o'zgaruvchilari yangi
 #         jarayonga meros olinishi uchun) ---
-Start-Service -Name $ServiceName
+try {
+    Start-Service -Name $ServiceName
+} catch {
+    Write-DeployLog "XATOLIK: xizmatni ishga tushirib bo'lmadi: $_"
+    exit 1
+}
 
 # --- 7) Versiyani belgilash (keyingi ishga tushishda idempotentlik uchun) ---
 Set-Content -Path (Join-Path $InstallDir "VERSION") -Value $availableVersion

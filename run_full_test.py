@@ -3508,6 +3508,47 @@ def _test_gpo_script_checks_service_existence():
 check("GPO Deploy skripti: idempotentlik xizmat mavjudligini ham tekshiradi (real production xatosi tuzatilgan)", _test_gpo_script_checks_service_existence)
 
 # ---------------------------------------------------------------------------
+print("\n=== 52) GPO Deploy skripti: tashqi .exe xatolari yashirilmaydi (real production xatosi) ===")
+
+
+def _test_gpo_script_checks_exe_exit_code():
+    """
+    Real production'da topilgan xato: '& $exePath install' PowerShell'ning
+    $ErrorActionPreference'iga bo'ysunmaydi (tashqi dastur chaqiruvi) -
+    agar install ichki xatolik bilan muvaffaqiyatsiz bo'lsa ham, skript
+    "Xizmat .exe orqali o'rnatildi" deb noto'g'ri log yozib, keyingi
+    qatorga o'tib ketardi. Natijada xizmat SCM'da umuman ro'yxatga
+    olinmagan holda qolib, Get-Service uni "topilmadi" deb qaytarardi -
+    lekin log fayl "muvaffaqiyat" deb ko'rsatardi.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert "$LASTEXITCODE" in content, (
+        "Tashqi .exe chaqiruvidan keyin $LASTEXITCODE tekshirilishi SHART - "
+        "aks holda muvaffaqiyatsiz 'install' 'muvaffaqiyat' deb noto'g'ri log yoziladi"
+    )
+    assert "$registeredService" in content, (
+        "Xizmat 'install'dan keyin HAQIQATAN SCM'da ro'yxatga olinganini "
+        "(Get-Service orqali) tasdiqlash kerak - install buyrug'i xato bermasa ham "
+        "xizmat aslida ro'yxatga olinmagan bo'lishi mumkin (real production xatosi)"
+    )
+
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c), (
+            f"Qavslar balansi buzilgan: {open_c}={code_content.count(open_c)}, {close_c}={code_content.count(close_c)}"
+        )
+
+
+check("GPO Deploy skripti: tashqi .exe xatolari endi yashirilmaydi (real production xatosi tuzatilgan)", _test_gpo_script_checks_exe_exit_code)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
