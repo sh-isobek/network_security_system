@@ -91,9 +91,22 @@ if ($null -eq $availableVersion) {
     exit 0
 }
 
-if ($installedVersion -eq $availableVersion) {
-    Write-DeployLog "Agent allaqachon eng so'nggi versiyada ($installedVersion) - hech narsa qilinmadi."
+# MUHIM (real production'da aniqlangan xato): faqat VERSION faylini
+# solishtirish YETARLI EMAS - agar xizmat biror sababdan (masalan
+# qo'lda "remove" buyrug'i orqali, yoki muvaffaqiyatsiz avvalgi
+# urinishdan keyin) o'chirilgan bo'lsa-yu, VERSION fayli qolib ketgan
+# bo'lsa, skript "hammasi joyida" deb noto'g'ri xulosa chiqarib,
+# xizmatni HECH QACHON qayta o'rnatmay qo'yardi. Shuning uchun
+# xizmatning HAQIQATAN mavjudligini ham tekshiramiz.
+$serviceExists = $null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
+
+if ($installedVersion -eq $availableVersion -and $serviceExists) {
+    Write-DeployLog "Agent allaqachon eng so'nggi versiyada ($installedVersion) va xizmat mavjud - hech narsa qilinmadi."
     exit 0
+}
+
+if ($installedVersion -eq $availableVersion -and -not $serviceExists) {
+    Write-DeployLog "OGOHLANTIRISH: versiya bir xil ($installedVersion), lekin XIZMAT MAVJUD EMAS (o'chirilgan yoki hech qachon muvaffaqiyatli o'rnatilmagan) - qayta o'rnatilmoqda."
 }
 
 Write-DeployLog "Yangilanish kerak: o'rnatilgan='$installedVersion' -> mavjud='$availableVersion'. O'rnatish boshlanmoqda..."

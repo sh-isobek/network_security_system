@@ -3465,6 +3465,49 @@ def _test_gpo_script_no_direct_userdnsdomain_in_param():
 check("GPO Deploy skripti: USERDNSDOMAIN SYSTEM kontekstida ishonchsizligi tuzatilgan", _test_gpo_script_no_direct_userdnsdomain_in_param)
 
 # ---------------------------------------------------------------------------
+print("\n=== 51) GPO Deploy skripti: idempotentlik faqat VERSION emas, xizmat mavjudligini ham tekshiradi (real production xatosi) ===")
+
+
+def _test_gpo_script_checks_service_existence():
+    """
+    Real production'da topilgan xato: skript faqat VERSION faylini
+    solishtirar edi. Agar xizmat biror sababdan (masalan qo'lda
+    'NetworkSecurityAgent.exe remove' orqali, yoki muvaffaqiyatsiz
+    avvalgi urinishdan keyin) o'chirilgan bo'lsa-yu, VERSION fayli
+    InstallDir'da qolib ketgan bo'lsa - skript "hammasi joyida" deb
+    noto'g'ri xulosa chiqarib, xizmatni HECH QACHON qayta o'rnatmay
+    qo'yardi (foydalanuvchining haqiqiy deploy.log'ida "Agent
+    allaqachon eng so'nggi versiyada - hech narsa qilinmadi" ko'rinib,
+    lekin Get-Service xizmat topilmasligini ko'rsatgan holat orqali
+    tasdiqlangan).
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert "$serviceExists" in content, (
+        "Skript xizmat mavjudligini ($serviceExists) tekshirmayapti - "
+        "faqat VERSION solishtirish yetarli emas (real production xatosi)"
+    )
+    assert "-and $serviceExists" in content, (
+        "Idempotentlik shartida 'versiya bir xil VA xizmat mavjud' ikkalasi "
+        "ham tekshirilishi kerak, faqat versiya emas"
+    )
+
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c), (
+            f"Qavslar balansi buzilgan: {open_c}={code_content.count(open_c)}, {close_c}={code_content.count(close_c)}"
+        )
+
+
+check("GPO Deploy skripti: idempotentlik xizmat mavjudligini ham tekshiradi (real production xatosi tuzatilgan)", _test_gpo_script_checks_service_existence)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

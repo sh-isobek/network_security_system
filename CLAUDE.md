@@ -90,7 +90,41 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 50/50 test o'tadi (`run_full_test.py`).**
+**Joriy: 51/51 test o'tadi (`run_full_test.py`).**
+
+## TO'QQIZINCHI marta topilgan xato: idempotentlik faqat VERSION solishtirar edi, xizmat mavjudligini tekshirmasdi
+
+`USERDNSDOMAIN` xatosini tuzatgandan va Security Filtering muammosini
+hal qilgandan keyin ham, foydalanuvchi qayta yoqilgandan keyin
+`deploy.log`da **"Agent allaqachon eng so'nggi versiyada - hech
+narsa qilinmadi"** ko'rdi, lekin `Get-Service` xizmat **umuman
+mavjud emasligini** ko'rsatdi.
+
+**ILDIZ SABAB**: avvalgi tuzatish jarayonida foydalanuvchiga
+`NetworkSecurityAgent.exe remove` buyrug'ini bergandim (eski,
+buzilgan xizmatni tozalash uchun) - bu buyruq **faqat Windows
+Service ro'yxatidan o'chiradi**, `VERSION` faylini (va boshqa
+fayllarni) **o'chirmaydi**. Natijada: `$InstallDir\VERSION` hali
+ham "1.0.0" deb turardi, SYSVOL'dagi VERSION ham "1.0.0" - skript
+"versiyalar bir xil, demak hammasi joyida" deb xulosa chiqarib,
+xizmatni HECH QACHON qayta o'rnatmasdi - garchi xizmat aslida
+**mavjud bo'lmasa ham**.
+
+**Tuzatish**: idempotentlik tekshiruviga endi **xizmat haqiqatan
+mavjudligi** (`Get-Service`) ham qo'shildi - faqat versiya bir xil
+BO'LISHI YETARLI EMAS, xizmat ham aynan mavjud bo'lishi kerak. Agar
+versiya bir xil, lekin xizmat yo'q bo'lsa, skript buni aniq
+ogohlantirib, qayta o'rnatishni davom ettiradi.
+
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi.
+
+**TO'QQIZINCHI MARTA TASDIQLANGAN SABOQ**: bu safar xato mening
+o'zimning **oldingi tuzatish tavsiyam** (`remove` buyrug'i)ning
+kutilmagan yon ta'siridan kelib chiqdi - bu shuni ko'rsatadiki, hatto
+"vaqtinchalik" deb o'ylangan qo'lda buyruqlar ham keyingi avtomatik
+mantiqqa ta'sir qilishi mumkin, va bunday holatlar faqat **haqiqiy,
+ketma-ket, ko'p bosqichli production sinovi** orqaligina ochilib
+qoladi.
 
 ## SAKKIZINCHI marta topilgan xato: GPO skriptida $env:USERDNSDOMAIN SYSTEM kontekstida ishonchsiz
 
