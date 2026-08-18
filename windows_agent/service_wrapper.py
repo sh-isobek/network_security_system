@@ -59,6 +59,15 @@ class EndpointAgentService(win32serviceutil.ServiceFramework):
             servicemanager.PYS_SERVICE_STARTED,
             (self._svc_name_, ""),
         )
+        # MUHIM (real production'da aniqlangan tub sabab): Windows Service
+        # Control Manager (SCM) xizmatni ishga tushirgandan keyin 30 soniya
+        # ichida ANIQ "men ishlayapman" (SERVICE_RUNNING) signalini kutadi.
+        # Bu chaqiruv YETISHMAGAN edi - shuning uchun SCM har doim
+        # "The service did not respond to the start or control request in
+        # a timely fashion" (30000 ms) xatosi bilan xizmatni majburan
+        # o'chirar edi, garchi pastdagi kod o'zi to'g'ri ishlagan bo'lsa ham.
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+
         self.agent = EndpointAgent(_default_watch_dirs())
         self.agent.monitor.start()
         win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)

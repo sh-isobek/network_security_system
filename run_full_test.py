@@ -3590,6 +3590,52 @@ def _test_agent_log_file_absolute_path():
 check("Agent log fayli: mutlaq yo'l (Windows Service LocalSystem qulash muammosi tuzatilgan)", _test_agent_log_file_absolute_path)
 
 # ---------------------------------------------------------------------------
+print("\n=== 54) service_wrapper.py: ReportServiceStatus(SERVICE_RUNNING) yetishmasligi tuzatilgan (real production TUB SABAB) ===")
+
+
+def _test_service_wrapper_reports_running_status():
+    """
+    Real production'da topilgan TUB SABAB: SvcDoRun() metodida
+    `self.ReportServiceStatus(win32service.SERVICE_RUNNING)` chaqiruvi
+    umuman yo'q edi. Windows Service Control Manager (SCM) xizmatni
+    ishga tushirgandan keyin 30 soniya ichida aniq "men ishlayapman"
+    signalini kutadi - bu signal yo'qligi sabab SCM har doim "The
+    service did not respond to the start or control request in a
+    timely fashion" (Timeout 30000 ms) xatosi bilan xizmatni majburan
+    o'chirar edi (Windows System Event Log orqali tasdiqlangan) -
+    garchi pastdagi Python kodi (EndpointAgent, FileMonitor) o'zi
+    to'g'ri ishlagan bo'lsa ham (debug rejimida sinovdan o'tgan).
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "windows_agent", "service_wrapper.py",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert "ReportServiceStatus(win32service.SERVICE_RUNNING)" in content, (
+        "SvcDoRun() SCM'ga SERVICE_RUNNING holatini ANIQ xabar qilishi SHART - "
+        "aks holda SCM 30 soniyadan keyin xizmatni majburan o'chiradi "
+        "(real production'da Windows Event Log orqali tasdiqlangan xato)"
+    )
+
+    # ReportServiceStatus SvcDoRun ichida, EndpointAgent yaratilishidan
+    # OLDIN chaqirilishini tasdiqlash (SCM'ga imkon qadar tezroq signal
+    # berish uchun - agent ishga tushirish vaqti cho'zilib ketsa ham SCM
+    # allaqachon "running" deb bilib turadi)
+    svc_do_run_start = content.find("def SvcDoRun")
+    report_running_pos = content.find("ReportServiceStatus(win32service.SERVICE_RUNNING)", svc_do_run_start)
+    agent_creation_pos = content.find("EndpointAgent(", svc_do_run_start)
+    assert report_running_pos != -1 and agent_creation_pos != -1
+    assert report_running_pos < agent_creation_pos, (
+        "ReportServiceStatus(SERVICE_RUNNING) EndpointAgent yaratilishidan OLDIN "
+        "chaqirilishi kerak - SCM'ga imkon qadar tezroq signal berish uchun"
+    )
+
+
+check("service_wrapper.py: SCM'ga SERVICE_RUNNING signali (30s timeout TUB SABABI tuzatilgan)", _test_service_wrapper_reports_running_status)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

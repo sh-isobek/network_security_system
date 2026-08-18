@@ -90,7 +90,51 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 53/53 test o'tadi (`run_full_test.py`).**
+**Joriy: 54/54 test o'tadi (`run_full_test.py`).**
+
+## O'N IKKINCHI marta topilgan xato: HAQIQIY TUB SABAB - ReportServiceStatus(SERVICE_RUNNING) yetishmagan edi
+
+Log fayl yo'li tuzatilgandan keyin ham (VERSION solishtiruvi endi
+to'g'ri ishladi - "1.0.0 -> 1.0.1", bu oldingi tuzatish ishlaganini
+tasdiqladi), xizmat hali ham **"Cannot start service"** bilan
+qulardi. Windows System Event Log'ning o'zidan (Service Control
+Manager provayderi) **aniq matn** olindi:
+
+```
+The service did not respond to the start or control request in a
+timely fashion.
+Timeout (30000 ms) waiting for service connection.
+```
+
+**HAQIQIY TUB SABAB**: `windows_agent/service_wrapper.py`ning
+`SvcDoRun()` metodida `self.ReportServiceStatus(win32service.
+SERVICE_RUNNING)` chaqiruvi **umuman yo'q edi**! Bu - Windows Service
+Control Manager'ga "men muvaffaqiyatli ishga tushdim, ishlayapman"
+deb ANIQ signal beruvchi MAJBURIY chaqiruv - `win32serviceutil.
+ServiceFramework` bazaviy sinfi buni **avtomatik qilmaydi**, har bir
+xizmat o'zi `SvcDoRun()` ichida chaqirishi SHART. Bu signal
+yo'qligi sabab SCM har doim 30 soniyadan keyin xizmatni majburan
+o'chirar edi - garchi pastdagi Python kodi (`EndpointAgent`,
+`FileMonitor`) o'zi to'g'ri ishlagan bo'lsa ham (bu aynan nima uchun
+`debug` rejimida - bu maxsus, SCM'ning 30 soniyalik talabini chetlab
+o'tadigan rejim - mukammal ishlaganini tushuntiradi).
+
+**Tuzatish**: `ReportServiceStatus(win32service.SERVICE_RUNNING)`
+`SvcDoRun()`ning boshida, `EndpointAgent` yaratilishidan OLDIN
+qo'shildi - SCM'ga imkon qadar tezroq signal berish uchun.
+
+`run_full_test.py`ga doimiy regressiya himoyasi qo'shildi (chaqiruv
+mavjudligini VA to'g'ri tartibda - agent yaratilishidan oldin -
+ekanligini tekshiradi). VERSION 1.0.1 -> 1.0.2.
+
+**O'N IKKINCHI MARTA TASDIQLANGAN SABOQ**: bu - eng uzoq, eng
+qiyin diagnostika zanjiri edi (12 marta ketma-ket tuzatish). Haqiqiy
+tub sabab faqat **Windows System Event Log'ning o'z, aniq matnli**
+xabarini (SCM provayderi orqali) olib, uni pywin32'ning umumiy
+xizmat freymvork talablari bilan solishtirib ko'rgandan keyin
+topildi - bu shuni ko'rsatadiki, ba'zan eng foydali diagnostika
+vositasi ilova logining o'zi emas, balki operatsion tizimning o'z
+tizim logidir.
 
 ## O'N BIRINCHI marta topilgan xato: TUB SABAB - log fayli nisbiy yo'l, LocalSystem ish katalogi muammosi
 
