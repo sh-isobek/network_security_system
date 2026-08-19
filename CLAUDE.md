@@ -90,7 +90,51 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 62/62 test o'tadi (`run_full_test.py`).**
+**Joriy: 63/63 test o'tadi (`run_full_test.py`).**
+
+## O'N BESHINCHI marta topilgan xato: _windows_watch_dirs() Downloads papkasini jim ravishda o'tkazib yuborgan
+
+Proksi tuzatishi (1.0.5) deploy qilingandan keyin, xizmat `1.0.4 ->
+1.0.5` to'g'ri yangilangan bo'lsa-yu, agent qayta yoqilgandan so'ng
+**faqat** `C:\WINDOWS\TEMP` va `C:\WINDOWS\Temp`ni kuzatgan -
+foydalanuvchining `Downloads` papkasi butunlay ro'yxatdan tashqarida
+qolgan, hech qanday xato yoki ogohlantirish log qilinmagan edi.
+
+**ILDIZ SABAB (ehtimoliy)**: bu - loyihada bir necha marta uchragan
+xato turkumi bilan bir xil: `os.environ.get("SystemDrive", "C:")`
+faqat `SystemDrive` **umuman mavjud bo'lmasa** standart qiymatni
+qo'llaydi - agar u **bo'sh qator** sifatida mavjud bo'lsa (LocalSystem
+kontekstida bu ehtimol), standart qiymat qo'llanilmay,
+`os.path.join("", "Users")` **nisbiy** `"Users"` yo'liga aylanadi -
+bu esa xizmat ish katalogiga (odatda `C:\Windows\System32`) nisbatan
+qidiriladi va **hech qachon topilmaydi**, hech qanday xato ham
+bermaydi (`os.path.isdir()` xatoni yutib, jim `False` qaytaradi).
+
+**Tuzatish**:
+1. `_windows_watch_dirs()`ga **to'liq diagnostika loglari** qo'shildi
+   - endi har bir profil (`topildi`/`topilmadi`/`kirish yo'q`) va
+   yakuniy kuzatiladigan papkalar ro'yxati aniq log qilinadi - bu
+   kelajakda shunga o'xshash muammolarni bir zumda aniqlash imkonini
+   beradi.
+2. `SystemDrive`ga tayanish o'rniga, avval **standart, deyarli
+   universal `C:\Users`** yo'li sinaladi (fallback zanjiri) - bu
+   `SystemDrive` noto'g'ri/bo'sh bo'lgan taqdirda ham ishlaydi.
+
+**Real test qilingan**: Linux'da `C:\Users`ga o'xshash haqiqiy papka
+strukturasi yaratilib, `SystemDrive`ning **ataylab noto'g'ri**
+qiymati bilan - fallback mexanizmi to'g'ri ishlab, foydalanuvchi
+profilini (Downloads/Desktop) topganini, tizim profillarini
+(`Public`/`Default`) to'g'ri o'tkazib yuborganini tasdiqladi.
+
+VERSION 1.0.5 -> 1.0.6.
+
+**O'N BESHINCHI MARTA TASDIQLANGAN SABOQ**: bu - avvalgi (proksi)
+tuzatishdan **mustaqil, alohida** xato edi - ikkalasi bir vaqtda,
+bitta amaliy sinovda ochilib qoldi. Bu shuni ko'rsatadiki, murakkab
+tizimlarda bir nechta mustaqil muammo **bir vaqtda** mavjud
+bo'lishi mumkin, va har birini alohida, aniq diagnostika orqali
+tasdiqlash zarur - "bitta tuzatish barcha muammoni hal qildi" degan
+xulosaga shoshilinch kelmaslik kerak.
 
 ## O'N TO'RTINCHI marta topilgan xato: LocalSystem tizim proksi sozlamalari
 

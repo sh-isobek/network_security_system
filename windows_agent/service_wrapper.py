@@ -39,26 +39,73 @@ SERVICE_NAME = "NetworkSecurityEndpointAgent"
 def _windows_watch_dirs():
     """Enumerate real Windows user profiles plus system temp directories."""
     result = []
-    users_root = os.path.join(os.environ.get("SystemDrive", "C:"), "Users")
 
-    if os.path.isdir(users_root):
-        for username in os.listdir(users_root):
+    # MUHIM (real production'da aniqlangan xato turkumi - bu loyihada
+    # bir necha marta uchragan): agar `SystemDrive` muhit o'zgaruvchisi
+    # LocalSystem kontekstida kutilganidek o'rnatilmagan bo'lsa (bo'sh
+    # qator sifatida, "topilmadi" emas - shuning uchun os.environ.get()
+    # standart qiymatni QO'LLAMAYDI), `os.path.join("", "Users")`
+    # nisbiy "Users" yo'liga aylanadi - bu esa xizmat ish katalogiga
+    # (odatda C:\Windows\System32) nisbatan qidiriladi va HECH QACHON
+    # topilmaydi, hech qanday xato ham bermaydi. Shuning uchun
+    # `SystemDrive`ga tayanish o'rniga, avval standart, deyarli
+    # universal `C:\Users` yo'lini sinaymiz.
+    candidates = [r"C:\Users"]
+    system_drive = os.environ.get("SystemDrive")
+    if system_drive:
+        candidates.insert(0, os.path.join(system_drive, "Users"))
+
+    users_root = None
+    for candidate in candidates:
+        logger.info(f"Foydalanuvchilar papkasini tekshirish: {candidate}")
+        if os.path.isdir(candidate):
+            users_root = candidate
+            break
+
+    if users_root is None:
+        logger.warning(f"Hech qanday foydalanuvchilar papkasi topilmadi (sinalgan: {candidates})")
+    else:
+        try:
+            usernames = os.listdir(users_root)
+        except OSError as exc:
+            logger.warning(f"{users_root} ro'yxatini o'qib bo'lmadi: {exc}")
+            usernames = []
+
+        logger.info(f"Topilgan profil papkalari ({len(usernames)}): {usernames}")
+
+        for username in usernames:
             profile = os.path.join(users_root, username)
-            if not os.path.isdir(profile):
-                continue
-            # Ignore system profiles that are not useful for endpoint file monitoring.
-            if username.lower() in {"default", "default user", "public", "all users"}:
-                continue
-            for folder in ("Downloads", "Desktop"):
-                path = os.path.join(profile, folder)
-                if os.path.isdir(path):
-                    result.append(path)
+            try:
+                if not os.path.isdir(profile):
+                    continue
+                if username.lower() in {"default", "default user", "public", "all users"}:
+                    logger.debug(f"O'tkazib yuborildi (tizim profili): {username}")
+                    continue
 
-            outlook = os.path.join(
-                profile, "AppData", "Local", "Microsoft", "Outlook"
-            )
-            if os.path.isdir(outlook):
-                result.append(outlook)
+                found_any = False
+                for folder in ("Downloads", "Desktop"):
+                    path = os.path.join(profile, folder)
+                    if os.path.isdir(path):
+                        result.append(path)
+                        found_any = True
+                    else:
+                        # MUHIM: bu holat papka mavjud emasligini VA
+                        # LocalSystem kirish huquqi yo'qligini bir xil
+                        # ko'rsatadi (os.path.isdir xato bermay False
+                        # qaytaradi) - shuning uchun aniq ogohlantiramiz.
+                        logger.debug(f"Topilmadi/kirish yo'q: {path}")
+
+                outlook = os.path.join(profile, "AppData", "Local", "Microsoft", "Outlook")
+                if os.path.isdir(outlook):
+                    result.append(outlook)
+                    found_any = True
+
+                if found_any:
+                    logger.info(f"Profil qo'shildi: {username}")
+                else:
+                    logger.warning(f"'{username}' profilida kuzatiladigan papka topilmadi (Downloads/Desktop yo'q yoki LocalSystem kirish huquqi cheklangan)")
+            except OSError as exc:
+                logger.warning(f"'{username}' profilini tekshirishda xatolik: {exc}")
 
     for path in (
         os.environ.get("TEMP", r"C:\Windows\Temp"),
@@ -68,7 +115,9 @@ def _windows_watch_dirs():
             result.append(path)
 
     # Preserve order and remove duplicates.
-    return list(dict.fromkeys(result))
+    final = list(dict.fromkeys(result))
+    logger.info(f"Yakuniy kuzatiladigan papkalar ro'yxati ({len(final)}): {final}")
+    return final
 
 
 class EndpointAgentService(win32serviceutil.ServiceFramework):

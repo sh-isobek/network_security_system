@@ -4173,6 +4173,49 @@ def _test_agent_bypasses_system_proxy():
 check("Windows Agent tizim proksi sozlamalaridan mustaqil (real 'Isobek' xatosi tuzatilgan)", _test_agent_bypasses_system_proxy)
 
 # ---------------------------------------------------------------------------
+print("\n=== 63) Windows Agent: _windows_watch_dirs() diagnostika loglari va SystemDrive fallback (real 'Isobek' xatosi) ===")
+
+
+def _test_windows_watch_dirs_diagnostics_and_fallback():
+    """
+    Real production'da topilgan xato: agent qayta yoqilgandan keyin
+    faqat C:\\WINDOWS\\TEMP va C:\\WINDOWS\\Temp'ni kuzatgan, foydalanuvchi
+    Downloads papkasi butunlay tashlab ketilgan - hech qanday xato
+    yoki ogohlantirish log qilinmagan.
+
+    Tuzatish: (1) har bir profil tekshiruvi endi aniq log qilinadi
+    (topildi/topilmadi/xato), (2) SystemDrive muhit o'zgaruvchisi
+    kutilganidek ishlamasa (masalan bo'sh qator bo'lsa, natijada
+    nisbiy "Users" yo'liga aylanib, jim ravishda hech narsa
+    topilmasligi mumkin edi), standart C:\\Users yo'liga zaxira
+    (fallback) qo'shildi.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "windows_agent", "service_wrapper.py",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert 'candidates = [r"C:\\Users"]' in content, (
+        "SystemDrive muhit o'zgaruvchisi ishonchsiz bo'lganda standart "
+        "C:\\Users yo'liga zaxira (fallback) qo'shilishi kerak"
+    )
+    assert "logger.info" in content and "Yakuniy kuzatiladigan papkalar" in content, (
+        "_windows_watch_dirs() endi aniq diagnostika loglari yozishi kerak - "
+        "aks holda 'Downloads topilmadi' kabi muammolar jim qolib ketadi"
+    )
+    assert "logger.warning" in content and "kirish huquqi cheklangan" in content, (
+        "Profilga kirish huquqi bo'lmagan holat aniq ogohlantirilishi kerak"
+    )
+
+    import ast
+    ast.parse(content)
+
+
+check("Windows Agent: _windows_watch_dirs() diagnostika + SystemDrive fallback (real 'Isobek' xatosi)", _test_windows_watch_dirs_diagnostics_and_fallback)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
