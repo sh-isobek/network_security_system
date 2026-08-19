@@ -90,7 +90,57 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 61/61 test o'tadi (`run_full_test.py`).**
+**Joriy: 62/62 test o'tadi (`run_full_test.py`).**
+
+## O'N TO'RTINCHI marta topilgan xato: LocalSystem tizim proksi sozlamalari
+
+Xizmat `Running` holatida, `--startup auto` ishlagan, VERSION solishtiruvi
+to'g'ri ishlagan bo'lsa-yu - foydalanuvchi "Isobek"da agent hech qanday
+faylni serverga yubora olmasligini xabar qildi. Agent logida **har
+bir** so'rov `ConnectionResetError (10054)` bilan muvaffaqiyatsiz
+bo'lgan.
+
+**Hal qiluvchi dalil**: xuddi shu tarmoq, xuddi shu API kaliti bilan
+foydalanuvchining **shaxsiy hisobi** orqali (`Invoke-WebRequest`)
+serverga **muvaffaqiyatli** ulandi - faqat xizmat (**LocalSystem**)
+har doim muvaffaqiyatsiz bo'lardi.
+
+**ILDIZ SABAB**: Python `requests` kutubxonasi standart holatda
+**muhit/tizim darajasidagi proksi sozlamalarini** (masalan Group
+Policy orqali o'rnatilgan yoki noto'g'ri sozlangan WinHTTP proksi)
+hurmat qiladi. LocalSystem hisobi bunday tizim darajasidagi
+sozlamalarni meros qilib oladi, interaktiv foydalanuvchi sessiyasi
+esa (turli sabablarga ko'ra - foydalanuvchi darajasidagi sozlama,
+yoki umuman proksisiz) muvaffaqiyatli ulanardi.
+
+**Qo'shimcha kuzatuv**: `send_heartbeat()` xuddi shu zaif naqshga
+ega edi, lekin uning xatosi faqat `debug` darajasida yozilardi
+(standart `INFO` darajasida ko'rinmasdi) - bu "agent ulandi" degan
+noto'g'ri taassurot qoldirgan bo'lishi mumkin, aslida heartbeat ham
+hech qachon muvaffaqiyatli bo'lmagan bo'lishi mumkin edi.
+
+**Tuzatish**: `agent_core/agent.py`dagi barcha 3 ta `requests.post()`
+chaqiruviga (`check_hash`, `report_incident`, `send_heartbeat`) aniq
+`proxies={"http": None, "https": None}` qo'shildi - bizning ichki
+server bilan aloqa hech qachon tashqi proksiga muhtoj emas, shuning
+uchun uni butunlay o'chirib qo'yish xavfsiz va to'g'ri.
+
+**Real test qilingan**: real API server ishga tushirilib, **ataylab
+noto'g'ri, mavjud bo'lmagan proksi** (`HTTP_PROXY`/`HTTPS_PROXY`
+muhit o'zgaruvchilari) o'rnatilgan holda - tuzatishsiz `requests.post()`
+chaqiruvi **`ProxyError`** bilan muvaffaqiyatsiz bo'lishi, tuzatilgan
+(`proxies=None`) chaqiruv esa **muvaffaqiyatli** o'tishi taqqoslab
+tasdiqlandi. Bu aynan "Isobek"dagi xatoni takrorlaydi va tuzatishni
+tasdiqlaydi.
+
+VERSION 1.0.4 -> 1.0.5.
+
+**O'N TO'RTINCHI MARTA TASDIQLANGAN SABOQ**: bu xato **faqat**
+foydalanuvchining "shaxsiy hisobim bilan sinab ko'raymi" degan oddiy
+taklifi orqali ochilib qoldi - ikkala kontekst (LocalSystem va
+interaktiv foydalanuvchi) orasidagi solishtiruv, aynan Windows
+xizmatlarini ishlab chiqishning yana bir klassik, chuqur yashiringan
+tuzog'ini fosh qildi.
 
 ## CI'da topilgan qo'shimcha real xato: karantin papkasi root-huquqsiz ishlamasdi
 

@@ -157,6 +157,19 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict) -> dict:
             json={"sha256": sha256},
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
+            # MUHIM (real production'da aniqlangan xato): LocalSystem
+            # (Windows Service) hisobi ostida ishlaganda, `requests`
+            # standart holatda MUHIT/tizim darajasidagi proksi
+            # sozlamalarini (masalan Group Policy orqali o'rnatilgan
+            # WinHTTP proksi) hurmat qiladi. Agar bunday proksi
+            # noto'g'ri sozlangan/ishlamasa, HAR BIR so'rov
+            # ConnectionResetError bilan muvaffaqiyatsiz bo'lardi -
+            # garchi interaktiv foydalanuvchi sessiyasida (boshqa
+            # proksi/hech qanday proksi bilan) bir xil server
+            # muvaffaqiyatli javob bergan bo'lsa ham. Bizning ichki
+            # server manzilimiz uchun proksi HECH QACHON kerak emas -
+            # shuning uchun uni aniq o'chirib qo'yamiz.
+            proxies={"http": None, "https": None},
         )
         if resp.status_code == 200:
             result = resp.json()
@@ -192,6 +205,7 @@ def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
             json=payload,
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
+            proxies={"http": None, "https": None},
         )
         if resp.status_code == 200:
             logger.info(f"Markazga xabar berildi: {resp.json()}")
@@ -223,6 +237,7 @@ def send_heartbeat(hostname: str, ip_address: str) -> bool:
             json=payload,
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
+            proxies={"http": None, "https": None},
         )
         return resp.status_code == 200
     except requests.RequestException as exc:

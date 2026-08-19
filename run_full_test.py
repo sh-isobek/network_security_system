@@ -4104,6 +4104,75 @@ def _test_deep_scan_real_quarantine():
 check("Deep Scan Engine: real EICAR fayl bilan to'liq karantin zanjiri", _test_deep_scan_real_quarantine)
 
 # ---------------------------------------------------------------------------
+print("\n=== 62) Windows Agent: tizim proksi sozlamalaridan mustaqil ulanish (real production xatosi) ===")
+
+
+def _test_agent_bypasses_system_proxy():
+    """
+    Real production'da topilgan xato: "Isobek" kompyuterida agent
+    (LocalSystem hisobi) HAR BIR so'rovda ConnectionResetError bilan
+    muvaffaqiyatsiz bo'lardi, garchi interaktiv foydalanuvchi
+    sessiyasidan (Invoke-WebRequest) aynan bir xil serverga
+    muvaffaqiyatli ulanish mumkin bo'lsa ham. Sabab: LocalSystem
+    muhit/tizim darajasidagi proksi sozlamalarini (masalan noto'g'ri
+    sozlangan WinHTTP proksi) hurmat qiladi, requests kutubxonasi esa
+    standart holatda shu proksini ishlatishga urinadi.
+
+    Tuzatish: barcha ichki API chaqiruvlariga aniq `proxies={"http":
+    None, "https": None}` qo'shildi - bizning server bilan aloqa
+    hech qachon tashqi proksiga muhtoj emas.
+    """
+    import subprocess
+    import time as _time
+
+    api_env = {**os.environ, "AGENT_API_KEY": "ci-proxy-test-key"}
+    api_proc = subprocess.Popen(["python3", "-m", "api.server"], env=api_env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        _time.sleep(2)
+
+        # Mavjud bo'lmagan, xato beruvchi proksi - real "Isobek" holatini simulyatsiya qiladi
+        os.environ["HTTP_PROXY"] = "http://127.0.0.1:19998"
+        os.environ["HTTPS_PROXY"] = "http://127.0.0.1:19998"
+        os.environ["API_SERVER_URL"] = "http://127.0.0.1:8443"
+        os.environ["AGENT_API_KEY"] = "ci-proxy-test-key"
+
+        import importlib
+        import agent_core.agent as agent_mod
+        importlib.reload(agent_mod)
+
+        result = agent_mod.check_hash_with_server_or_cache("b" * 64, {})
+        assert result["source"] != "no_data_offline", (
+            "Agent noto'g'ri tizim proksisi bilan ulanib bo'lmadi - "
+            "bu real production'da 'Isobek' kompyuterida uchragan xato "
+            "(ConnectionResetError) bilan bir xil turkum"
+        )
+
+        # Kod darajasida ham aniq tekshiramiz: barcha requests.post
+        # chaqiruvlarida proxies= parametri borligini
+        agent_source = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "agent_core", "agent.py",
+        )
+        with open(agent_source) as f:
+            content = f.read()
+        assert content.count('proxies={"http": None, "https": None}') >= 3, (
+            "check_hash, report_incident, send_heartbeat - uchalasida ham "
+            "proxies=None aniq belgilangan bo'lishi kerak"
+        )
+
+    finally:
+        api_proc.terminate()
+        try:
+            api_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            api_proc.kill()
+        for k in ["HTTP_PROXY", "HTTPS_PROXY", "API_SERVER_URL", "AGENT_API_KEY"]:
+            os.environ.pop(k, None)
+
+
+check("Windows Agent tizim proksi sozlamalaridan mustaqil (real 'Isobek' xatosi tuzatilgan)", _test_agent_bypasses_system_proxy)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

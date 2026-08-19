@@ -15,8 +15,6 @@ from ldap3 import Server, Connection, ALL, SIMPLE
 
 logger = logging.getLogger("ad_discovery")
 
-logger = logging.getLogger("ad_discovery")
-
 
 @dataclass
 class AdComputer:
