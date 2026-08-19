@@ -159,7 +159,7 @@ pyinstaller windows_agent\build\NetworkSecurityAgent.spec
       NetworkSecurityAgent.exe   ──►   Kompyuter yoqiladi
       VERSION                            │
       api_key.secret                     ▼
-                                    GPO Startup Script ishga tushadi
+      api_server_url.txt          GPO Startup Script ishga tushadi
                                     (SYSTEM huquqi bilan, login'dan oldin)
                                           │
                                     Versiya solishtiradi:
@@ -172,6 +172,14 @@ pyinstaller windows_agent\build\NetworkSecurityAgent.spec
                                              buyrug'i orqali
                                              o'rnatadi/yangilaydi
 ```
+
+**MUHIM (versiya yangilanishida qayta sozlash shart emas)**: `api_key.secret`
+va `api_server_url.txt` — ikkalasi ham SYSVOL'da **alohida, doimiy**
+fayllar. Siz ularni **FAQAT BIR MARTA** yaratasiz — `NetworkSecurityAgent.exe`
+va `Deploy-NetworkSecurityAgent.ps1` qancha marta yangilansa ham (masalan
+`docs`dagi keyingi tuzatishlar orqali), bu ikkala faylga **hech qachon
+tegilmaydi**. Deploy skripti har doim ularni SYSVOL'dan o'qiydi va
+skriptning o'z ichidagi standart qiymatlardan **ustun** qo'yadi.
 
 ### 5.3. Sozlash qadamlari
 
@@ -188,13 +196,20 @@ Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\VERSION" -Destination $
 # API kalitini alohida faylga (bu fayl uchun ACL orqali faqat
 # "Domain Computers" guruhiga O'QISH huquqini bering, boshqa hech kimga)
 Set-Content -Path "$SysvolPath\api_key.secret" -Value "<markazdagi AGENT_API_KEY bilan bir xil>"
+
+# Server manzilini ham alohida faylga (BIR MARTA - keyingi versiya
+# yangilanishlarida bu faylga tegilmaydi, qayta yozish shart emas)
+Set-Content -Path "$SysvolPath\api_server_url.txt" -Value "http://<Ubuntu-server-IP>:8443"
 ```
 
 **Yangilanish chiqarganda** (masalan versiya 1.1.0): yangi `.exe`ni
 yuklab oling, `$SysvolPath`dagi eskisini almashtiring, va
 `VERSION` faylini yangi raqamga o'zgartiring - GPO Startup Script
 bu farqni avtomatik payqab, barcha kompyuterlarni keyingi
-reboot'da yangilaydi.
+reboot'da yangilaydi. **`api_key.secret` va `api_server_url.txt`
+fayllariga tegishning HOJATI YO'Q** - ular alohida, doimiy
+konfiguratsiya, `.exe`/`Deploy-NetworkSecurityAgent.ps1` versiyasidan
+mustaqil.
 
 **b) Deploy skriptini SYSVOL'ga qo'yish**:
 

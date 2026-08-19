@@ -4216,6 +4216,47 @@ def _test_windows_watch_dirs_diagnostics_and_fallback():
 check("Windows Agent: _windows_watch_dirs() diagnostika + SystemDrive fallback (real 'Isobek' xatosi)", _test_windows_watch_dirs_diagnostics_and_fallback)
 
 # ---------------------------------------------------------------------------
+print("\n=== 65) Deploy skripti: API_SERVER_URL SYSVOL faylidan (versiya yangilanishida qayta sozlash shart emas) ===")
+
+
+def _test_deploy_script_reads_api_server_url_from_file():
+    """
+    Foydalanuvchi so'rovi: har safar yangi Deploy-NetworkSecurityAgent.ps1
+    versiyasini GitHub'dan yuklab olganda, API_SERVER_URL'ni qo'lda
+    qayta sozlashi shart bo'lmasligi kerak. AGENT_API_KEY allaqachon
+    alohida SYSVOL faylidan (api_key.secret) o'qilardi - endi
+    API_SERVER_URL ham xuddi shu naqsh bilan (api_server_url.txt)
+    ishlaydi.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert 'api_server_url.txt' in content, (
+        "Deploy skripti API_SERVER_URL'ni alohida SYSVOL faylidan "
+        "o'qishi kerak - versiya yangilanganda qayta sozlash shart bo'lmasligi uchun"
+    )
+    # Fayl AGENT_API_KEY o'rnatilishidan OLDIN o'qilishi kerak (mantiqiy tartib)
+    server_url_pos = content.find("api_server_url.txt")
+    api_key_pos = content.find("api_key.secret")
+    assert server_url_pos != -1 and api_key_pos != -1
+    assert server_url_pos < api_key_pos, (
+        "API_SERVER_URL SYSVOL faylini o'qish AGENT_API_KEY'dan OLDIN bo'lishi kerak"
+    )
+
+    # Qavslar balansini qayta tasdiqlash
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c)
+
+
+check("Deploy skripti: API_SERVER_URL SYSVOL faylidan o'qiladi (versiya yangilanishida qayta sozlash shart emas)", _test_deploy_script_reads_api_server_url_from_file)
+
+# ---------------------------------------------------------------------------
 print("\n=== 64) Windows Agent: service_wrapper.py haqiqatan import va ishga tushirilganda xato bermasligi (CI'da topilgan REGRESSIYA) ===")
 
 

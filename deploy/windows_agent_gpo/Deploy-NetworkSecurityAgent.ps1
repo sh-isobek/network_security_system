@@ -154,6 +154,28 @@ try {
 # tushirilganda avtomatik meros olinadi - alohida reboot shart emas,
 # lekin xizmatni QAYTA ishga tushirish kerak (buni pastda 6-bosqichda
 # qilamiz).
+#
+# MUHIM (foydalanuvchi so'rovi bilan qo'shildi): $ApiServerUrl
+# parametrining standart qiymati - bu shunchaki UMUMIY SHABLON
+# (masalan "http://172.16.0.5:8443"), haqiqiy server manzili emas.
+# Avvalgi versiyada foydalanuvchi HAR SAFAR yangi skript versiyasini
+# GitHub'dan yuklab olganda, bu qiymatni QO'LDA o'z haqiqiy server
+# manziliga o'zgartirishi kerak edi. Endi bu - AGENT_API_KEY bilan
+# BIR XIL naqsh orqali hal qilingan: agar SYSVOL'da alohida
+# `api_server_url.txt` fayli mavjud bo'lsa, o'sha qiymat ishlatiladi
+# (skript parametridan USTUN turadi) - bu faylni FAQAT BIR MARTA
+# yaratasiz, undan keyin skript qancha marta yangilansa ham unga
+# tegilmaydi.
+$serverUrlFile = Join-Path $ServerShare "api_server_url.txt"
+if (Test-Path $serverUrlFile) {
+    $configuredUrl = (Get-Content $serverUrlFile -Raw).Trim()
+    if ($configuredUrl) {
+        $ApiServerUrl = $configuredUrl
+        Write-DeployLog "API_SERVER_URL 'api_server_url.txt' faylidan o'qildi: $ApiServerUrl"
+    }
+} else {
+    Write-DeployLog "OGOHLANTIRISH: api_server_url.txt topilmadi - skript standart qiymati ishlatilmoqda: $ApiServerUrl"
+}
 [Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
 
 # MUHIM: AGENT_API_KEY qiymati bu skriptda HECH QACHON qattiq

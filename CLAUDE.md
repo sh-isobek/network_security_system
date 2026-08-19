@@ -90,7 +90,40 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 64/64 test o'tadi (`run_full_test.py`).**
+**Joriy: 65/65 test o'tadi (`run_full_test.py`).**
+
+## Foydalanuvchi qulayligi: API_SERVER_URL doimiy SYSVOL faylidan
+
+Foydalanuvchi so'radi: har safar yangi `Deploy-NetworkSecurityAgent.ps1`
+versiyasini GitHub'dan yuklab olganda, `API_SERVER_URL`ni qo'lda
+qayta sozlash shart bo'lmasin.
+
+**Tasdiqlangan holat**: `AGENT_API_KEY` allaqachon to'g'ri
+arxitekturaga ega edi (alohida `api_key.secret` SYSVOL faylidan
+o'qiladi, skriptga hech qachon qattiq yozilmagan). `API_SERVER_URL`
+esa hali skriptning **parametr standart qiymati** (umumiy shablon,
+`http://172.16.0.5:8443`) sifatida qolgan edi - foydalanuvchi har
+safar yangi skript versiyasini olganda buni qo'lda o'z haqiqiy server
+manziliga (`172.16.1.206`) o'zgartirishi kerak edi.
+
+**Tuzatish**: `API_SERVER_URL` endi **`AGENT_API_KEY` bilan bir xil
+naqsh** orqali ishlaydi - agar SYSVOL'da alohida `api_server_url.txt`
+fayli mavjud bo'lsa, o'sha qiymat skript parametridan **ustun**
+qo'yiladi. Bu faylni foydalanuvchi **FAQAT BIR MARTA** yaratadi -
+undan keyin `.exe`/`Deploy-NetworkSecurityAgent.ps1` qancha marta
+yangilansa ham, bu faylga hech qachon tegilmaydi.
+
+**Real test qilingan**: Python orqali PowerShell mantig'i
+simulyatsiya qilinib, (1) fayl mavjud bo'lganda skript standart
+qiymatini to'g'ri almashtirishi, (2) fayl mavjud bo'lmaganda xatosiz
+standart qiymatga qaytishi tasdiqlandi.
+
+`docs_WINDOWS_AGENT_SETUP.md` yangilandi - yangi `api_server_url.txt`
+fayli diagramma va sozlash qadamlariga qo'shildi, "versiya
+yangilanganda bu ikkala faylga tegishning hojati yo'q" aniq
+ta'kidlandi.
+
+VERSION 1.0.7 -> 1.0.8.
 
 ## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
 
