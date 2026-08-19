@@ -90,7 +90,74 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 57/57 test o'tadi (`run_full_test.py`).**
+**Joriy: 61/61 test o'tadi (`run_full_test.py`).**
+
+## Web Activity (saytlar tarixi) + Xavfsiz Karantin integratsiyasi (ikkinchi tashqi manba zip)
+
+Foydalanuvchi yana bir marta tashqi manbadan (`network_security_system-
+web-activity-added.zip`) qo'shimcha tuzatishlar yubordi. Diqqat bilan
+`diff -rq` orqali to'liq tekshirilgach, bu zip **ikkita mustaqil,
+sifatli funksiya** olib kelganini aniqladim:
+
+### 1) Web Activity - qurilma qaysi saytga qachon kirgani
+
+- `db/models.py`: yangi `WebAccessLog` jadvali (`source_ip`, `domain`,
+  `url`, `protocol`, `status_code` va h.k.)
+- `collectors/zeek_reader.py`: yangi `process_http`/`process_ssl`
+  funksiyalari - Zeek `http.log`/`ssl.log`'dan to'liq URL (HTTP) yoki
+  TLS SNI orqali domen (HTTPS, shifrlanganligi sabab faqat domen)
+  saqlaydi.
+- `engine/parser_engine.py`: DNS so'rovlari ham `WebAccessLog`ga
+  yoziladi (Zeek yo'q tarmoqlarda ham asosiy qidiruv imkoni uchun).
+- `dashboard/`: yangi `/web-activity` sahifasi - sayt/IP/hostname/
+  protokol/sana bo'yicha filtrlash.
+- **Halol hujjatlashtirilgan cheklov** (`docs_WEB_ACTIVITY_INTEGRATION.md`):
+  "DNS so'rovi sahifa ko'rilganini KAFOLATLAMAYDI - faqat domen
+  so'ralganini bildiradi."
+
+### 2) Xavfsiz Karantin - eski `TODO` o'rniga haqiqiy ishlaydigan kod
+
+- `agent_core/quarantine.py` / `engine/quarantine.py`: fayl avval
+  karantin papkasiga NUSXALANADI, nusxa SHA256 orqali TASDIQLANADI,
+  faqat SHUNDAN KEYIN asl fayl o'chiriladi. Agar nusxa SHA256 mos
+  kelmasa, asl fayl SAQLANIB QOLADI (real test bilan tasdiqlangan
+  xavfsizlik nazorati).
+- `api/server.py` va `engine/file_analysis_engine.py`: VirusTotal
+  uchun `confirmed` chegara mantig'i - bitta dvigatel signali endi
+  avtomatik karantinga OLIB KELMAYDI (soxta-pozitiv xavfi). Kamida 3
+  dvigatel VA hisobot beruvchilarning kamida 5% signal berishi talab
+  qilinadi. Mahalliy blacklist va MalwareBazaar har doim "tasdiqlangan".
+- `engine/deep_scan_engine.py`: YARA/ClamAV signal bersa, fayl
+  HAQIQATAN xavfsiz karantinga olinadi (avvalgi "TODO: karantin/
+  bloklash backend hali ulanmagan" placeholder o'rniga).
+
+### ⚠️ Muhim ehtiyot chorasi
+
+Bu zip mening **eng so'nggi Windows Agent tuzatishlarimdan** (SCM
+Control Dispatcher, `--startup auto`, ko'p-foydalanuvchi kuzatish)
+**orqada** edi - shuning uchun `agent_core/agent.py`, `windows_agent/
+service_wrapper.py`, `Deploy-NetworkSecurityAgent.ps1` fayllarini
+**ustidan yozmadim** - faqat yangi Web Activity/Karantin funksiyasini
+qo'lda, ehtiyotkorlik bilan qo'shdim (o'zim yaratgan `EndpointAgent.
+start_background()`/`.stop()` arxitekturasi buzilmadi).
+
+### Real test qilingan (barchasi)
+
+- Zeek HTTP/SSL/DNS → `WebAccessLog` → Dashboard: real sintetik Zeek
+  yozuvlari va real HTTP orqali (filtrlash ham) tasdiqlandi.
+- Karantin: real fayl bilan (SHA256 tasdiqlash, mos kelmasa RAD
+  ETISH) ham `agent_core`, ham `engine` versiyasida tekshirildi.
+- VirusTotal `confirmed` chegarasi: 3 stsenariy (mahalliy/past
+  ishonch/yuqori ishonch) real DB bilan tasdiqlandi.
+- Deep Scan: **haqiqiy EICAR test signature** fayli bilan to'liq
+  zanjir (aniqlash → karantin → asl fayl o'chirilishi) tasdiqlandi.
+
+### Topilgan va tuzatilgan real xato
+
+Integratsiya jarayonida `/web-activity` route **ikki marta**
+aniqlanib qolgani (Flask'ning "View function mapping is overwriting
+an existing endpoint" xatosi) aniqlandi - bu barcha 11 mavjud testni
+vaqtincha buzgan edi. Ortiqcha nusxa o'chirilib tuzatildi.
 
 ## O'N UCHINCHI marta topilgan xato: SCM Control Dispatcher aniq chaqirilmagan (PyInstaller+pywin32 muammosi)
 

@@ -36,7 +36,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
-from db.models import Device, Event, Alert, FileEvent, WhitelistEntry, BlacklistEntry
+from db.models import Device, Event, Alert, FileEvent, WebAccessLog, WhitelistEntry, BlacklistEntry, utcnow
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("zeek_reader")
@@ -116,6 +116,12 @@ def process_dns(session, rec: dict):
     session.add(event)
     session.flush()
 
+    session.add(WebAccessLog(
+        timestamp=_zeek_timestamp(rec), device_id=device.id, source_ip=src_ip,
+        dest_ip=rec.get("id.resp_h"), domain=query.rstrip(".").lower(),
+        url=f"dns://{query.rstrip('.').lower()}", protocol="DNS", source="zeek_dns",
+    ))
+
     if _is_whitelisted(session, query):
         return
     bl_hit = _is_blacklisted(session, query)
@@ -189,9 +195,71 @@ def process_file(session, rec: dict):
     logger.info(f"ZEEK FILE: {filename} ({sha256[:12]}...) {src_ip} -> {dst_ip}")
 
 
+def _zeek_timestamp(rec: dict):
+    """Zeek JSON `ts` (Unix epoch) -> naive UTC datetime."""
+    import datetime as _dt
+    value = rec.get("ts")
+    if value is None:
+        return utcnow()
+    try:
+        return _dt.datetime.fromtimestamp(float(value), tz=_dt.timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OverflowError):
+        return utcnow()
+
+
+def _normalise_domain(value):
+    if not value:
+        return None
+    return str(value).strip().rstrip(".").lower() or None
+
+
+def process_http(session, rec: dict):
+    """Zeek http.log: HTTP uchun domen + to'liq URL/path tarixini saqlaydi."""
+    src_ip = rec.get("id.orig_h")
+    dst_ip = rec.get("id.resp_h")
+    domain = _normalise_domain(rec.get("host"))
+    if not src_ip or not domain:
+        return
+
+    device = _upsert_device(session, src_ip)
+    method = (rec.get("method") or "GET").upper()
+    path = rec.get("uri") or "/"
+    # Absolute URI bo'lmasa, HTTP URL'ni host + path orqali tiklaymiz.
+    url = path if str(path).startswith(("http://", "https://")) else f"http://{domain}{path}"
+    status = rec.get("status_code")
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+
+    session.add(WebAccessLog(
+        timestamp=_zeek_timestamp(rec), device_id=device.id, source_ip=src_ip,
+        dest_ip=dst_ip, domain=domain, url=url, path=path, method=method,
+        status_code=status, protocol="HTTP", user_agent=rec.get("user_agent"), source="zeek",
+    ))
+
+
+def process_ssl(session, rec: dict):
+    """Zeek ssl.log: HTTPS uchun TLS SNI/domenni saqlaydi (URL path shifrlangani sabab ko'rinmaydi)."""
+    src_ip = rec.get("id.orig_h")
+    dst_ip = rec.get("id.resp_h")
+    domain = _normalise_domain(rec.get("server_name"))
+    if not src_ip or not domain:
+        return
+
+    device = _upsert_device(session, src_ip)
+    session.add(WebAccessLog(
+        timestamp=_zeek_timestamp(rec), device_id=device.id, source_ip=src_ip,
+        dest_ip=dst_ip, domain=domain, url=f"https://{domain}/", path=None,
+        method=None, status_code=None, protocol="HTTPS", user_agent=None, source="zeek_tls_sni",
+    ))
+
+
 _LOG_HANDLERS = {
     "notice.log": process_notice,
     "dns.log": process_dns,
+    "http.log": process_http,
+    "ssl.log": process_ssl,
     "conn.log": process_conn,
     "files.log": process_file,
 }

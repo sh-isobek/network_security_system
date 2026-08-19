@@ -25,7 +25,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db.database import get_session
-from db.models import Device, Alert, Event, FileEvent, User, utcnow
+from db.models import Device, Alert, Event, FileEvent, WebAccessLog, User, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
 from dashboard.audit import log_action
@@ -304,6 +304,61 @@ def asset_inventory():
         return render_template("asset_inventory.html", devices=devices_data, topology=topology)
     finally:
         session.close()
+
+
+@app.route("/web-activity")
+@login_required
+def web_activity():
+    """Qurilma -> sayt/domen -> vaqt bo'yicha qidiriladigan web faoliyat."""
+    session = get_session()
+    try:
+        ip_filter = request.args.get("ip", "").strip()
+        domain_filter = request.args.get("site", "").strip().lower()
+        hostname_filter = request.args.get("hostname", "").strip()
+        protocol_filter = request.args.get("protocol", "").strip().upper()
+        date_from = request.args.get("date_from", "").strip()
+        date_to = request.args.get("date_to", "").strip()
+
+        query = session.query(WebAccessLog, Device).join(Device, WebAccessLog.device_id == Device.id)
+        if ip_filter:
+            query = query.filter(WebAccessLog.source_ip == ip_filter)
+        if domain_filter:
+            query = query.filter(WebAccessLog.domain.ilike(f"%{domain_filter}%"))
+        if hostname_filter:
+            query = query.filter(Device.hostname.ilike(f"%{hostname_filter}%"))
+        if protocol_filter in {"HTTP", "HTTPS", "DNS"}:
+            query = query.filter(WebAccessLog.protocol == protocol_filter)
+
+        from datetime import datetime, time as dt_time
+        if date_from:
+            try:
+                query = query.filter(WebAccessLog.timestamp >= datetime.combine(datetime.strptime(date_from, "%Y-%m-%d").date(), dt_time.min))
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                query = query.filter(WebAccessLog.timestamp < datetime.combine(datetime.strptime(date_to, "%Y-%m-%d").date(), dt_time.max))
+            except ValueError:
+                pass
+
+        rows = query.order_by(WebAccessLog.timestamp.desc()).limit(1000).all()
+        data = []
+        for log, device in rows:
+            data.append({
+                "timestamp": log.timestamp, "ip": log.source_ip, "hostname": device.hostname,
+                "domain": log.domain, "url": log.url, "method": log.method,
+                "status_code": log.status_code, "protocol": log.protocol,
+                "dest_ip": log.dest_ip,
+            })
+
+        return render_template(
+            "web_activity.html", rows=data, ip_filter=ip_filter, site_filter=domain_filter,
+            hostname_filter=hostname_filter, protocol_filter=protocol_filter,
+            date_from=date_from, date_to=date_to,
+        )
+    finally:
+        session.close()
+
 
 
 @app.route("/files")

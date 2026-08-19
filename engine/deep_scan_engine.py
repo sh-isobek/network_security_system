@@ -38,6 +38,7 @@ from scanners.yara_scanner import scan_file as yara_scan_file
 from scanners.office_scanner import scan_office_file, OFFICE_EXTENSIONS
 from scanners.archive_scanner import extract_zip_and_queue
 from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_available as clamav_db_available
+from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("deep_scan_engine")
@@ -95,13 +96,25 @@ def deep_scan_one(session, fe: FileEvent):
 
     if is_malicious and fe.verdict != "malicious":
         fe.verdict = "malicious"
-        fe.threat_score = max(fe.threat_score or 0, 90)
+        fe.threat_score = 100
+
+        # MUHIM: chuqur tekshiruv (YARA qoidasi/ClamAV imzosi) - VirusTotal'ning
+        # ehtimoliy ko'p-dvigatel ovoz berishidan farqli - aniq, deterministik
+        # pattern moslashuvi. Shuning uchun bu yerda topilgan zararli fayl
+        # to'g'ridan-to'g'ri (server tomonidagi, `stored_path` mavjud bo'lsa)
+        # xavfsiz karantinga olinadi.
+        quarantine_result = {"quarantined": False, "quarantine_path": None, "source_removed": False, "error": "stored_path mavjud emas"}
+        if fe.stored_path and os.path.isfile(fe.stored_path):
+            quarantine_result = quarantine_file(fe.stored_path, fe.sha256, "Deep scan: " + "; ".join(findings)[:500])
+            findings.append("Karantin: " + (quarantine_result.get("quarantine_path") or quarantine_result.get("error", "muvaffaqiyatsiz")))
+        action = "Tasdiqlangan malware: karantinaga olindi" if quarantine_result.get("quarantined") else "Tasdiqlangan malware: karantinaga olish muvaffaqiyatsiz"
+
         alert = Alert(
             file_event_id=fe.id,
             device_id=_upsert_device_for_file(session, fe.src_ip).id,
             severity="critical",
             reason=f"Chuqur tekshiruvda shubhali belgilar topildi: {fe.filename}\n" + "\n".join(findings),
-            action_taken="TODO: karantin/bloklash backend hali ulanmagan (5-bosqich)",
+            action_taken=action,
             notified=False,
         )
         session.add(alert)

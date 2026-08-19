@@ -28,7 +28,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
-from db.models import RawLog, Device, Event, Alert, WhitelistEntry, BlacklistEntry, utcnow
+from db.models import RawLog, Device, Event, WebAccessLog, Alert, WhitelistEntry, BlacklistEntry, utcnow
 from parsers.kerio_parser import KerioConnectionParser, KerioDHCPParser
 from parsers.windows_dns_parser import WindowsDNSParser
 
@@ -118,6 +118,18 @@ def process_one(session, raw_log: RawLog):
     )
     session.add(event)
     session.flush()
+
+    # DNS query ham sayt/domen faoliyati sifatida alohida indekslanadi.
+    # Bu Zeek HTTP/TLS yo'q bo'lgan tarmoqlarda ham dashboard orqali
+    # "qaysi IP qaysi domenni qachon so'ragan" qidiruvini beradi.
+    if event_type == "dns_query" and parsed.get("dest_domain"):
+        session.add(WebAccessLog(
+            timestamp=event.timestamp, device_id=device.id,
+            source_ip=parsed["source_ip"], dest_ip=parsed.get("dest_ip"),
+            domain=str(parsed["dest_domain"]).rstrip(".").lower(),
+            url=f"dns://{str(parsed['dest_domain']).rstrip('.').lower()}",
+            protocol="DNS", source=used_parser or "dns",
+        ))
 
     if event_type == "dns_query":
         target = parsed.get("dest_domain")

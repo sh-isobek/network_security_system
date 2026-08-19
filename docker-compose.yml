@@ -2,6 +2,7 @@ volumes:
   postgres_data:
   clamav_db:
   grafana_data:
+  quarantine_data:
   # Diqqat: Suricata odatda SPAN port orqali xom tarmoq trafigini o'qishi
   # kerak bo'lgani uchun konteynerdan tashqarida, host'da alohida ishlaydi
   # (docs_SURICATA_SETUP.md'ga qarang). Uning file-store papkasi
@@ -159,8 +160,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
       CLAMAV_DB_DIR: /var/lib/clamav
+      QUARANTINE_DIR: /var/lib/network-security/quarantine
     volumes:
       - clamav_db:/var/lib/clamav
+      - quarantine_data:/var/lib/network-security/quarantine
       # Host'dagi Suricata file-store papkasini shu yerga bog'lang:
       - /var/log/suricata/files:/var/log/suricata/files:ro
     depends_on:

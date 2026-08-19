@@ -153,6 +153,42 @@ class BlacklistEntry(Base):
     added_at = Column(DateTime, default=utcnow)
 
 
+class WebAccessLog(Base):
+    """Qurilmaning sayt/domenlarga chiqish tarixi.
+
+    Zeek HTTP loglari uchun to'liq URL (path bilan), HTTPS uchun esa
+    TLS SNI orqali domen saqlanadi. TLS shifrlanganligi sababli HTTPS
+    URL path'ini TLS decryption'siz ko'rib bo'lmaydi. DNS so'rovlari
+    (Zeek dns.log yoki Windows DNS syslog orqali) ham "domen faoliyati"
+    sifatida saqlanadi - bu Zeek HTTP/TLS yo'q tarmoqlarda ham asosiy
+    qidiruv imkonini beradi (lekin DNS so'rovi haqiqiy sahifa
+    ko'rilganini KAFOLATLAMAYDI - faqat domen so'ralganini bildiradi).
+    """
+    __tablename__ = "web_access_logs"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=utcnow, nullable=False)
+    device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
+    source_ip = Column(String(45), nullable=False, index=True)
+    dest_ip = Column(String(45), index=True)
+    domain = Column(String(255), nullable=False, index=True)
+    url = Column(String(2000))
+    path = Column(String(1500))
+    method = Column(String(20))
+    status_code = Column(Integer)
+    protocol = Column(String(20), nullable=False)
+    user_agent = Column(String(1000))
+    source = Column(String(30), default="zeek")
+
+    device = relationship("Device")
+
+    __table_args__ = (
+        Index("ix_web_access_timestamp", "timestamp"),
+        Index("ix_web_access_domain_timestamp", "domain", "timestamp"),
+        Index("ix_web_access_source_ip_timestamp", "source_ip", "timestamp"),
+    )
+
+
 class FileEvent(Base):
     """Suricata (SPAN port orqali) aniqlagan har bir fayl transferi."""
     __tablename__ = "file_events"

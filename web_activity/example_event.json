@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-08-18T10:00:00Z",
+  "device_id": "pc-001",
+  "hostname": "PC-001",
+  "ip": "172.16.0.51",
+  "username": "DOMAIN\\user",
+  "domain": "example.com",
+  "site": "example.com",
+  "url": "https://example.com/",
+  "category": "business",
+  "source": "proxy",
+  "action": "allowed",
+  "bytes_in": 12345,
+  "bytes_out": 4567
+}

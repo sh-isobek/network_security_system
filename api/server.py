@@ -77,7 +77,16 @@ def health():
 def check_hash():
     """
     So'rov: {"sha256": "...", "filename": "invoice.exe"}
-    Javob:  {"malicious": bool, "threat_name": str|null, "source": str}
+    Javob:  {"malicious": bool, "confirmed": bool, "threat_name": str|null, "source": str}
+
+    MUHIM: `confirmed` maydoni - Endpoint Agent avtomatik karantin/
+    o'chirishni FAQAT shu maydon `true` bo'lganda amalga oshiradi.
+    Bitta VirusTotal antivirus dvigateli signal bergani hali "tasdiqlangan"
+    degani emas (soxta-pozitiv xavfi) - shuning uchun VirusTotal uchun
+    kamida 3 ta dvigatel VA hisobot beruvchilarning kamida 5% signal
+    berishi talab qilinadi. MalwareBazaar (kurallangan zararli dastur
+    bazasi) va mahalliy qora ro'yxat esa har doim "tasdiqlangan"
+    hisoblanadi (aniq, deterministik moslik).
     """
     data = request.get_json(silent=True) or {}
     sha256 = (data.get("sha256") or "").lower().strip()
@@ -91,8 +100,9 @@ def check_hash():
         if local_result:
             return jsonify({
                 "malicious": True,
+                "confirmed": True,
                 "threat_name": local_result.get("threat_name"),
-                "source": local_result.get("source"),
+                "source": local_result.get("source") or "local",
             })
 
         # Mahalliyda topilmasa - VirusTotal/MalwareBazaar (server tomonida,
@@ -100,15 +110,23 @@ def check_hash():
         # va tezkorroq, chunki natija darhol keshga tushadi)
         vt = check_virustotal(sha256)
         if vt and vt.get("malicious"):
-            _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
-            return jsonify({"malicious": True, "threat_name": vt.get("threat_name"), "source": "virustotal"})
+            positives = int(vt.get("positives") or 0)
+            total = int(vt.get("total") or 0)
+            confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
+            if confirmed:
+                _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
+            return jsonify({
+                "malicious": True, "confirmed": confirmed,
+                "threat_name": vt.get("threat_name"), "source": "virustotal",
+                "positives": positives, "total": total,
+            })
 
         mb = check_malwarebazaar(sha256)
         if mb and mb.get("malicious"):
             _add_to_blacklist(session, sha256, mb.get("threat_name"), "malwarebazaar")
-            return jsonify({"malicious": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
+            return jsonify({"malicious": True, "confirmed": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
 
-        return jsonify({"malicious": False, "threat_name": None, "source": None})
+        return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
     finally:
         session.close()
 
@@ -133,7 +151,9 @@ def report_incident():
         "threat_name": "Trojan.GenericKD",
         "file_deleted": true,
         "process_killed": true,
-        "process_name": "outlook.exe"
+        "process_name": "outlook.exe",
+        "quarantine_path": "C:\\ProgramData\\NetworkSecurityAgent\\Quarantine\\...",
+        "quarantined": true
     }
     """
     data = request.get_json(silent=True) or {}
@@ -155,9 +175,12 @@ def report_incident():
 
         file_deleted = bool(data.get("file_deleted"))
         process_killed = bool(data.get("process_killed"))
+        quarantined = bool(data.get("quarantined"))
         action_parts = []
         if file_deleted:
             action_parts.append("fayl o'chirildi")
+        if quarantined:
+            action_parts.append("karantinga olindi (" + str(data.get("quarantine_path") or "yo'l noma'lum") + ")")
         if process_killed:
             process_name = data.get("process_name", "nomalum")
             action_parts.append(f"jarayon to'xtatildi ({process_name})")
@@ -168,7 +191,7 @@ def report_incident():
             device_id=device.id,
             severity="critical",
             reason=(
-                f"Endpoint Agent zararli faylni aniqladi: {data['filename']} "
+                f"Endpoint Agent TASDIQLANGAN zararli faylni aniqladi: {data['filename']} "
                 f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}"
             ),
             action_taken=action_summary,

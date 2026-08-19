@@ -1,0 +1,50 @@
+"""Windows/Linux endpoint quarantine for confirmed malware."""
+import hashlib
+import json
+import os
+import shutil
+import time
+import uuid
+
+
+def _root() -> str:
+    if os.name == "nt":
+        return os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "NetworkSecurityAgent", "Quarantine")
+    return os.path.join("/var/lib", "network-security-agent", "quarantine")
+
+
+def quarantine_file(filepath: str, sha256: str, threat_name: str) -> dict:
+    if not os.path.isfile(filepath):
+        return {"quarantined": False, "source_removed": False, "quarantine_path": None, "error": "Fayl topilmadi"}
+    root = _root()
+    token = uuid.uuid4().hex
+    target_dir = os.path.join(root, token)
+    os.makedirs(target_dir, mode=0o700, exist_ok=False)
+    target = os.path.join(target_dir, os.path.basename(filepath))
+    try:
+        shutil.copy2(filepath, target)
+        # Verify the quarantine copy before touching the original.
+        h = hashlib.sha256()
+        with open(target, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        if h.hexdigest().lower() != sha256.lower():
+            raise RuntimeError("Karantin nusxasi SHA256 bilan mos kelmadi")
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+        metadata = {
+            "original_path": os.path.abspath(filepath),
+            "quarantined_at": time.time(),
+            "sha256": sha256,
+            "threat_name": threat_name,
+            "filename": os.path.basename(filepath),
+        }
+        with open(os.path.join(target_dir, "metadata.json"), "w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, ensure_ascii=False, indent=2)
+        os.remove(filepath)
+        return {"quarantined": True, "source_removed": True, "quarantine_path": target, "error": None}
+    except Exception as exc:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        return {"quarantined": False, "source_removed": False, "quarantine_path": None, "error": str(exc)}

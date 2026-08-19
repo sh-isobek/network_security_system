@@ -62,47 +62,69 @@ def _upsert_device_for_file(session, ip: str) -> "Device":
 def analyze_one(session, fe: FileEvent):
     sources_checked = []
 
-    # 1) Mahalliy blacklist
+    # 1) Mahalliy blacklist (har doim "tasdiqlangan" - aniq, deterministik moslik)
     result = check_local(session, fe.sha256)
     sources_checked.append("local")
+    if result is not None:
+        result["confirmed"] = True
 
     # 2) VirusTotal (agar mahalliyda topilmasa)
     if result is None:
         vt_result = check_virustotal(fe.sha256)
         sources_checked.append("virustotal")
         if vt_result and vt_result.get("malicious"):
-            result = {"malicious": True, "threat_name": vt_result.get("threat_name") or "Malicious (VirusTotal)"}
+            # MUHIM: bitta antivirus dvigateli signal bergani hali
+            # "tasdiqlangan" degani emas (soxta-pozitiv xavfi) - avtomatik
+            # karantin uchun kamida 3 ta dvigatel VA hisobot beruvchilarning
+            # kamida 5% signal berishi talab qilinadi.
+            positives = int(vt_result.get("positives") or 0)
+            total = int(vt_result.get("total") or 0)
+            confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
+            result = {"malicious": True, "confirmed": confirmed, "threat_name": vt_result.get("threat_name") or "Malicious (VirusTotal)"}
 
-    # 3) MalwareBazaar (agar hali topilmasa)
+    # 3) MalwareBazaar (agar hali topilmasa) - kurallangan zararli dastur
+    # bazasi, har doim "tasdiqlangan" hisoblanadi
     if result is None:
         mb_result = check_malwarebazaar(fe.sha256)
         sources_checked.append("malwarebazaar")
         if mb_result and mb_result.get("malicious"):
-            result = {"malicious": True, "threat_name": mb_result.get("threat_name") or "Malicious (MalwareBazaar)"}
+            result = {"malicious": True, "confirmed": True, "threat_name": mb_result.get("threat_name") or "Malicious (MalwareBazaar)"}
 
     fe.checked = True
     fe.checked_sources = ",".join(sources_checked)
 
     if result and result.get("malicious"):
-        fe.verdict = "malicious"
-        fe.threat_score = 100
+        confirmed = bool(result.get("confirmed", False))
+        fe.verdict = "malicious" if confirmed else "unknown"
+        fe.threat_score = 100 if confirmed else 60
         _add_to_local_blacklist(session, fe.sha256, result.get("threat_name"), source="auto")
 
         risk_note = " (yuqori xavfli fayl turi)" if fe.file_ext in HIGH_RISK_EXTENSIONS else ""
         device = _upsert_device_for_file(session, fe.src_ip)
+
+        # MUHIM: fayl faqat TASDIQLANGAN bo'lsa avtomatik karantinga
+        # olinadi - shubhali/tasdiqlanmagan fayllar o'chirilmaydi (bu
+        # foydalanuvchining muhim ish faylini yo'qotish xavfini oldini
+        # oladi). fe.stored_path Suricata file-store'dan kelishi mumkin -
+        # Endpoint Agent orqali topilgan fayllar esa alohida, agentning
+        # o'zi tomonidan mahalliy karantinga olinadi (bu yerda emas).
+        action_taken = "SHUBHALI: avtomatik karantin qilinmadi"
+        if confirmed:
+            action_taken = "TASDIQLANGAN: karantinaga yuborish/endpoint izolyatsiyasi navbatda"
+
         alert = Alert(
             file_event_id=fe.id,
             device_id=device.id,
-            severity="critical",
+            severity="critical" if confirmed else "medium",
             reason=(
-                f"Zararli fayl aniqlandi: {fe.filename} "
+                f"{'Tasdiqlangan zararli fayl' if confirmed else 'Shubhali fayl'} aniqlandi: {fe.filename} "
                 f"[{result.get('threat_name')}]{risk_note} | SHA256={fe.sha256}"
             ),
-            action_taken="TODO: karantin/bloklash backend hali ulanmagan (5-bosqich)",
+            action_taken=action_taken,
             notified=False,
         )
         session.add(alert)
-        logger.warning(f"ZARARLI FAYL: {fe.filename} ({fe.src_ip} -> {fe.dest_ip}) - {result.get('threat_name')}")
+        logger.warning(f"{'TASDIQLANGAN ZARARLI FAYL' if confirmed else 'SHUBHALI FAYL'}: {fe.filename} ({fe.src_ip} -> {fe.dest_ip}) - {result.get('threat_name')}")
     else:
         fe.verdict = "clean"
         fe.threat_score = 0

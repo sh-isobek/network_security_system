@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Saytlar tarixi - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Saytlarga kirish tarixi</h1>
+<p style="margin-bottom:14px;color:#667;">Qurilma IP/hostname, sayt nomi va vaqt bo'yicha aniq qidirish.</p>
+
+<form method="get" class="filters" style="background:#fff;padding:14px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px;">
+        <input name="site" value="{{ site_filter }}" placeholder="Sayt / domen (masalan google.com)">
+        <input name="ip" value="{{ ip_filter }}" placeholder="Qurilma IP (masalan 172.16.1.45)">
+        <input name="hostname" value="{{ hostname_filter }}" placeholder="Hostname">
+        <select name="protocol">
+            <option value="">Barcha protokollar</option>
+            <option value="HTTP" {% if protocol_filter == 'HTTP' %}selected{% endif %}>HTTP</option>
+            <option value="HTTPS" {% if protocol_filter == 'HTTPS' %}selected{% endif %}>HTTPS</option>
+            <option value="DNS" {% if protocol_filter == 'DNS' %}selected{% endif %}>DNS</option>
+        </select>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+        <label>Boshlanish <input type="date" name="date_from" value="{{ date_from }}"></label>
+        <label>Tugash <input type="date" name="date_to" value="{{ date_to }}"></label>
+        <button type="submit">Filtrlash</button>
+        <a href="{{ url_for('web_activity') }}">Tozalash</a>
+    </div>
+</form>
+
+<div style="margin:12px 0;color:#667;font-size:13px;">Topilgan yozuvlar: <strong>{{ rows|length }}</strong> (maksimal 1000 ta)</div>
+{% if rows %}
+<table>
+<tr><th>Vaqt</th><th>Qurilma IP</th><th>Hostname</th><th>Sayt</th><th>URL</th><th>Protokol</th><th>Status</th><th>Destination IP</th></tr>
+{% for r in rows %}
+<tr>
+<td class="mono">{{ r.timestamp | local_dt }}</td>
+<td class="mono">{{ r.ip }}</td>
+<td>{{ r.hostname or '-' }}</td>
+<td><strong>{{ r.domain }}</strong></td>
+<td class="mono" style="max-width:380px;overflow-wrap:anywhere;">{{ r.url or '-' }}</td>
+<td>{{ r.protocol }}</td>
+<td>{{ r.status_code or '-' }}</td>
+<td class="mono">{{ r.dest_ip or '-' }}</td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<div class="empty">Filtr bo'yicha sayt faoliyati topilmadi.</div>
+{% endif %}
+{% endblock %}

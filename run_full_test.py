@@ -43,7 +43,7 @@ if os.path.exists("logs/raw_syslog.log"):
 from db.database import get_session
 from db.models import (
     RawLog, Device, Event, Alert, WhitelistEntry, BlacklistEntry,
-    FileEvent, HashBlacklist, User,
+    FileEvent, HashBlacklist, User, WebAccessLog,
 )
 
 check("Baza yaratildi", lambda: get_session().close())
@@ -3835,6 +3835,273 @@ def _test_service_wrapper_explicit_dispatcher():
 
 
 check("service_wrapper.py: SCM Control Dispatcher aniq chaqiruvi + CI haqiqiy Start-Service tekshiruvi", _test_service_wrapper_explicit_dispatcher)
+
+# ---------------------------------------------------------------------------
+print("\n=== 58) Web Activity: Zeek HTTP/SSL/DNS -> WebAccessLog -> Dashboard (to'liq real zanjir) ===")
+
+
+def _test_web_activity_full_chain():
+    """
+    Foydalanuvchi yuborgan qo'shimcha funksiya: sayt/domen tarixini
+    kuzatish. Zeek http.log/ssl.log/dns.log'dan WebAccessLog jadvaliga,
+    va Dashboard'ning /web-activity sahifasida real HTTP orqali
+    ko'rinishini tekshiradi.
+    """
+    import collectors.zeek_reader as zr
+
+    s = get_session()
+
+    # 1) Zeek HTTP log yozuvi
+    http_rec = {
+        "ts": 1755500000.0, "id.orig_h": "172.16.61.1", "id.resp_h": "93.184.216.34",
+        "method": "GET", "host": "ci-test-site.com", "uri": "/page1",
+        "status_code": 200, "user_agent": "TestAgent/1.0",
+    }
+    zr.process_http(s, http_rec)
+
+    # 2) Zeek SSL (TLS SNI) log yozuvi
+    ssl_rec = {
+        "ts": 1755500010.0, "id.orig_h": "172.16.61.2", "id.resp_h": "142.250.1.1",
+        "server_name": "ci-secure-site.com",
+    }
+    zr.process_ssl(s, ssl_rec)
+
+    # 3) Zeek DNS log yozuvi
+    dns_rec = {"ts": 1755500020.0, "id.orig_h": "172.16.61.3", "query": "ci-dns-site.com."}
+    zr.process_dns(s, dns_rec)
+
+    s.commit()
+
+    logs = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["172.16.61.1", "172.16.61.2", "172.16.61.3"])).all()
+    assert len(logs) == 3, f"3 ta WebAccessLog yozuvi kutilgan edi, {len(logs)} keldi"
+
+    http_log = next(l for l in logs if l.protocol == "HTTP")
+    assert http_log.domain == "ci-test-site.com"
+    assert http_log.url == "http://ci-test-site.com/page1"
+    assert http_log.status_code == 200
+
+    ssl_log = next(l for l in logs if l.protocol == "HTTPS")
+    assert ssl_log.domain == "ci-secure-site.com"
+    assert ssl_log.url == "https://ci-secure-site.com/"
+
+    dns_log = next(l for l in logs if l.protocol == "DNS")
+    assert dns_log.domain == "ci-dns-site.com"
+    s.close()
+
+    # 4) Dashboard'da real HTTP orqali ko'rinishini tekshirish
+    from dashboard.app import app as dash_app
+    from dashboard.create_user import create_user
+    create_user("webactivity_ci_admin", "webactivityci123", "admin")
+    dash_app.secret_key = "test-secret-webactivity"
+    client = dash_app.test_client()
+    client.post("/login", data={"username": "webactivity_ci_admin", "password": "webactivityci123"})
+
+    r = client.get("/web-activity")
+    assert r.status_code == 200
+    assert b"ci-test-site.com" in r.data
+    assert b"ci-secure-site.com" in r.data
+
+    # Filtr ishlashini tekshirish (faqat bitta sayt)
+    r2 = client.get("/web-activity?site=ci-secure-site")
+    assert b"ci-secure-site.com" in r2.data
+    assert b"ci-test-site.com" not in r2.data, "Filtr boshqa saytni chiqarib tashlashi kerak edi"
+
+
+check("Web Activity: Zeek HTTP/SSL/DNS -> WebAccessLog -> Dashboard (real HTTP orqali)", _test_web_activity_full_chain)
+
+# ---------------------------------------------------------------------------
+print("\n=== 59) Xavfsiz Karantin: SHA256 tasdiqlash + haqiqiy fayl bilan karantin (agent_core va engine) ===")
+
+
+def _test_quarantine_mechanism():
+    """
+    Foydalanuvchi yuborgan qo'shimcha funksiya: zararli fayllarni
+    o'chirish o'rniga xavfsiz karantinga olish (SHA256 orqali nusxa
+    tasdiqlanadi, keyin asl fayl o'chiriladi).
+    """
+    import shutil
+    import hashlib
+    import importlib
+
+    work_dir = "/tmp/_test_quarantine"
+    quarantine_dir = "/tmp/_test_quarantine_output"
+    for d in (work_dir, quarantine_dir):
+        if os.path.exists(d):
+            shutil.rmtree(d)
+    os.makedirs(work_dir)
+
+    # --- 1) engine/quarantine.py: real fayl bilan muvaffaqiyatli karantin ---
+    os.environ["QUARANTINE_DIR"] = quarantine_dir
+    import engine.quarantine as eq
+    importlib.reload(eq)
+
+    test_file = os.path.join(work_dir, "malware_test.exe")
+    with open(test_file, "wb") as f:
+        f.write(b"CI test uchun sun'iy zararli fayl mazmuni")
+
+    with open(test_file, "rb") as f:
+        real_sha256 = hashlib.sha256(f.read()).hexdigest()
+
+    result = eq.quarantine_file(test_file, real_sha256, "CI test")
+    assert result["quarantined"] is True
+    assert not os.path.isfile(test_file), "Asl fayl karantinga olingandan keyin o'chirilishi kerak edi"
+    assert os.path.isfile(result["quarantine_path"])
+
+    with open(result["quarantine_path"], "rb") as f:
+        quarantined_sha256 = hashlib.sha256(f.read()).hexdigest()
+    assert quarantined_sha256 == real_sha256, "Karantin nusxasi original bilan bir xil bo'lishi kerak"
+
+    # --- 2) agent_core/quarantine.py: SHA256 MOS KELMASA, xavfsizlik tekshiruvi rad etishi kerak ---
+    os.environ["ProgramData"] = quarantine_dir + "_agentcore"
+    import agent_core.quarantine as aq
+    importlib.reload(aq)
+
+    test_file2 = os.path.join(work_dir, "real_file.exe")
+    with open(test_file2, "wb") as f:
+        f.write(b"Haqiqiy fayl mazmuni")
+
+    wrong_sha256 = "f" * 64  # ataylab noto'g'ri
+    result2 = aq.quarantine_file(test_file2, wrong_sha256, "CI test - noto'g'ri hash")
+    assert result2["quarantined"] is False, "Noto'g'ri SHA256 bilan karantin MUVAFFAQIYATSIZ bo'lishi kerak edi"
+    assert os.path.isfile(test_file2), (
+        "SHA256 mos kelmasa, asl fayl SAQLANIB QOLISHI kerak (xavfsizlik nazorati)"
+    )
+
+    # --- 3) agent_core/quarantine.py: to'g'ri SHA256 bilan muvaffaqiyatli ---
+    with open(test_file2, "rb") as f:
+        correct_sha256 = hashlib.sha256(f.read()).hexdigest()
+    result3 = aq.quarantine_file(test_file2, correct_sha256, "CI test - to'g'ri hash")
+    assert result3["quarantined"] is True
+    assert not os.path.isfile(test_file2)
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+    shutil.rmtree(quarantine_dir, ignore_errors=True)
+    shutil.rmtree(quarantine_dir + "_agentcore", ignore_errors=True)
+    for k in ["QUARANTINE_DIR", "ProgramData"]:
+        os.environ.pop(k, None)
+
+
+check("Xavfsiz Karantin (SHA256 tasdiqlash, real fayl bilan, mos kelmasa rad etish)", _test_quarantine_mechanism)
+
+# ---------------------------------------------------------------------------
+print("\n=== 60) File Analysis Engine: VirusTotal 'confirmed' chegara mantig'i (real DB bilan) ===")
+
+
+def _test_file_analysis_confirmed_threshold():
+    """
+    Foydalanuvchi yuborgan qo'shimcha tuzatish: bitta VirusTotal
+    dvigateli signal bergani hali "tasdiqlangan" (avtomatik karantin
+    uchun asos) degani emas - soxta-pozitiv xavfi. Kamida 3 dvigatel
+    VA hisobot beruvchilarning kamida 5% signal berishi talab qilinadi.
+    Mahalliy blacklist va MalwareBazaar esa har doim "tasdiqlangan".
+    """
+    from unittest.mock import patch
+    import engine.file_analysis_engine as fae
+
+    # 1) Mahalliy blacklist - har doim tasdiqlangan
+    s = get_session()
+    s.add(HashBlacklist(sha256="1" * 64, threat_name="CI.LocalMalware", source="ci_test"))
+    fe1 = FileEvent(src_ip="172.16.62.1", filename="local.exe", sha256="1" * 64, checked=False)
+    s.add(fe1)
+    s.commit()
+    fae.analyze_one(s, fe1)
+    s.commit()
+    assert fe1.verdict == "malicious"
+    alert1 = s.query(Alert).filter(Alert.file_event_id == fe1.id).first()
+    assert alert1.severity == "critical"
+    assert "TASDIQLANGAN" in alert1.action_taken
+    s.close()
+
+    # 2) VirusTotal past ishonch (1/70) - "shubhali" bo'lishi, karantin YO'Q
+    s = get_session()
+    fe2 = FileEvent(src_ip="172.16.62.2", filename="low_confidence.exe", sha256="2" * 64, checked=False)
+    s.add(fe2)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 1, "total": 70, "threat_name": "Generic"}), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe2)
+        s.commit()
+    assert fe2.verdict == "unknown", "1 ta dvigatel bilan 'tasdiqlangan' bo'lmasligi kerak edi"
+    alert2 = s.query(Alert).filter(Alert.file_event_id == fe2.id).first()
+    assert alert2.severity == "medium"
+    assert "SHUBHALI" in alert2.action_taken
+    s.close()
+
+    # 3) VirusTotal yuqori ishonch (5/70, >=3 VA >=5%) - "tasdiqlangan"
+    s = get_session()
+    fe3 = FileEvent(src_ip="172.16.62.3", filename="high_confidence.exe", sha256="3" * 64, checked=False)
+    s.add(fe3)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 5, "total": 70, "threat_name": "Trojan.Confirmed"}), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe3)
+        s.commit()
+    assert fe3.verdict == "malicious"
+    alert3 = s.query(Alert).filter(Alert.file_event_id == fe3.id).first()
+    assert alert3.severity == "critical"
+    assert "TASDIQLANGAN" in alert3.action_taken
+    s.close()
+
+
+check("File Analysis Engine: VirusTotal 'confirmed' chegara mantig'i (mahalliy/past/yuqori ishonch)", _test_file_analysis_confirmed_threshold)
+
+# ---------------------------------------------------------------------------
+print("\n=== 61) Deep Scan Engine: haqiqiy fayl bilan to'liq karantin zanjiri (EICAR) ===")
+
+
+def _test_deep_scan_real_quarantine():
+    """
+    Foydalanuvchi yuborgan qo'shimcha tuzatish: Deep Scan Engine'da
+    avvalgi 'TODO' placeholder o'rniga haqiqiy karantin. YARA/ClamAV
+    signal berganda, fayl haqiqatan xavfsiz karantinga olinishi
+    (SHA256 tasdiqlangan holda) real EICAR test signature bilan
+    tekshiriladi.
+    """
+    import shutil
+    from unittest.mock import patch
+    import hashlib
+    import importlib
+
+    work_dir = "/tmp/_test_deep_scan_quarantine"
+    quarantine_dir = "/tmp/_test_deep_scan_quarantine_output"
+    for d in (work_dir, quarantine_dir):
+        if os.path.exists(d):
+            shutil.rmtree(d)
+    os.makedirs(work_dir)
+
+    os.environ["QUARANTINE_DIR"] = quarantine_dir
+    import engine.deep_scan_engine as dse
+    importlib.reload(dse)
+
+    eicar_path = os.path.join(work_dir, "eicar.txt")
+    eicar_content = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\n"
+    with open(eicar_path, "wb") as f:
+        f.write(eicar_content)
+    sha256 = hashlib.sha256(eicar_content).hexdigest()
+
+    s = get_session()
+    fe = FileEvent(src_ip="172.16.63.1", filename="eicar.txt", sha256=sha256,
+                    stored_path=eicar_path, checked=True, verdict="unknown")
+    s.add(fe)
+    s.commit()
+
+    with patch.object(dse, "yara_scan_file", return_value=[{"rule": "CI_Test_Rule", "severity": "critical", "description": "CI test"}]), \
+         patch.object(dse, "clamav_db_available", return_value=False):
+        dse.deep_scan_one(s, fe)
+        s.commit()
+
+    assert fe.verdict == "malicious"
+    alert = s.query(Alert).filter(Alert.file_event_id == fe.id).first()
+    assert "karantinaga olindi" in alert.action_taken
+    assert not os.path.isfile(eicar_path), "EICAR fayli karantinga olinib, asli o'chirilishi kerak edi"
+    s.close()
+
+    shutil.rmtree(work_dir, ignore_errors=True)
+    shutil.rmtree(quarantine_dir, ignore_errors=True)
+    os.environ.pop("QUARANTINE_DIR", None)
+
+
+check("Deep Scan Engine: real EICAR fayl bilan to'liq karantin zanjiri", _test_deep_scan_real_quarantine)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

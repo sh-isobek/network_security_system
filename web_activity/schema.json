@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "required": [
+    "timestamp",
+    "ip",
+    "site"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "ip": {
+      "type": "string"
+    },
+    "username": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "site": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "allowed",
+        "blocked",
+        "unknown"
+      ]
+    },
+    "bytes_in": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_out": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
