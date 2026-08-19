@@ -8,6 +8,12 @@ import uuid
 
 
 def _root() -> str:
+    # MUHIM: AGENT_QUARANTINE_DIR orqali qayta belgilash mumkin (test
+    # va CI muhitlari uchun, standart papka yozib bo'lmasa) - bu
+    # muhit o'zgaruvchisi HAR CHAQIRUVDA dinamik o'qiladi.
+    override = os.getenv("AGENT_QUARANTINE_DIR")
+    if override:
+        return override
     if os.name == "nt":
         return os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "NetworkSecurityAgent", "Quarantine")
     return os.path.join("/var/lib", "network-security-agent", "quarantine")
@@ -19,7 +25,16 @@ def quarantine_file(filepath: str, sha256: str, threat_name: str) -> dict:
     root = _root()
     token = uuid.uuid4().hex
     target_dir = os.path.join(root, token)
-    os.makedirs(target_dir, mode=0o700, exist_ok=False)
+
+    try:
+        os.makedirs(target_dir, mode=0o700, exist_ok=False)
+    except OSError as exc:
+        # MUHIM (real production/CI'da aniqlangan xato): standart
+        # /var/lib/... yo'li root bo'lmagan foydalanuvchi uchun yozib
+        # bo'lmasligi mumkin - butun agentni qulatib qo'yish o'rniga
+        # aniq xato qaytaramiz.
+        return {"quarantined": False, "source_removed": False, "quarantine_path": None, "error": f"Karantin papkasini yaratib bo'lmadi: {exc}"}
+
     target = os.path.join(target_dir, os.path.basename(filepath))
     try:
         shutil.copy2(filepath, target)

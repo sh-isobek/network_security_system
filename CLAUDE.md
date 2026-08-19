@@ -92,6 +92,51 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 
 **Joriy: 61/61 test o'tadi (`run_full_test.py`).**
 
+## CI'da topilgan qo'shimcha real xato: karantin papkasi root-huquqsiz ishlamasdi
+
+Web Activity/Karantin integratsiyasi push qilingandan keyin, GitHub
+Actions CI **muvaffaqiyatsiz** bo'ldi (lokal sandbox'da esa root
+sifatida ishlagani sabab bu ko'rinmagan edi):
+
+```
+PermissionError: [Errno 13] Permission denied: '/var/lib/network-security'
+```
+
+**ILDIZ SABAB**: GitHub Actions runner **root bo'lmagan foydalanuvchi**
+sifatida ishlaydi (mening sandbox'imdan farqli - men root edim).
+`engine/quarantine.py`/`agent_core/quarantine.py`dagi standart
+karantin papkalari (`/var/lib/network-security/...`) bunday
+foydalanuvchi uchun yaratib bo'lmaydigan joyda, va `os.makedirs()`
+hech qanday `try/except` bilan o'ralmagan edi - bu **butun test
+to'plamini** (hatto mening yangi karantin testlarimga aloqasi
+bo'lmagan, oldindan mavjud "Fayl analiz pipeline" kabi testlarni ham)
+qulatib qo'ygan edi.
+
+**Ikkinchi xato**: `agent_core/quarantine.py`ning Linux yo'li
+(`/var/lib/network-security-agent/quarantine`) hech qanday muhit
+o'zgaruvchisi orqali qayta belgilanmasdi - mening test kodim esa
+noto'g'ri (`ProgramData`, faqat Windows uchun) o'zgaruvchini
+ishlatgani sabab, aslida hech qachon haqiqiy yo'lni sinamagan edi.
+
+**Tuzatish**:
+1. Ikkala `quarantine.py` faylida ham papka yo'li **HAR CHAQIRUVDA
+   dinamik** o'qiladigan qilindi (modul darajasidagi "muzlab qolgan"
+   konstanta emas - bu loyihada bir necha marta uchragan xato
+   turkumi).
+2. `os.makedirs()` `try/except OSError` bilan o'raldi - ruxsat
+   yo'qligida butun pipeline qulamaydi, aniq "karantinga olish
+   muvaffaqiyatsiz" xabari bilan davom etadi.
+3. `agent_core/quarantine.py`ga yangi `AGENT_QUARANTINE_DIR` muhit
+   o'zgaruvchisi qo'shildi (Linux/Mac uchun ham qayta belgilash
+   imkoni), va mening test kodim to'g'ri o'zgaruvchiga tuzatildi.
+
+**Real test qilingan (root VA root bo'lmagan foydalanuvchi bilan)**:
+bu sandbox'da maxsus `ciuser` (root bo'lmagan) yaratib, `quarantine_
+file()` va `deep_scan_engine`ning to'liq zanjiri shu foydalanuvchi
+nomidan ishga tushirilib, ikkalasi ham **qulamasdan, graceful xato
+bilan** davom etishi tasdiqlandi - bu aynan GitHub Actions CI
+muhitini haqiqiy takrorlaydi.
+
 ## Web Activity (saytlar tarixi) + Xavfsiz Karantin integratsiyasi (ikkinchi tashqi manba zip)
 
 Foydalanuvchi yana bir marta tashqi manbadan (`network_security_system-

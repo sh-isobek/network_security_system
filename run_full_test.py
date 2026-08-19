@@ -3952,7 +3952,7 @@ def _test_quarantine_mechanism():
     assert quarantined_sha256 == real_sha256, "Karantin nusxasi original bilan bir xil bo'lishi kerak"
 
     # --- 2) agent_core/quarantine.py: SHA256 MOS KELMASA, xavfsizlik tekshiruvi rad etishi kerak ---
-    os.environ["ProgramData"] = quarantine_dir + "_agentcore"
+    os.environ["AGENT_QUARANTINE_DIR"] = quarantine_dir + "_agentcore"
     import agent_core.quarantine as aq
     importlib.reload(aq)
 
@@ -3977,7 +3977,7 @@ def _test_quarantine_mechanism():
     shutil.rmtree(work_dir, ignore_errors=True)
     shutil.rmtree(quarantine_dir, ignore_errors=True)
     shutil.rmtree(quarantine_dir + "_agentcore", ignore_errors=True)
-    for k in ["QUARANTINE_DIR", "ProgramData"]:
+    for k in ["QUARANTINE_DIR", "AGENT_QUARANTINE_DIR"]:
         os.environ.pop(k, None)
 
 
