@@ -90,7 +90,43 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 63/63 test o'tadi (`run_full_test.py`).**
+**Joriy: 64/64 test o'tadi (`run_full_test.py`).**
+
+## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
+
+Oldingi commit'da (`_windows_watch_dirs()` diagnostika loglari)
+`logger.info()/.warning()/.debug()` chaqiruvlarini qo'shgandim, lekin
+**`logger` `service_wrapper.py`da import qilinmagan edi** (fayl
+faqat `from windows_agent.agent import EndpointAgent` qilar edi,
+`logger`ni EMAS). Bu sintaksis darajasida (`ast.parse()`) hech qanday
+xato bermaydi - faqat funksiya HAQIQATAN chaqirilganda `NameError`
+beradi.
+
+**Bu xato mening o'z sinovlarimni aylanib o'tdi** (faqat `ast.parse()`
+orqali sintaksis tekshiruvi, funksiyani haqiqatan chaqirmasdan), lekin
+**GitHub CI'ning yangi, qat'iy `Start-Service` tekshiruvi** (avvalgi
+sessiyada qo'shilgan) buni **darhol** ushladi - xizmat haqiqiy Windows
+runner'ida ishga tushmadi.
+
+**Tuzatish**: `from agent_core.agent import logger` qo'shildi.
+
+**Real test qilingan (bu safar HAQIQATAN)**: `pywin32` modullari
+(`win32event`, `win32service`, `win32serviceutil`, `servicemanager`)
+**soxta (mock) qilinib**, `service_wrapper.py` **to'liq import
+qilindi va `_windows_watch_dirs()` HAQIQATAN chaqirildi** - bu safar
+faqat sintaksis emas, balki **haqiqiy bajarilish** tasdiqlandi.
+
+VERSION 1.0.6 -> 1.0.7.
+
+**MUHIM SABOQ**: bu holat GitHub Actions CI'ga qo'shilgan **haqiqiy
+`Start-Service` tekshiruvi**ning qanchalik qimmatli ekanligini
+isbotladi - agar bu tekshiruv bo'lmaganida, bu regressiya
+foydalanuvchi tomonidan **production'da** aniqlangan bo'lardi. Bu
+shuningdek shuni ko'rsatadiki, `ast.parse()` orqali sintaksis
+tekshiruvi **YETARLI EMAS** - Python'da `NameError` kabi xatolar
+faqat kod HAQIQATAN bajarilganda ma'lum bo'ladi, shuning uchun
+bundan buyon Windows-maxsus kod uchun ham (imkon qadar) mock-asosli
+haqiqiy bajarilish testlari yozish zarur.
 
 ## O'N BESHINCHI marta topilgan xato: _windows_watch_dirs() Downloads papkasini jim ravishda o'tkazib yuborgan
 

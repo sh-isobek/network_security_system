@@ -4216,6 +4216,86 @@ def _test_windows_watch_dirs_diagnostics_and_fallback():
 check("Windows Agent: _windows_watch_dirs() diagnostika + SystemDrive fallback (real 'Isobek' xatosi)", _test_windows_watch_dirs_diagnostics_and_fallback)
 
 # ---------------------------------------------------------------------------
+print("\n=== 64) Windows Agent: service_wrapper.py haqiqatan import va ishga tushirilganda xato bermasligi (CI'da topilgan REGRESSIYA) ===")
+
+
+def _test_service_wrapper_actually_runs_without_nameerror():
+    """
+    Men o'zim (oldingi commit'da) qo'shgan REAL REGRESSIYA: yangi
+    _windows_watch_dirs() logger.info()/.warning()/.debug()ni
+    ishlatadi, lekin service_wrapper.py FAQAT `EndpointAgent`ni
+    import qilardi (`from windows_agent.agent import EndpointAgent`),
+    `logger`ni EMAS. Bu sintaksis darajasida (ast.parse) sezilmaydi -
+    faqat funksiya HAQIQATAN chaqirilganda NameError beradi. Bu
+    xato GitHub CI'ning haqiqiy Start-Service tekshiruvida ushlandi
+    (xizmat ishga tushishda qulab tushdi).
+
+    Bu test pywin32 modullarini soxta (mock) qilib, service_wrapper.py
+    ni HAQIQATAN import qilib, _windows_watch_dirs()ni chaqirib,
+    NameError chiqmasligini tasdiqlaydi - bu faqat ast.parse() emas,
+    balki HAQIQIY bajarilishni tekshiradi.
+    """
+    import shutil
+    import importlib
+
+    fake_pywin32_dir = "/tmp/_test_fake_pywin32"
+    if os.path.exists(fake_pywin32_dir):
+        shutil.rmtree(fake_pywin32_dir)
+    os.makedirs(fake_pywin32_dir)
+
+    with open(os.path.join(fake_pywin32_dir, "win32event.py"), "w") as f:
+        f.write("INFINITE = -1\ndef CreateEvent(*a, **kw): return object()\ndef SetEvent(*a, **kw): pass\ndef WaitForSingleObject(*a, **kw): pass\n")
+    with open(os.path.join(fake_pywin32_dir, "win32service.py"), "w") as f:
+        f.write("SERVICE_RUNNING = 4\nSERVICE_STOP_PENDING = 3\n")
+    with open(os.path.join(fake_pywin32_dir, "win32serviceutil.py"), "w") as f:
+        f.write(
+            "class ServiceFramework:\n"
+            "    def __init__(self, args): pass\n"
+            "    def ReportServiceStatus(self, status): pass\n"
+            "def HandleCommandLine(cls): pass\n"
+        )
+    with open(os.path.join(fake_pywin32_dir, "servicemanager.py"), "w") as f:
+        f.write(
+            "EVENTLOG_INFORMATION_TYPE = 1\nPYS_SERVICE_STARTED = 1\n"
+            "def LogMsg(*a, **kw): pass\n"
+            "def LogErrorMsg(*a, **kw): pass\n"
+            "def LogWarningMsg(*a, **kw): pass\n"
+            "def Initialize(): pass\n"
+            "def PrepareToHostSingle(cls): pass\n"
+            "def StartServiceCtrlDispatcher(): pass\n"
+        )
+
+    sys.path.insert(0, fake_pywin32_dir)
+    try:
+        for mod_name in ["windows_agent.service_wrapper", "win32event", "win32service", "win32serviceutil", "servicemanager"]:
+            sys.modules.pop(mod_name, None)
+
+        import windows_agent.service_wrapper as sw
+        assert hasattr(sw, "logger"), (
+            "service_wrapper.py `logger`ni import qilishi SHART - "
+            "aks holda _windows_watch_dirs() ishga tushganda NameError beradi "
+            "(bu real CI'da xizmatning ishga tushmasligiga sabab bo'lgan edi)"
+        )
+
+        # HAQIQATAN chaqirib, NameError chiqmasligini tasdiqlash
+        result = sw._windows_watch_dirs()
+        assert isinstance(result, list)
+
+        # To'liq SvcDoRun mantig'ini ham (win32event.WaitForSingleObject'siz) sinash
+        agent = sw.EndpointAgent(result)
+        assert agent is not None
+
+    finally:
+        sys.path.remove(fake_pywin32_dir)
+        shutil.rmtree(fake_pywin32_dir, ignore_errors=True)
+        for mod_name in ["windows_agent.service_wrapper", "win32event", "win32service", "win32serviceutil", "servicemanager"]:
+            sys.modules.pop(mod_name, None)
+        import windows_agent.agent  # noqa: F401 - keyingi testlar uchun agent_core.agent holatini tozalash
+
+
+check("service_wrapper.py: HAQIQATAN import/chaqirilganda NameError yo'q (CI regressiyasi tuzatilgan)", _test_service_wrapper_actually_runs_without_nameerror)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

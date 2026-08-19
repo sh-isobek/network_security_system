@@ -31,6 +31,7 @@ except ImportError:
     sys.exit(1)
 
 from windows_agent.agent import EndpointAgent
+from agent_core.agent import logger
 
 
 SERVICE_NAME = "NetworkSecurityEndpointAgent"
