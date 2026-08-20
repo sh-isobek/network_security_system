@@ -1,16 +1,44 @@
 {% extends "base.html" %}
 {% block title %}Qurilmalar - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
-<h1>Barcha qurilmalar ({{ devices | length }})</h1>
+<h1>Barcha qurilmalar ({{ total_count }})</h1>
+
+<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px;">
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700;">{{ total_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Jami qurilmalar</div>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ online_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Tarmoqqa ulangan (onlayn)</div>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #95a5a6;">{{ offline_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Uzilgan (offlayn)</div>
+    </div>
+</div>
+
+<div class="filters">
+    <a href="/devices" class="{% if not status_filter %}active{% endif %}">Hammasi</a>
+    <a href="/devices?status=online" class="{% if status_filter == 'online' %}active{% endif %}">Onlayn</a>
+    <a href="/devices?status=offline" class="{% if status_filter == 'offline' %}active{% endif %}">Offlayn</a>
+</div>
 
 {% if devices %}
 <table>
     <tr>
-        <th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
+        <th>Holat</th><th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
         <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Alertlar</th><th>Risk Score</th>
     </tr>
     {% for d in devices %}
     <tr>
+        <td>
+            {% if d.is_online %}
+            <span class="badge" style="background: #27ae60;">ONLAYN</span>
+            {% else %}
+            <span class="badge" style="background: #7f8c8d;">OFFLAYN</span>
+            {% endif %}
+        </td>
         <td class="mono">{{ d.ip_address }}</td>
         <td class="mono">{{ d.mac_address or '-' }}</td>
         <td>{{ d.hostname or '-' }}</td>

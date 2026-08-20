@@ -4337,6 +4337,77 @@ def _test_service_wrapper_actually_runs_without_nameerror():
 check("service_wrapper.py: HAQIQATAN import/chaqirilganda NameError yo'q (CI regressiyasi tuzatilgan)", _test_service_wrapper_actually_runs_without_nameerror)
 
 # ---------------------------------------------------------------------------
+print("\n=== 66) Dashboard: qurilma 'tarmoqqa ulangan/uzilgan' holati + qurilmalar soni (real HTTP orqali) ===")
+
+
+def _test_device_online_offline_status():
+    """
+    Foydalanuvchi so'radi: Dashboard'da qurilmalarning tarmoqqa
+    ulangan/ulanmaganini va qurilmalar sonini ko'rsatish.
+
+    `Device.last_seen` DEVICE_OFFLINE_THRESHOLD_MINUTES (standart 60
+    daqiqa)dan eski bo'lsa - qurilma "OFFLAYN" deb ko'rsatilishi kerak,
+    aks holda "ONLAYN". /devices sahifasi sarlavhasi haqiqiy JAMI sonni
+    ko'rsatishi kerak (200 tagacha cheklangan ro'yxat uzunligi emas).
+    """
+    from datetime import timedelta
+    from db.database import get_session
+    from db.models import Device, utcnow
+    from dashboard.create_user import create_user
+    from dashboard.app import app as dash_app
+
+    s = get_session()
+    online_dev = Device(ip_address="172.16.52.10", hostname="ONLINE-CI-PC",
+                         last_seen=utcnow() - timedelta(minutes=2))
+    offline_dev = Device(ip_address="172.16.52.20", hostname="OFFLINE-CI-PC",
+                          last_seen=utcnow() - timedelta(hours=5))
+    s.add_all([online_dev, offline_dev])
+    s.commit()
+    before_total = s.query(Device).count()
+    s.close()
+
+    create_user("device_status_ci_admin", "devstatusci123", "admin")
+    dash_app.secret_key = "test-secret-device-status-ci"
+    client = dash_app.test_client()
+    client.post("/login", data={"username": "device_status_ci_admin", "password": "devstatusci123"})
+
+    r = client.get("/devices")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8")
+
+    online_idx = body.find("ONLINE-CI-PC")
+    offline_idx = body.find("OFFLINE-CI-PC")
+    assert online_idx != -1 and offline_idx != -1, "Test qurilmalari /devices sahifasida topilmadi"
+
+    online_row_start = body.rfind("<tr>", 0, online_idx)
+    online_row = body[online_row_start:online_idx]
+    assert "ONLAYN" in online_row, "So'nggi 2 daqiqada ko'rilgan qurilma ONLAYN deb belgilanishi kerak edi"
+
+    offline_row_start = body.rfind("<tr>", 0, offline_idx)
+    offline_row = body[offline_row_start:offline_idx]
+    assert "OFFLAYN" in offline_row, "5 soatdan beri ko'rinmagan qurilma OFFLAYN deb belgilanishi kerak edi"
+
+    # Sarlavha haqiqiy JAMI sonni (200 limitiga qaramay) ko'rsatishi kerak
+    assert f"Barcha qurilmalar ({before_total})" in body, (
+        f"/devices sahifasi haqiqiy jami qurilmalar sonini ({before_total}) ko'rsatmadi"
+    )
+
+    # status=online/offline filtri to'g'ri ishlashi
+    r_online = client.get("/devices?status=online")
+    assert b"ONLINE-CI-PC" in r_online.data and b"OFFLINE-CI-PC" not in r_online.data
+
+    r_offline = client.get("/devices?status=offline")
+    assert b"OFFLINE-CI-PC" in r_offline.data and b"ONLINE-CI-PC" not in r_offline.data
+
+    # Bosh sahifada (index) ham onlayn/offlayn son ko'rinishi kerak
+    r_index = client.get("/")
+    assert r_index.status_code == 200
+    assert b"Tarmoqqa ulangan" in r_index.data
+
+
+check("Dashboard: qurilma onlayn/offlayn holati + jami qurilmalar soni (real HTTP orqali)", _test_device_online_offline_status)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
