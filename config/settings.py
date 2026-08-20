@@ -52,3 +52,12 @@ QUARANTINE_BACKEND = os.getenv("QUARANTINE_BACKEND", "unifi")
 # variantlar: "mikrotik" | "opnsense" | "linux_nftables"
 FIREWALL_BACKEND = os.getenv("FIREWALL_BACKEND", "mikrotik")
 
+# ---- Endpoint Agent "online/offline" holati (Dashboard) ----
+# Agent har HEARTBEAT_INTERVAL_SECONDS (standart 5 daqiqa) da bir marta
+# "tirikman" xabarini yuboradi. Agar oxirgi heartbeat shu chegaradan
+# ko'proq vaqt oldin bo'lsa - Dashboard'da "offline" deb ko'rsatiladi.
+# Standart 15 daqiqa = ~3 heartbeat davri (bitta/ikkita ketma-ket
+# heartbeat yo'qolishi - masalan vaqtinchalik tarmoq uzilishi - jim
+# ravishda "offline" deb belgilab qo'ymasligi uchun bir oz zaxira bilan).
+AGENT_ONLINE_THRESHOLD_MINUTES = int(os.getenv("AGENT_ONLINE_THRESHOLD_MINUTES", "15"))
+

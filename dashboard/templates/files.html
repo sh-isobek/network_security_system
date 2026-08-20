@@ -7,12 +7,13 @@
     <a href="/files" class="{% if not verdict_filter %}active{% endif %}">Hammasi</a>
     <a href="/files?verdict=malicious" class="{% if verdict_filter == 'malicious' %}active{% endif %}">Zararli</a>
     <a href="/files?verdict=clean" class="{% if verdict_filter == 'clean' %}active{% endif %}">Toza</a>
+    <a href="/files?channel=endpoint_agent" class="{% if channel_filter == 'endpoint_agent' %}active{% endif %}">Faqat Endpoint Agent</a>
 </div>
 
 {% if files %}
 <table>
     <tr>
-        <th>Vaqt</th><th>Fayl nomi</th><th>Manba IP</th><th>Verdict</th>
+        <th>Vaqt</th><th>Fayl nomi</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
         <th>Score</th><th>SHA256</th><th>Manba</th>
     </tr>
     {% for f in files %}
@@ -20,6 +21,7 @@
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
         <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
         <td class="mono">{{ f.src_ip }}</td>
+        <td>{% if f.channel == 'endpoint_agent' %}<span class="badge" style="background:#2980b9;">Endpoint Agent</span>{% else %}{{ f.channel or '-' }}{% endif %}</td>
         <td>
             {% if f.verdict == 'malicious' %}
             <span class="badge" style="background: #c0392b;">ZARARLI</span>

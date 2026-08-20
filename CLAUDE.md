@@ -89,8 +89,68 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Encryption at Rest (`crypto/field_encryption.py`) | ✅ MFA maxfiy kaliti endi bazada shifrlangan saqlanadi (Fernet, kalit almashtirish qo'llab-quvvatlanadi). To'liq MFA login oqimi orqali (shifrlash→saqlash→ochish) real test qilingan |
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
+| — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
 
-**Joriy: 65/65 test o'tadi (`run_full_test.py`).**
+**Joriy: 66/66 test o'tadi (`run_full_test.py`).**
+
+## Dashboard: Endpoint Agent Online/Offline holati + "agent fayllarni tekshirmayapti" muammosining haqiqiy sababi
+
+Foydalanuvchi ikkita kamchilikni bildirdi: (1) Dashboard'da ulangan
+agentlarning online/offline holati ko'rinmaydi, (2) agentlar
+fayllarni tekshirmayotgandek va Dashboard'ga bu haqida ma'lumot
+yubormayotgandek tuyuladi.
+
+**1-kamchilik sababi**: `Device.agent_last_heartbeat`/`agent_version`/
+`agent_os` maydonlari bazada allaqachon bor edi (`/api/v1/agent_heartbeat`
+orqali to'ldirilardi), lekin bu ma'lumot FAQAT `/agent-coverage`
+sahifasida (AD/LDAP sozlangan bo'lishini talab qiladi) ko'rinardi -
+oddiy `/devices` sahifasida yoki bosh sahifada UMUMAN ko'rsatilmasdi.
+AD sozlanmagan muhitlarda bu ma'lumot foydalanuvchiga butunlay
+ko'rinmas edi.
+
+**2-kamchilik - HAQIQIY ILDIZ SABAB (kod emas, ko'rinish/observability
+bo'shlig'i)**: Endpoint Agent'ning fayl tekshirish zanjiri
+(`check_hash` -> local/VT/MalwareBazaar) to'g'ri ishlab turibdi -
+lekin faqat fayl **ZARARLI** deb topilganda `report_incident` orqali
+Alert yaratilardi. Agar fayl **TOZA** chiqsa (haqiqiy hayotda
+ko'pchilik holat) - bu haqda Dashboard'da HECH QANDAY iz qolmasdi.
+Shuning uchun foydalanuvchi (to'g'ri asosda!) "agent fayllarni
+tekshirmayapti" deb xulosa chiqargan - aslida agent tekshirib turgan,
+lekin buning HECH QANDAY isboti ko'rinmagan.
+
+**Tuzatish**:
+1. `config/settings.py`: yangi `AGENT_ONLINE_THRESHOLD_MINUTES`
+   (standart 15 daqiqa = ~3 heartbeat davri).
+2. `dashboard/app.py`: yangi `_agent_status()` funksiyasi
+   (`online`/`offline`/`None`). `/devices` sahifasiga "Endpoint Agent"
+   ustuni (holat + OS + versiya + oxirgi heartbeat), bosh sahifaga
+   "Agent: Online/Offline" xulosa kartochkalari qo'shildi - AD/LDAP
+   SHART EMAS.
+3. `agent_core/agent.py`: `check_hash_with_server_or_cache()` endi
+   `filename`/`hostname`/`ip_address`ni ham serverga yuboradi (faqat
+   ko'rinish uchun - tekshiruv natijasiga ta'sir qilmaydi).
+4. `api/server.py`: `check_hash` endi har bir tekshiruvni (TOZA
+   bo'lsa ham) `file_events` jadvaliga `channel="endpoint_agent"`
+   bilan yozadi (`_log_endpoint_scan()`). `/files` sahifasiga "Faqat
+   Endpoint Agent" filtri va "Kanal" ustuni qo'shildi.
+
+**Real test qilingan (SQLite VA PostgreSQL, ikkalasida ham)**: sandbox'da
+`pip`/`sqlalchemy` o'rnatilmagan edi - shuning uchun avvalgi sessiyada
+qurilgan `network_security_system-agent_api` Docker image'i (barcha
+bog'liqliklar bilan) ishlatilib, joriy worktree kodi shu konteynerga
+mount qilindi. Natija: online/offline holat real Device yozuvlari
+bilan (`/devices` va bosh sahifa HTTP orqali) va toza+zararli fayl
+tekshiruvi `file_events`'ga to'g'ri yozilishi (`/files?channel=
+endpoint_agent` filtri bilan) tasdiqlandi. O'zgarishlar kiritilmagan
+holatdagi (`git stash`) test natijasi bilan solishtirilib, mavjud 5
+ta muvaffaqiyatsizlik (SMTP/`git`/`yaml`/`pg_dump` - shu Docker
+image'da o'rnatilmagan vositalar, kod xatosi EMAS) o'zgarishsiz
+qolgani, va yangi test ham SQLite'da, ham PostgreSQL'da (alohida,
+vaqtinchalik `run_full_test_ci` bazasi orqali, keyin o'chirilgan)
+muvaffaqiyatli o'tgani tasdiqlandi.
+
+VERSION 1.0.8 -> 1.0.9 (`agent_core/agent.py`ning `check_hash` so'rov
+payload'i o'zgardi - Windows Agent qayta build/deploy qilinishi kerak).
 
 ## Foydalanuvchi qulayligi: API_SERVER_URL doimiy SYSVOL faylidan
 

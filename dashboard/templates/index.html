@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Umumiy holat</h1>
 
-<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px;">
+<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px;">
     <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div style="font-size: 26px; font-weight: 700;">{{ stats.device_count }}</div>
         <div style="font-size: 12px; color: #95a5a6;">Qurilmalar</div>
@@ -20,6 +20,17 @@
         <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.malicious_files }}</div>
         <div style="font-size: 12px; color: #95a5a6;">Zararli fayllar / {{ stats.clean_files }} toza</div>
     </div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px;">
+    <a href="/devices" style="text-decoration:none; color:inherit; background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ stats.agents_online }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Agent: Online</div>
+    </a>
+    <a href="/devices" style="text-decoration:none; color:inherit; background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: {% if stats.agents_offline > 0 %}#c0392b{% else %}#95a5a6{% endif %};">{{ stats.agents_offline }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Agent: Offline</div>
+    </a>
 </div>
 
 <h1>Oxirgi 10 ta alert</h1>

@@ -183,8 +183,14 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    from datetime import timedelta
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+
     session = get_session()
     try:
+        agent_cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
+        agents_installed = session.query(Device).filter(Device.agent_last_heartbeat.isnot(None)).count()
+        agents_online = session.query(Device).filter(Device.agent_last_heartbeat >= agent_cutoff).count()
         stats = {
             "device_count": session.query(Device).count(),
             "alert_count": session.query(Alert).count(),
@@ -193,6 +199,8 @@ def index():
             "malicious_files": session.query(FileEvent).filter(FileEvent.verdict == "malicious").count(),
             "clean_files": session.query(FileEvent).filter(FileEvent.verdict == "clean").count(),
             "event_count": session.query(Event).count(),
+            "agents_online": agents_online,
+            "agents_offline": agents_installed - agents_online,
         }
         recent_alerts = session.query(Alert).order_by(Alert.timestamp.desc()).limit(10).all()
         recent_alerts_data = [_alert_to_dict(session, a) for a in recent_alerts]
@@ -236,6 +244,21 @@ def acknowledge_alert(alert_id):
         session.close()
 
 
+def _agent_status(agent_last_heartbeat):
+    """
+    "online" / "offline" / None (agent umuman o'rnatilmagan - hech
+    qachon heartbeat yubormagan) - `Device.agent_last_heartbeat` va
+    `AGENT_ONLINE_THRESHOLD_MINUTES` asosida.
+    """
+    from datetime import timedelta
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+
+    if agent_last_heartbeat is None:
+        return None
+    cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
+    return "online" if agent_last_heartbeat >= cutoff else "offline"
+
+
 @app.route("/devices")
 @login_required
 def devices():
@@ -250,6 +273,9 @@ def devices():
                 "hostname": d.hostname, "connection_type": d.connection_type,
                 "source": d.source, "last_seen": d.last_seen, "alert_count": alert_count,
                 "risk_score": d.risk_score or 0,
+                "agent_status": _agent_status(d.agent_last_heartbeat),
+                "agent_last_heartbeat": d.agent_last_heartbeat,
+                "agent_version": d.agent_version, "agent_os": d.agent_os,
             })
         return render_template("devices.html", devices=devices_data)
     finally:
@@ -367,11 +393,14 @@ def files():
     session = get_session()
     try:
         verdict_filter = request.args.get("verdict", "")
+        channel_filter = request.args.get("channel", "")
         query = session.query(FileEvent)
         if verdict_filter:
             query = query.filter(FileEvent.verdict == verdict_filter)
+        if channel_filter:
+            query = query.filter(FileEvent.channel == channel_filter)
         all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
-        return render_template("files.html", files=all_files, verdict_filter=verdict_filter)
+        return render_template("files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter)
     finally:
         session.close()
 

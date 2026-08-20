@@ -72,11 +72,54 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def _log_endpoint_scan(session, data: dict, sha256: str, malicious: bool, threat_name: str, source: str):
+    """
+    Endpoint Agent tomonidan tekshirilgan har bir faylni `file_events`
+    jadvaliga yozadi - Dashboard'ning "Fayllar" sahifasida ko'rinishi
+    uchun.
+
+    MUHIM: bu yozuv YO'Q edi - agent zararli fayl topmaguncha (Alert
+    yaratilmaguncha) Dashboard'da agentning HECH QANDAY faoliyati
+    ko'rinmas edi, garchi agent aslida har bir yangi faylni haqiqatan
+    tekshirayotgan bo'lsa ham. Bu foydalanuvchida "agent fayllarni
+    tekshirmayapti" degan noto'g'ri taassurot qoldirgan. `hostname`/
+    `ip_address` yuborilmasa (masalan eski agent versiyasi yoki boshqa
+    chaqiruvchi) - jim o'tkazib yuboriladi, tekshiruv natijasiga
+    ta'sir qilmaydi.
+    """
+    hostname = data.get("hostname")
+    ip_address = data.get("ip_address")
+    if not hostname or not ip_address:
+        return
+
+    filename = data.get("filename") or ""
+    file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else None
+
+    entry = FileEvent(
+        src_ip=ip_address,
+        filename=filename,
+        file_ext=file_ext,
+        sha256=sha256,
+        protocol="endpoint",
+        channel="endpoint_agent",
+        checked=True,
+        verdict="malicious" if malicious else "clean",
+        threat_score=100 if malicious else 0,
+        checked_sources=source or "endpoint_agent",
+    )
+    session.add(entry)
+
+    device = session.query(Device).filter(Device.ip_address == ip_address).first()
+    if device is not None:
+        device.hostname = hostname
+        device.last_seen = utcnow()
+
+
 @app.route("/api/v1/check_hash", methods=["POST"])
 @require_api_key
 def check_hash():
     """
-    So'rov: {"sha256": "...", "filename": "invoice.exe"}
+    So'rov: {"sha256": "...", "filename": "invoice.exe", "hostname": "...", "ip_address": "..."}
     Javob:  {"malicious": bool, "confirmed": bool, "threat_name": str|null, "source": str}
 
     MUHIM: `confirmed` maydoni - Endpoint Agent avtomatik karantin/
@@ -87,6 +130,10 @@ def check_hash():
     berishi talab qilinadi. MalwareBazaar (kurallangan zararli dastur
     bazasi) va mahalliy qora ro'yxat esa har doim "tasdiqlangan"
     hisoblanadi (aniq, deterministik moslik).
+
+    `hostname`/`ip_address`/`filename` ixtiyoriy - berilsa, tekshiruv
+    Dashboard'ning "Fayllar" sahifasida ko'rish uchun qayd etiladi
+    (pastdagi `_log_endpoint_scan` orqali).
     """
     data = request.get_json(silent=True) or {}
     sha256 = (data.get("sha256") or "").lower().strip()
@@ -98,6 +145,8 @@ def check_hash():
     try:
         local_result = check_local(session, sha256)
         if local_result:
+            _log_endpoint_scan(session, data, sha256, True, local_result.get("threat_name"), local_result.get("source") or "local")
+            session.commit()
             return jsonify({
                 "malicious": True,
                 "confirmed": True,
@@ -115,6 +164,8 @@ def check_hash():
             confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
             if confirmed:
                 _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
+            _log_endpoint_scan(session, data, sha256, True, vt.get("threat_name"), "virustotal")
+            session.commit()
             return jsonify({
                 "malicious": True, "confirmed": confirmed,
                 "threat_name": vt.get("threat_name"), "source": "virustotal",
@@ -124,8 +175,12 @@ def check_hash():
         mb = check_malwarebazaar(sha256)
         if mb and mb.get("malicious"):
             _add_to_blacklist(session, sha256, mb.get("threat_name"), "malwarebazaar")
+            _log_endpoint_scan(session, data, sha256, True, mb.get("threat_name"), "malwarebazaar")
+            session.commit()
             return jsonify({"malicious": True, "confirmed": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
 
+        _log_endpoint_scan(session, data, sha256, False, None, None)
+        session.commit()
         return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
     finally:
         session.close()

@@ -142,10 +142,20 @@ def compute_sha256(filepath: str) -> str:
     return h.hexdigest()
 
 
-def check_hash_with_server_or_cache(sha256: str, cache: dict) -> dict:
+def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = None,
+                                     hostname: str = None, ip_address: str = None) -> dict:
     """
     Avval markaziy serverga so'raydi. Server bilan bog'lanib bo'lmasa
     (offline holat) - mahalliy keshga tayanadi (fail-safe).
+
+    MUHIM: `filename`/`hostname`/`ip_address` FAQAT server tomonida
+    Dashboard'ning "Fayllar" sahifasida ko'rinish (agent haqiqatan
+    fayllarni tekshirayotganining isboti) uchun yuboriladi - tekshiruv
+    natijasining o'ziga ta'sir qilmaydi. Bungacha agent tomonidan
+    tekshirilgan (lekin toza chiqqan) fayllar Dashboard'da HECH QAYERDA
+    ko'rinmas edi - faqat zararli topilganda Alert yaratilardi, shuning
+    uchun foydalanuvchi "agent fayllarni tekshirmayapti" deb noto'g'ri
+    xulosaga kelishi mumkin edi.
     """
     if sha256 in cache:
         logger.debug(f"Kesh'dan topildi: {sha256[:12]}...")
@@ -154,7 +164,12 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict) -> dict:
     try:
         resp = requests.post(
             f"{API_SERVER_URL}/api/v1/check_hash",
-            json={"sha256": sha256},
+            json={
+                "sha256": sha256,
+                "filename": filename,
+                "hostname": hostname,
+                "ip_address": ip_address,
+            },
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
             # MUHIM (real production'da aniqlangan xato): LocalSystem
@@ -274,7 +289,12 @@ class EndpointAgent:
             return
 
         logger.info(f"Tekshirilmoqda: {filepath} (SHA256={sha256[:16]}...)")
-        result = check_hash_with_server_or_cache(sha256, self.cache)
+        result = check_hash_with_server_or_cache(
+            sha256, self.cache,
+            filename=os.path.basename(filepath),
+            hostname=self.hostname,
+            ip_address=self.ip_address,
+        )
 
         if not result.get("malicious"):
             logger.info(f"Toza: {filepath}")

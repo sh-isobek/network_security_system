@@ -7,7 +7,7 @@
 <table>
     <tr>
         <th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
-        <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Alertlar</th><th>Risk Score</th>
+        <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Endpoint Agent</th><th>Alertlar</th><th>Risk Score</th>
     </tr>
     {% for d in devices %}
     <tr>
@@ -17,6 +17,20 @@
         <td>{{ {'wifi': 'Wi-Fi', 'cable': 'Kabel'}.get(d.connection_type, d.connection_type or 'Nomalum') }}</td>
         <td class="mono">{{ d.source or '-' }}</td>
         <td class="mono">{{ d.last_seen | local_dt }}</td>
+        <td>
+            {% if d.agent_status == 'online' %}
+            <span class="badge" style="background: #27ae60;">ONLINE</span>
+            {% elif d.agent_status == 'offline' %}
+            <span class="badge" style="background: #c0392b;">OFFLINE</span>
+            {% else %}
+            <span style="color:#95a5a6;">o'rnatilmagan</span>
+            {% endif %}
+            {% if d.agent_last_heartbeat %}
+            <div style="font-size:11px; color:#95a5a6; margin-top:2px;">
+                {{ d.agent_os or '' }} {{ d.agent_version or '' }} &middot; {{ d.agent_last_heartbeat | local_dt }}
+            </div>
+            {% endif %}
+        </td>
         <td>
             {% if d.alert_count > 0 %}
             <span class="badge" style="background: #c0392b;">{{ d.alert_count }}</span>

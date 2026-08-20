@@ -4337,6 +4337,118 @@ def _test_service_wrapper_actually_runs_without_nameerror():
 check("service_wrapper.py: HAQIQATAN import/chaqirilganda NameError yo'q (CI regressiyasi tuzatilgan)", _test_service_wrapper_actually_runs_without_nameerror)
 
 # ---------------------------------------------------------------------------
+print("\n=== 65) Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi ===")
+
+
+def _test_agent_online_offline_status():
+    """
+    Foydalanuvchi so'ragan 2 ta kamchilik:
+      1) Dashboard'da ulangan agentlarning online/offline holati ko'rinmasdi.
+      2) Agent tekshirgan (lekin toza chiqqan) fayllar Dashboard'da HECH
+         QAYERDA ko'rinmasdi - faqat zararli topilganda Alert yaratilardi,
+         shuning uchun "agent fayllarni tekshirmayapti" degan noto'g'ri
+         taassurot paydo bo'lardi.
+
+    Bu test ikkalasini ham real HTTP (Flask test client) + real DB orqali
+    tasdiqlaydi.
+    """
+    from datetime import timedelta
+    from dashboard.app import _agent_status
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+    from db.models import utcnow
+
+    now = utcnow()
+
+    # --- 1) _agent_status() mantig'i ---
+    assert _agent_status(None) is None
+    assert _agent_status(now) == "online"
+    assert _agent_status(now - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES + 5)) == "offline"
+
+    # --- 2) devices() route'da real qurilma online/offline ko'rinishi ---
+    s = get_session()
+    online_dev = Device(
+        ip_address="172.16.9.51", hostname="ONLINE-PC", source="endpoint_agent",
+        agent_last_heartbeat=now, agent_version="1.0.8", agent_os="windows",
+    )
+    offline_dev = Device(
+        ip_address="172.16.9.52", hostname="OFFLINE-PC", source="endpoint_agent",
+        agent_last_heartbeat=now - timedelta(hours=5), agent_version="1.0.8", agent_os="windows",
+    )
+    s.add_all([online_dev, offline_dev])
+    s.commit()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("agentstatus_ci_admin", "agentstatusci123", "admin")
+    dashboard_app.secret_key = "test-secret-agent-status"
+    client = dashboard_app.test_client()
+    client.post("/login", data={"username": "agentstatus_ci_admin", "password": "agentstatusci123"})
+
+    resp = client.get("/devices")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "ONLINE-PC" in html and "OFFLINE-PC" in html
+    assert "ONLINE" in html
+    assert "OFFLINE" in html
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+
+    # --- 3) check_hash orqali agent tekshirgan (toza VA zararli) fayllar
+    #         file_events jadvalida (Dashboard "Fayllar" sahifasi manbasi)
+    #         paydo bo'lishi ---
+    from api import server as api_server
+    api_server.AGENT_API_KEY = "test-key-online-offline"
+    api_client = api_server.app.test_client()
+
+    clean_sha = "d" * 64
+    r = api_client.post("/api/v1/check_hash", json={
+        "sha256": clean_sha, "filename": "gilocht.pdf",
+        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+    }, headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+    assert r.get_json()["malicious"] is False
+
+    s = get_session()
+    s.add(HashBlacklist(sha256="e" * 64, threat_name="Agent-Visibility-Test", source="manual"))
+    s.commit()
+    s.close()
+
+    r = api_client.post("/api/v1/check_hash", json={
+        "sha256": "e" * 64, "filename": "virus.exe",
+        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+    }, headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+    assert r.get_json()["malicious"] is True
+
+    s = get_session()
+    clean_event = s.query(FileEvent).filter(FileEvent.sha256 == clean_sha).first()
+    malicious_event = s.query(FileEvent).filter(FileEvent.sha256 == "e" * 64).first()
+    assert clean_event is not None, "Toza fayl ham file_events'ga yozilishi kerak edi (agent faoliyati ko'rinishi uchun)"
+    assert clean_event.verdict == "clean"
+    assert clean_event.channel == "endpoint_agent"
+    assert clean_event.filename == "gilocht.pdf"
+    assert malicious_event is not None
+    assert malicious_event.verdict == "malicious"
+    assert malicious_event.threat_score == 100
+    s.close()
+
+    # --- 4) hostname/ip_address yuborilmasa (eski chaqiruvchi/test) - xato bermasligi ---
+    r = api_client.post("/api/v1/check_hash", json={"sha256": "f" * 64},
+                         headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+
+    # --- 5) /files sahifasida "Faqat Endpoint Agent" filtri ishlashi ---
+    resp = client.get("/files?channel=endpoint_agent")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "gilocht.pdf" in html
+
+
+check("Dashboard: Agent Online/Offline holati + Fayllar sahifasida agent faoliyati ko'rinishi", _test_agent_online_offline_status)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
