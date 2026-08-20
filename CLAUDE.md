@@ -90,7 +90,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 65/65 test o'tadi (`run_full_test.py`).**
+**Joriy: 66/66 test o'tadi (`run_full_test.py`).**
 
 ## Foydalanuvchi qulayligi: API_SERVER_URL doimiy SYSVOL faylidan
 
@@ -124,6 +124,55 @@ yangilanganda bu ikkala faylga tegishning hojati yo'q" aniq
 ta'kidlandi.
 
 VERSION 1.0.7 -> 1.0.8.
+
+## Dashboard: qurilma "tarmoqqa ulangan/uzilgan" holati + qurilmalar soni (production diagrammasi bo'yicha moslashtirish)
+
+Foydalanuvchi production arxitekturasini (Ubuntu Server 172.16.1.206,
+server `.env`da faqat `AGENT_API_KEY`, Windows Agent'da SYSVOL orqali
+`API_SERVER_URL`+`AGENT_API_KEY`) diagramma bilan tasdiqlab, Dashboard'ni
+shunga moslab: (1) qurilmalarning tarmoqqa ulangan/ulanmaganini,
+(2) qurilmalar sonini, (3) fayl tekshirish oqimini "ishlaydigan holatga"
+keltirishni so'radi.
+
+**Tekshiruv natijasi**: server<->agent konfiguratsiya arxitekturasi
+(`agent_api` xizmati `env_file: .env` orqali FAQAT `AGENT_API_KEY`ni
+o'qiydi, `api_server_url.txt`/`AGENT_API_KEY` SYSVOL naqshi allaqachon
+1.0.8'da qurilgan) va fayl tekshirish zanjiri (`file_analysis_engine`,
+`suricata_reader`, `deep_scan_engine` - barchasi `docker-compose.yml`da
+PROFILSIZ, standart holatda ishga tushadi) **allaqachon so'ralgan
+diagrammaga mos edi** - o'zgartirish talab qilinmadi.
+
+**Haqiqiy bo'shliq**: Dashboard'da qurilmaning tarmoqqa ulangan/uzilgan
+holati (onlayn/offlayn) umuman ko'rsatilmasdi, va `/devices` sahifasi
+sarlavhasi jami qurilmalar sonini emas, faqat qaytarilgan (200 taga
+cheklangan) ro'yxat uzunligini ko'rsatardi.
+
+**Qurilgan**:
+- `config/settings.py`: yangi `DEVICE_OFFLINE_THRESHOLD_MINUTES`
+  (standart 60 daqiqa, `network_discovery.scheduler`ning standart
+  1 soatlik skanerlash intervaliga mos) - `Device.last_seen` shu
+  vaqtdan eski bo'lsa, qurilma "OFFLAYN" hisoblanadi.
+- `dashboard/app.py`: `/devices` va `/` (index) - onlayn/offlayn
+  hisob-kitob, `/devices?status=online|offline` filtri, va `/devices`
+  sarlavhasi endi haqiqiy JAMI sonni ko'rsatadi (ro'yxat cheklovidan
+  mustaqil).
+- `dashboard/templates/devices.html`, `index.html`: ONLAYN/OFFLAYN
+  badge, jami/onlayn/offlayn statistika kartochkalari.
+
+**Real test qilingan**: yangi `run_full_test.py` test #66 - real HTTP
+orqali (`dash_app.test_client()`) ikkita test qurilma (so'nggi 2
+daqiqada ko'rilgan va 5 soat oldin ko'rilgan) yaratilib, `/devices`
+sahifasida to'g'ri ONLAYN/OFFLAYN belgilanishi, status filtri, va
+sarlavhadagi haqiqiy jami son tasdiqlandi. Ham SQLite, ham PostgreSQL'da
+o'tdi.
+
+**Diqqat (halol)**: bu "onlayn/offlayn" belgisi `Device.last_seen`
+(DHCP/DNS/Suricata trafigi, ARP/ICMP skanerlash yoki UniFi sinxronizatsiyasi
+orqali yangilanadi) asosida - alohida `network_discovery.scheduler --loop`
+xizmati (host tarmoq huquqi talab qiladigan, `--profile discovery`
+ortidagi) ishlamasa ham universal ishlaydi, lekin bu "ping orqali real
+vaqtli" tekshiruv emas - eng so'nggi ko'rilgan trafik/skanerlash vaqtiga
+asoslangan taxmin.
 
 ## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
 

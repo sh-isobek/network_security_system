@@ -52,3 +52,11 @@ QUARANTINE_BACKEND = os.getenv("QUARANTINE_BACKEND", "unifi")
 # variantlar: "mikrotik" | "opnsense" | "linux_nftables"
 FIREWALL_BACKEND = os.getenv("FIREWALL_BACKEND", "mikrotik")
 
+# ---- Dashboard: qurilma "tarmoqqa ulangan/ulanmagan" holati ----
+# `Device.last_seen` (DHCP/DNS/Suricata trafigi, ARP/ICMP skanerlash yoki
+# UniFi sinxronizatsiyasidan yangilanadi) shu vaqtdan ko'proq eski bo'lsa,
+# qurilma Dashboard'da "Offlayn/Uzilgan" deb ko'rsatiladi. Standart 60
+# daqiqa - bu network_discovery scheduler'ning standart 1 soatlik
+# skanerlash intervaliga (`--interval 3600`) mos keladi.
+DEVICE_OFFLINE_THRESHOLD_MINUTES = int(os.getenv("DEVICE_OFFLINE_THRESHOLD_MINUTES", "60"))
+
