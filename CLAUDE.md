@@ -90,8 +90,63 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 | — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
+| — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 
-**Joriy: 66/66 test o'tadi (`run_full_test.py`).**
+**Joriy: 68/68 test o'tadi (`run_full_test.py`).**
+
+## GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll)
+
+Foydalanuvchi haqiqiy `Deploy-NetworkSecurityAgent.ps1`/`Install-
+NetworkSecurityAgent.ps1` fayllarini ko'rsatib, ikkita yangi funksiya
+so'radi: (1) ulanayotgan server manzili va API kalit `.env` faylidan
+olinsin, (2) AD orqali avtomatik ulanayotgan har bir kompyuter uchun
+YANGI, alohida API token yaratilib biriktirilsin (shu paytgacha
+barcha agentlar BITTA umumiy `AGENT_API_KEY`ni ishlatgan).
+
+**1) `.env` orqali sozlash**: `Deploy-NetworkSecurityAgent.ps1` va
+`Install-NetworkSecurityAgent.ps1`ga `Read-DotEnv` funksiyasi
+qo'shildi - avvalgi ikkita alohida fayl (`api_server_url.txt` +
+`api_key.secret`) o'rniga BITTA `.env` (server tomonidagi
+`.env.example` bilan bir xil `KEY=VALUE` format) o'qiladi. ORQAGA
+MOSLIK saqlangan: `.env` topilmasa, eski ikkita fayl hali ham
+ishlaydi - mavjud SYSVOL joylashuvlarini yangilash SHART EMAS.
+`Install-NetworkSecurityAgent.ps1`da `-ApiServerUrl`/`-ApiKey`
+Mandatory bo'lishdan chiqib, IXTIYORIY qilindi (skript papkasidagi
+`.env`dan o'qiladi, hech qaysi manbada topilmasa xato beriladi).
+
+**2) AD auto-enroll (har kompyuter uchun alohida token)**:
+- `db/models.py`: `ApiToken`ga yangi `agent_hostname` ustuni
+  (nullable - avtomatik migratsiya orqali qo'shiladi).
+- `api/token_manager.py`: yangi `enroll_agent_token(hostname)` -
+  shu hostname uchun avval chiqarilgan FAOL tokenlarni bekor qilib
+  (idempotent qayta-enroll), yangi, alohida token qaytaradi.
+- `api/server.py`: yangi `POST /api/v1/agent_enroll` endpoint
+  (`require_api_key` bilan himoyalangan - ya'ni chaqiruvchida
+  ALLAQACHON bironta amaldagi kalit, odatda umumiy "bootstrap"
+  `AGENT_API_KEY`, bo'lishi kerak).
+- `Deploy-NetworkSecurityAgent.ps1`: birinchi marta ishga tushganda
+  (mahalliy `C:\ProgramData\NetworkSecurityAgent\agent_api_token.
+  secret` fayli hali yo'q bo'lsa) `/api/v1/agent_enroll`ni bootstrap
+  kalit bilan chaqiradi, natijada olingan ALOHIDA tokenni mahalliy
+  saqlaydi va xizmat uchun shuni ishlatadi (bootstrap kalit endi
+  faqat DASTLABKI ishonch uchun). Enroll muvaffaqiyatsiz bo'lsa
+  (masalan tarmoq hali to'liq ko'tarilmagan) - fail-safe: bootstrap
+  kalit bilan davom etiladi, deploy to'xtamaydi, keyingi reboot'da
+  qayta urinib ko'radi.
+- `dashboard/templates/api_tokens.html`: yangi "Kompyuter" ustuni -
+  qaysi token qaysi hostname'ga tegishli ekanligi ko'rinadi.
+- `docs_WINDOWS_AGENT_SETUP.md` yangilandi.
+
+**Real test qilingan (SQLite VA PostgreSQL)**: `.env`/orqaga-moslik
+matn-asosida (PowerShell bu sandbox'da yo'q - Zeek/Grafana kabi
+holat, shuning uchun funksiya/o'zgaruvchi nomlari + qavslar balansi
+tekshirildi). Enroll zanjiri to'liq REAL HTTP + real DB orqali:
+bootstrap kalit -> `/api/v1/agent_enroll` -> yangi token -> o'sha
+token bilan `check_hash` ishlashi -> QAYTA enroll qilinganda ESKI
+token avtomatik bekor qilinishi (401 qaytarishi) va YANGI token
+ishlashi -> bazada bitta hostname uchun faqat BITTA faol token
+qolishi -> Dashboard `/api-tokens`da hostname ko'rinishi - barchasi
+tasdiqlandi.
 
 ## Dashboard: Endpoint Agent Online/Offline holati + "agent fayllarni tekshirmayapti" muammosining haqiqiy sababi
 

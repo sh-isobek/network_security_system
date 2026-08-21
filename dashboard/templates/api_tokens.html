@@ -17,10 +17,11 @@
 {% endif %}
 
 <table style="margin-bottom: 24px;">
-    <tr><th>Nomi</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
+    <tr><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
     {% for t in tokens %}
     <tr>
         <td>{{ t.name }}</td>
+        <td class="mono">{{ t.agent_hostname or '-' }}</td>
         <td class="mono">{{ t.token_prefix }}...</td>
         <td class="mono">{{ t.created_at | local_dt('%Y-%m-%d %H:%M') }}</td>
         <td>{{ t.created_by or '-' }}</td>

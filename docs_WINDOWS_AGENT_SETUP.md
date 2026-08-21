@@ -158,9 +158,9 @@ pyinstaller windows_agent\build\NetworkSecurityAgent.spec
     NetworkSecurityAgent\
       NetworkSecurityAgent.exe   ──►   Kompyuter yoqiladi
       VERSION                            │
-      api_key.secret                     ▼
-      api_server_url.txt          GPO Startup Script ishga tushadi
-                                    (SYSTEM huquqi bilan, login'dan oldin)
+      .env                               ▼
+        (API_SERVER_URL=...       GPO Startup Script ishga tushadi
+         AGENT_API_KEY=...)         (SYSTEM huquqi bilan, login'dan oldin)
                                           │
                                     Versiya solishtiradi:
                                     o'rnatilgan == mavjud?
@@ -168,18 +168,38 @@ pyinstaller windows_agent\build\NetworkSecurityAgent.spec
                                      HA           YO'Q
                                       │           │
                                   Chiqadi    .exe'ni nusxalaydi,
-                                  (jim)      xizmatni o'z 'install'
+                                  (jim)      HAR KOMPYUTER uchun ALOHIDA
+                                             API token so'raydi
+                                             (/api/v1/agent_enroll),
+                                             xizmatni o'z 'install'
                                              buyrug'i orqali
                                              o'rnatadi/yangilaydi
 ```
 
-**MUHIM (versiya yangilanishida qayta sozlash shart emas)**: `api_key.secret`
-va `api_server_url.txt` — ikkalasi ham SYSVOL'da **alohida, doimiy**
-fayllar. Siz ularni **FAQAT BIR MARTA** yaratasiz — `NetworkSecurityAgent.exe`
+**MUHIM (versiya yangilanishida qayta sozlash shart emas)**: `.env` —
+SYSVOL'da **alohida, doimiy** fayl (`.env.example` bilan bir xil
+format: `API_SERVER_URL=...` va `AGENT_API_KEY=...` qatorlari). Siz
+uni **FAQAT BIR MARTA** yaratasiz — `NetworkSecurityAgent.exe`
 va `Deploy-NetworkSecurityAgent.ps1` qancha marta yangilansa ham (masalan
-`docs`dagi keyingi tuzatishlar orqali), bu ikkala faylga **hech qachon
-tegilmaydi**. Deploy skripti har doim ularni SYSVOL'dan o'qiydi va
-skriptning o'z ichidagi standart qiymatlardan **ustun** qo'yadi.
+`docs`dagi keyingi tuzatishlar orqali), bu faylga **hech qachon
+tegilmaydi**. Deploy skripti har doim uni SYSVOL'dan o'qiydi va
+skriptning o'z ichidagi standart qiymatlaridan **ustun** qo'yadi.
+(Eski, ikkita alohida fayl — `api_key.secret` va `api_server_url.txt`
+— hali ham qo'llab-quvvatlanadi: agar `.env` topilmasa, ularga
+qaytiladi, shuning uchun avvalgi sozlashni yangilash SHART EMAS.)
+
+**MUHIM (yangi funksiya — har kompyuter uchun alohida API token)**:
+`.env`dagi `AGENT_API_KEY` endi faqat **bootstrap** (dastlabki ishonch)
+kalit sifatida ishlatiladi. Har bir kompyuter birinchi marta ishga
+tushganda, Deploy skripti markaziy serverdan (`POST /api/v1/agent_enroll`)
+SHU KOMPYUTERGA ALOHIDA tegishli API token so'raydi va uni mahalliy
+(`C:\ProgramData\NetworkSecurityAgent\agent_api_token.secret`) saqlaydi
+— shundan keyin xizmat umumiy bootstrap kalit o'rniga SHU tokenni
+ishlatadi. Bu tokenlar Dashboard'ning **"API Tokenlar"** sahifasida
+(`/api-tokens`, faqat admin) ko'rinadi va kerak bo'lsa alohida bekor
+qilinishi (revoke) mumkin — masalan bitta kompyuter yo'qolgan/
+buzilgan bo'lsa, faqat O'SHA kompyuterning tokenini bekor qilish
+kifoya, umumiy bootstrap kalitni o'zgartirish shart emas.
 
 ### 5.3. Sozlash qadamlari
 
@@ -193,23 +213,23 @@ New-Item -ItemType Directory -Path $SysvolPath -Force
 Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\NetworkSecurityAgent.exe" -Destination $SysvolPath
 Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\VERSION" -Destination $SysvolPath
 
-# API kalitini alohida faylga (bu fayl uchun ACL orqali faqat
-# "Domain Computers" guruhiga O'QISH huquqini bering, boshqa hech kimga)
-Set-Content -Path "$SysvolPath\api_key.secret" -Value "<markazdagi AGENT_API_KEY bilan bir xil>"
-
-# Server manzilini ham alohida faylga (BIR MARTA - keyingi versiya
-# yangilanishlarida bu faylga tegilmaydi, qayta yozish shart emas)
-Set-Content -Path "$SysvolPath\api_server_url.txt" -Value "http://<Ubuntu-server-IP>:8443"
+# Server manzili va bootstrap API kalitini BITTA `.env` fayliga
+# (bu fayl uchun ACL orqali faqat "Domain Computers" guruhiga
+# O'QISH huquqini bering, boshqa hech kimga) - BIR MARTA yaratiladi,
+# keyingi versiya yangilanishlarida bu faylga tegilmaydi.
+@"
+API_SERVER_URL=http://<Ubuntu-server-IP>:8443
+AGENT_API_KEY=<markazdagi AGENT_API_KEY bilan bir xil>
+"@ | Set-Content -Path "$SysvolPath\.env"
 ```
 
 **Yangilanish chiqarganda** (masalan versiya 1.1.0): yangi `.exe`ni
 yuklab oling, `$SysvolPath`dagi eskisini almashtiring, va
 `VERSION` faylini yangi raqamga o'zgartiring - GPO Startup Script
 bu farqni avtomatik payqab, barcha kompyuterlarni keyingi
-reboot'da yangilaydi. **`api_key.secret` va `api_server_url.txt`
-fayllariga tegishning HOJATI YO'Q** - ular alohida, doimiy
-konfiguratsiya, `.exe`/`Deploy-NetworkSecurityAgent.ps1` versiyasidan
-mustaqil.
+reboot'da yangilaydi. **`.env` fayliga tegishning HOJATI YO'Q** -
+u alohida, doimiy konfiguratsiya, `.exe`/`Deploy-NetworkSecurityAgent.ps1`
+versiyasidan mustaqil.
 
 **b) Deploy skriptini SYSVOL'ga qo'yish**:
 

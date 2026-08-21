@@ -10,17 +10,21 @@
 # Ishlatish (Administrator PowerShell'da, paket papkasida turib):
 #     .\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "http://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
 #
+# MUHIM (yangilandi): -ApiServerUrl/-ApiKey endi IXTIYORIY - agar
+# ko'rsatilmasa, skript shu papkadagi `.env` faylidan (`API_SERVER_URL=`
+# va `AGENT_API_KEY=` qatorlari) o'qishga urinadi. Bu Deploy-
+# NetworkSecurityAgent.ps1 (GPO)dagi bilan bir xil format - shuning
+# uchun SYSVOL paket papkasidan shu skript ishlatilayotgan joyga
+# `.env`ni ko'chirib qo'ysangiz, parametrlarni har safar qo'lda
+# kiritish shart bo'lmaydi. Hech qaysi manbada topilmasa, xato beriladi.
+#
 # MUHIM: bu skript Administrator huquqi bilan ishga tushirilishi kerak
 # (xizmat o'rnatish uchun). Agar PowerShell skript ijrosi bloklangan
 # bo'lsa: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
 
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$ApiServerUrl,
-
-    [Parameter(Mandatory=$true)]
-    [string]$ApiKey,
-
+    [string]$ApiServerUrl = "",
+    [string]$ApiKey = "",
     [string]$InstallDir = "C:\Program Files\NetworkSecurityAgent",
     [string]$ServiceName = "NetworkSecurityEndpointAgent"
 )
@@ -28,6 +32,38 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ExeSource = Join-Path $ScriptDir "NetworkSecurityAgent.exe"
+
+function Read-DotEnv {
+    param([string]$Path)
+    $result = @{}
+    if (-not (Test-Path $Path)) { return $result }
+    foreach ($line in Get-Content $Path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+        $parts = $trimmed.Split("=", 2)
+        if ($parts.Count -eq 2) {
+            $result[$parts[0].Trim()] = $parts[1].Trim()
+        }
+    }
+    return $result
+}
+
+if (-not $ApiServerUrl -or -not $ApiKey) {
+    $envValues = Read-DotEnv -Path (Join-Path $ScriptDir ".env")
+    if (-not $ApiServerUrl -and $envValues.ContainsKey("API_SERVER_URL")) {
+        $ApiServerUrl = $envValues["API_SERVER_URL"]
+        Write-Host "API_SERVER_URL '.env' faylidan o'qildi: $ApiServerUrl"
+    }
+    if (-not $ApiKey -and $envValues.ContainsKey("AGENT_API_KEY")) {
+        $ApiKey = $envValues["AGENT_API_KEY"]
+        Write-Host "AGENT_API_KEY '.env' faylidan o'qildi"
+    }
+}
+
+if (-not $ApiServerUrl -or -not $ApiKey) {
+    Write-Error "-ApiServerUrl va -ApiKey berilmagan, va shu papkada '.env' faylida ham topilmadi (API_SERVER_URL=... / AGENT_API_KEY=...)."
+    exit 1
+}
 
 # --- 0) Administrator huquqi tekshiruvi ---
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())

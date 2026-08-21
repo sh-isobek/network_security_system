@@ -4449,6 +4449,135 @@ def _test_agent_online_offline_status():
 check("Dashboard: Agent Online/Offline holati + Fayllar sahifasida agent faoliyati ko'rinishi", _test_agent_online_offline_status)
 
 # ---------------------------------------------------------------------------
+print("\n=== 66) GPO skriptlari: '.env' orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) ===")
+
+
+def _test_gpo_env_file_config():
+    """
+    Foydalanuvchi so'rovi (1): ulanayotgan server manzili va API kalit
+    endi BITTA `.env` faylidan (server tomonidagi `.env.example` bilan
+    bir xil format) o'qilishi kerak - avvalgi ikkita alohida fayl
+    (`api_server_url.txt` + `api_key.secret`) o'rniga. Orqaga moslik
+    saqlanishi SHART - '.env' topilmasa, eski fayllarga qaytish kerak.
+
+    PowerShell bu sandbox'da mavjud emas (Zeek/Grafana kabi holat) -
+    shuning uchun matn-asosida (funksiya/o'zgaruvchi nomlari mavjudligi,
+    mantiqiy tartib, qavslar balansi) tekshiriladi - bu loyihada
+    GPO skriptlari uchun ilgari ham qo'llanilgan usul.
+    """
+    deploy_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(deploy_path) as f:
+        deploy_content = f.read()
+
+    assert "Read-DotEnv" in deploy_content
+    assert 'Join-Path $ServerShare ".env"' in deploy_content
+    # Orqaga moslik - eski fayllar hali ham o'qiladi
+    assert "api_server_url.txt" in deploy_content
+    assert "api_key.secret" in deploy_content
+
+    install_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Install-NetworkSecurityAgent.ps1",
+    )
+    with open(install_path) as f:
+        install_content = f.read()
+
+    assert "Read-DotEnv" in install_content
+    assert "Mandatory=$true" not in install_content, (
+        "-ApiServerUrl/-ApiKey endi IXTIYORIY bo'lishi kerak (.env fallback bilan)"
+    )
+
+    for path, content in [(deploy_path, deploy_content), (install_path, install_content)]:
+        code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+        code_content = "".join(code_only)
+        for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+            assert code_content.count(open_c) == code_content.count(close_c), f"{path}: {open_c}{close_c} balansi buzilgan"
+
+
+check("GPO skriptlari: '.env' orqali sozlash (orqaga moslik bilan)", _test_gpo_env_file_config)
+
+
+def _test_agent_enroll_per_computer_token():
+    """
+    Foydalanuvchi so'rovi (2): AD orqali avtomatik ulanayotgan har bir
+    kompyuter uchun ALOHIDA API token yaratilsin va o'sha kompyuterga
+    biriktirilsin - shu paytgacha barcha agentlar bitta umumiy
+    AGENT_API_KEY'ni ishlatgan.
+
+    Real HTTP (Flask test client) + real DB orqali to'liq zanjir:
+    bootstrap kalit -> /api/v1/agent_enroll -> yangi, shu kompyuterga
+    xos token -> o'sha token bilan check_hash ishlashi -> qayta enroll
+    qilinsa eski token avtomatik bekor qilinishi -> Dashboard
+    /api-tokens sahifasida ko'rinishi.
+    """
+    from api import server as api_server
+    from db.models import ApiToken
+    api_server.AGENT_API_KEY = "bootstrap-key-enroll-test"
+    client = api_server.app.test_client()
+
+    # --- 1) hostname'siz so'rov - 400 ---
+    r = client.post("/api/v1/agent_enroll", json={},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 400
+
+    # --- 2) bootstrap kalit bilan enroll -> yangi, ALOHIDA token ---
+    r = client.post("/api/v1/agent_enroll", json={"hostname": "ENROLL-TEST-PC"},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 200
+    first_token = r.get_json()["token"]
+    assert first_token.startswith("nssk_")
+    assert first_token != "bootstrap-key-enroll-test"
+
+    s = get_session()
+    row = s.query(ApiToken).filter(ApiToken.agent_hostname == "ENROLL-TEST-PC", ApiToken.revoked.is_(False)).first()
+    assert row is not None, "enroll qilingan token bazada agent_hostname bilan bog'langan bo'lishi kerak"
+    assert row.created_by == "ad_auto_enroll"
+    s.close()
+
+    # --- 3) YANGI token o'zi bilan ham (bootstrap kalitsiz) boshqa so'rovlar ishlashi ---
+    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64},
+                     headers={"X-API-Key": first_token})
+    assert r.status_code == 200
+
+    # --- 4) bir xil hostname uchun QAYTA enroll -> eski token BEKOR qilinadi ---
+    r = client.post("/api/v1/agent_enroll", json={"hostname": "ENROLL-TEST-PC"},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 200
+    second_token = r.get_json()["token"]
+    assert second_token != first_token
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64},
+                     headers={"X-API-Key": first_token})
+    assert r.status_code == 401, "qayta enroll qilingandan keyin ESKI token endi ishlamasligi kerak (bekor qilingan)"
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64},
+                     headers={"X-API-Key": second_token})
+    assert r.status_code == 200, "YANGI token esa ishlashi kerak"
+
+    s = get_session()
+    active_count = s.query(ApiToken).filter(ApiToken.agent_hostname == "ENROLL-TEST-PC", ApiToken.revoked.is_(False)).count()
+    assert active_count == 1, "faqat BITTA faol token qolishi kerak - qayta enroll eskilarini bekor qiladi"
+    s.close()
+
+    # --- 5) Dashboard /api-tokens sahifasida hostname ko'rinishi ---
+    from dashboard.app import app as dash_app
+    from dashboard.create_user import create_user
+    create_user("enroll_ci_admin", "enrollci123456", "admin")
+    dash_app.secret_key = "test-secret-enroll"
+    dash_client = dash_app.test_client()
+    dash_client.post("/login", data={"username": "enroll_ci_admin", "password": "enrollci123456"})
+    r = dash_client.get("/api-tokens")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "ENROLL-TEST-PC" in html
+
+
+check("AD auto-enroll: har kompyuter uchun alohida, bekor qilinadigan API token (real HTTP + real DB)", _test_agent_enroll_per_computer_token)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

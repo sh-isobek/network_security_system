@@ -304,6 +304,37 @@ def agent_heartbeat():
         session.close()
 
 
+@app.route("/api/v1/agent_enroll", methods=["POST"])
+@require_api_key
+def agent_enroll():
+    """
+    AD/GPO orqali avtomatik joylashtirilayotgan har bir yangi kompyuter
+    uchun ALOHIDA, `/api-tokens` sahifasida ko'rinadigan va bekor
+    qilinadigan API token chiqaradi.
+
+    So'rov: {"hostname": "ACCOUNTING-PC"}
+    Javob:  {"token": "nssk_...", "hostname": "ACCOUNTING-PC"}
+
+    MUHIM: bu endpoint ham `require_api_key` orqali himoyalangan - ya'ni
+    chaqiruvchida ALLAQACHON bironta amaldagi kalit (odatda GPO orqali
+    SYSVOL'dan tarqatiladigan umumiy "bootstrap" `AGENT_API_KEY`) bo'lishi
+    kerak. Natijada olingan token esa SHU KOMPYUTERGA ALOHIDA tegishli -
+    Deploy-NetworkSecurityAgent.ps1 buni mahalliy saqlab, keyingi barcha
+    so'rovlar uchun umumiy bootstrap kalit o'rniga ishlatadi. Token
+    QAYTA KO'RSATILMAYDI - shuning uchun bir xil hostname uchun qayta
+    chaqirilsa, oldingi token(lar) avtomatik bekor qilinadi (pastga
+    qarang: `token_manager.enroll_agent_token`).
+    """
+    data = request.get_json(silent=True) or {}
+    hostname = (data.get("hostname") or "").strip()
+    if not hostname:
+        return jsonify({"error": "hostname majburiy"}), 400
+
+    token = token_manager.enroll_agent_token(hostname)
+    logger.info(f"AGENT ENROLL: '{hostname}' uchun yangi alohida API token chiqarildi")
+    return jsonify({"token": token, "hostname": hostname})
+
+
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8443"))
     logger.info(f"API server ishga tushmoqda: 0.0.0.0:{port}")
