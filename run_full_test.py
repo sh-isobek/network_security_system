@@ -4578,6 +4578,86 @@ def _test_agent_enroll_per_computer_token():
 check("AD auto-enroll: har kompyuter uchun alohida, bekor qilinadigan API token (real HTTP + real DB)", _test_agent_enroll_per_computer_token)
 
 # ---------------------------------------------------------------------------
+print("\n=== 67) Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) ===")
+
+
+def _test_user_activate_and_edit():
+    """
+    Foydalanuvchi so'rovi: foydalanuvchilarni boshqarishda (1) faolsiz
+    foydalanuvchini qayta faollashtira olish, (2) tahrirlash (rol
+    o'zgartirish, parol tiklash) funksiyalari qo'shilsin - avvalgi
+    versiyada faqat "yaratish" va "faolsizlantirish" bor edi, orqaga
+    qaytarib bo'lmasdi.
+    """
+    from dashboard.create_user import create_user
+    from dashboard.app import app as dash_app
+
+    create_user("useredit_ci_admin", "usereditci123", "admin")
+    create_user("useredit_ci_target", "targetpass123", "viewer")
+    dash_app.secret_key = "test-secret-useredit"
+    client = dash_app.test_client()
+    client.post("/login", data={"username": "useredit_ci_admin", "password": "usereditci123"})
+
+    s = get_session()
+    target = s.query(User).filter(User.username == "useredit_ci_target").first()
+    target_id = target.id
+    s.close()
+
+    # --- 1) Faolsizlantirish -> Faollashtirish (reaktivatsiya) ---
+    client.post(f"/users/{target_id}/deactivate")
+    s = get_session()
+    assert s.query(User).filter(User.id == target_id).first().is_active is False
+    s.close()
+
+    r = client.post(f"/users/{target_id}/activate", follow_redirects=True)
+    assert r.status_code == 200
+    s = get_session()
+    assert s.query(User).filter(User.id == target_id).first().is_active is True, "reaktivatsiyadan keyin foydalanuvchi FAOL bo'lishi kerak"
+    s.close()
+
+    # --- 2) Tahrirlash: rol o'zgartirish + parol tiklash ---
+    r = client.post(f"/users/{target_id}/edit", data={"role": "analyst", "password": "newpass456"}, follow_redirects=True)
+    assert r.status_code == 200
+    s = get_session()
+    updated = s.query(User).filter(User.id == target_id).first()
+    assert updated.role == "analyst", "rol 'analyst'ga o'zgargan bo'lishi kerak edi"
+    old_hash = updated.password_hash
+    s.close()
+
+    # Yangi parol bilan HAQIQATAN login qila olishini tekshirish
+    other_client = dash_app.test_client()
+    r = other_client.post("/login", data={"username": "useredit_ci_target", "password": "newpass456"}, follow_redirects=True)
+    assert r.status_code == 200
+    r2 = other_client.get("/")
+    assert r2.status_code == 200, "yangi parol bilan login muvaffaqiyatli bo'lishi va sahifaga kirish kerak edi"
+
+    # Eski parol endi ishlamasligi kerak
+    stale_client = dash_app.test_client()
+    stale_client.post("/login", data={"username": "useredit_ci_target", "password": "targetpass123"})
+    r3 = stale_client.get("/users")
+    assert r3.status_code != 200, "eski parol endi ishlamasligi kerak edi"
+
+    # --- 3) O'zini-o'zi qulflab qo'yishning oldini olish (o'z admin rolini o'zgartira olmaydi) ---
+    s = get_session()
+    self_id = s.query(User).filter(User.username == "useredit_ci_admin").first().id
+    s.close()
+    client.post(f"/users/{self_id}/edit", data={"role": "viewer"})
+    s = get_session()
+    assert s.query(User).filter(User.id == self_id).first().role == "admin", "admin o'z rolini o'zgartira OLMASLIGI kerak (qulflanib qolish xavfi)"
+    s.close()
+
+    # --- 4) Audit log'da qayd etilgani ---
+    from db.models import AuditLog
+    s = get_session()
+    actions = {a.action for a in s.query(AuditLog).filter(AuditLog.username == "useredit_ci_admin").all()}
+    assert "activate_user" in actions
+    assert "edit_user" in actions
+    s.close()
+
+
+check("Foydalanuvchilarni boshqarish: faollashtirish + tahrirlash (rol/parol, real HTTP + real DB)", _test_user_activate_and_edit)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

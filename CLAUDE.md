@@ -91,8 +91,35 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 | — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
+| — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 
-**Joriy: 68/68 test o'tadi (`run_full_test.py`).**
+**Joriy: 69/69 test o'tadi (`run_full_test.py`).**
+
+## Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol)
+
+Foydalanuvchi so'radi: `/users` sahifasida (1) faolsizlantirilgan
+foydalanuvchini qayta faollashtirish, (2) tahrirlash (rol o'zgartirish,
+parol tiklash) imkoni qo'shilsin - avvalgi versiyada faqat "yaratish"
+va "faolsizlantirish" (bir tomonlama) bor edi.
+
+Qo'shildi:
+- `dashboard/app.py`: yangi `POST /users/<id>/activate` (`is_active =
+  True`) va `POST /users/<id>/edit` (rol o'zgartirish va/yoki parol
+  tiklash - bo'sh parol maydoni "o'zgartirmaslik" degani). O'zini-o'zi
+  qulflab qo'yishning oldini olish uchun: admin o'z rolini boshqa
+  rolga o'zgartira olmaydi (xuddi "o'zini faolsizlantira olmaslik"
+  cheklovi kabi).
+- `dashboard/templates/users.html`: har bir qator uchun `<details>`
+  orqali (JS'siz, oddiy HTML) ochiladigan "Tahrirlash" formasi (rol +
+  yangi parol), va faolsiz foydalanuvchilar uchun "Faollashtirish"
+  tugmasi.
+- Ikkalasi ham audit log'ga yoziladi (`activate_user`, `edit_user`).
+
+**Real test qilingan (SQLite VA PostgreSQL)**: real HTTP orqali to'liq
+zanjir - foydalanuvchi faolsizlantirilib qayta faollashtirilishi,
+rol o'zgartirilishi, parol tiklanib YANGI parol bilan HAQIQATAN login
+qilinishi (eski parol endi ishlamasligi), admin o'z rolini o'zgartira
+OLMASLIGI, va har ikkala amal audit log'da qayd etilishi tasdiqlandi.
 
 ## GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll)
 

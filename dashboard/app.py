@@ -486,6 +486,72 @@ def deactivate_user(user_id):
     return redirect(url_for("users"))
 
 
+@app.route("/users/<int:user_id>/activate", methods=["POST"])
+@role_required("admin")
+def activate_user(user_id):
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user:
+            user.is_active = True
+            session.commit()
+            flash(f"'{user.username}' faollashtirildi", "success")
+            log_action(current_user.username, "activate_user", target_type="User",
+                       target_id=user.username, ip_address=request.remote_addr)
+        else:
+            flash("Foydalanuvchi topilmadi", "error")
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/edit", methods=["POST"])
+@role_required("admin")
+def edit_user(user_id):
+    """
+    Foydalanuvchining rolini o'zgartirish va/yoki parolini tiklash.
+    Login (username) o'zgartirilmaydi - bu identifikator sifatida
+    (audit log, ApiToken.created_by va h.k.) ishlatiladi.
+    """
+    new_role = request.form.get("role", "")
+    new_password = request.form.get("password", "").strip()
+
+    if new_role not in ("admin", "analyst", "viewer"):
+        flash("Noto'g'ri rol", "error")
+        return redirect(url_for("users"))
+
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            flash("Foydalanuvchi topilmadi", "error")
+            return redirect(url_for("users"))
+
+        changes = []
+        if user.role != new_role:
+            if user.username == current_user.username and new_role != "admin":
+                flash("O'zingizning admin rolingizni o'zgartira olmaysiz (o'zingizni qulflab qo'yish xavfi)", "error")
+                return redirect(url_for("users"))
+            user.role = new_role
+            changes.append(f"rol -> {new_role}")
+
+        if new_password:
+            user.password_hash = generate_password_hash(new_password)
+            changes.append("parol tiklandi")
+
+        if changes:
+            session.commit()
+            flash(f"'{user.username}' yangilandi: {', '.join(changes)}", "success")
+            log_action(current_user.username, "edit_user", target_type="User",
+                       target_id=user.username, details=", ".join(changes),
+                       ip_address=request.remote_addr)
+        else:
+            flash("Hech narsa o'zgartirilmadi", "success")
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
 def _alert_to_dict(session, alert: Alert) -> dict:
     device = session.query(Device).filter(Device.id == alert.device_id).first() if alert.device_id else None
     return {
