@@ -9,8 +9,8 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["security-dashboard.company.local"]
-      secretName: dashboard-tls
+    - hosts: ["security-dashboard.company.local", "security-agent-api.company.local"]
+      secretName: network-security-tls
   rules:
     - host: security-dashboard.company.local
       http:
@@ -22,3 +22,13 @@ spec:
                 name: dashboard
                 port:
                   number: 80
+    - host: security-agent-api.company.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-api
+                port:
+                  number: 8443

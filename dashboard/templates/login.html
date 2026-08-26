@@ -28,6 +28,7 @@
             {% endfor %}
         {% endwith %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label>Login</label>
             <input type="text" name="username" required autofocus>
             <label>Parol</label>

@@ -119,6 +119,7 @@ def verify_token(raw_token: str) -> Optional[ApiToken]:
             id=entry.id, name=entry.name, token_prefix=entry.token_prefix,
             created_by=entry.created_by, created_at=entry.created_at,
             last_used_at=entry.last_used_at, expires_at=entry.expires_at, revoked=entry.revoked,
+            agent_hostname=entry.agent_hostname,
         )
     finally:
         session.close()

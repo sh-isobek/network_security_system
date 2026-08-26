@@ -23,6 +23,7 @@ Ishga tushirish:
     python -m api.server
 """
 import hashlib
+import hmac
 import os
 import sys
 from functools import wraps
@@ -46,7 +47,7 @@ logger = logging.getLogger("api_server")
 app = Flask(__name__)
 
 # Oddiy shared-secret autentifikatsiya (production'da mTLS/HTTPS bilan almashtirilishi kerak)
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
+AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
 
 def require_api_key(fn):
@@ -55,15 +56,30 @@ def require_api_key(fn):
         provided = request.headers.get("X-API-Key", "")
 
         # 1) Eski, umumiy AGENT_API_KEY (orqaga moslik uchun saqlanadi)
-        if provided == AGENT_API_KEY:
+        if AGENT_API_KEY and hmac.compare_digest(provided, AGENT_API_KEY):
             return fn(*args, **kwargs)
 
         # 2) Yangi, alohida kuzatiladigan/bekor qilinadigan API token'lar
         token_info = token_manager.verify_token(provided)
-        if token_info is not None:
+        # Agent tokeni hostname'ga biriktirilgan bo'lsa, boshqa qurilma
+        # nomidan ma'lumot yuborishiga yo'l qo'ymaymiz. Qo'lda yaratilgan
+        # umumiy integratsiya tokenlarida agent_hostname bo'sh bo'ladi.
+        hostname = (request.get_json(silent=True) or {}).get("hostname")
+        if token_info is not None and (not token_info.agent_hostname or token_info.agent_hostname == hostname):
             return fn(*args, **kwargs)
 
         return jsonify({"error": "Ruxsat berilmagan - noto'g'ri API kalit"}), 401
+    return wrapper
+
+
+def require_bootstrap_key(fn):
+    """Yangi agent tokeni faqat bootstrap kaliti bilan chiqariladi."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        provided = request.headers.get("X-API-Key", "")
+        if not AGENT_API_KEY or not hmac.compare_digest(provided, AGENT_API_KEY):
+            return jsonify({"error": "Enrollment uchun bootstrap API kaliti kerak"}), 401
+        return fn(*args, **kwargs)
     return wrapper
 
 
@@ -305,7 +321,7 @@ def agent_heartbeat():
 
 
 @app.route("/api/v1/agent_enroll", methods=["POST"])
-@require_api_key
+@require_bootstrap_key
 def agent_enroll():
     """
     AD/GPO orqali avtomatik joylashtirilayotgan har bir yangi kompyuter

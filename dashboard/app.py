@@ -16,11 +16,12 @@ Ishga tushirish:
     python -m dashboard.app
 """
 import os
+import secrets
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session
+from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -32,8 +33,33 @@ from dashboard.audit import log_action
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
 
 app = Flask(__name__)
-app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
+app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "")
+if not app.secret_key:
+    raise RuntimeError("DASHBOARD_SECRET_KEY majburiy: Dashboard ishga tushirilmadi")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true",
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 login_manager.init_app(app)
+
+
+@app.context_processor
+def csrf_context():
+    """Har brauzer sessiyasi uchun tasodifiy CSRF tokenini template'larga beradi."""
+    token = flask_session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return {"csrf_token": token}
+
+
+@app.before_request
+def protect_post_requests():
+    # Login/MFA-verification hali autentifikatsiyadan o'tmagan oqimlar;
+    # ular sessiya huquqini o'zgartirmaydi. Barcha autentifikatsiyalangan
+    # boshqaruv POST so'rovlari esa token talab qiladi.
+    if request.method == "POST" and current_user.is_authenticated and not secrets.compare_digest(
+        request.form.get("csrf_token", ""), flask_session.get("csrf_token", "")
+    ):
+        abort(400, "CSRF token noto'g'ri yoki yo'q")
 
 
 @app.template_filter("local_dt")
@@ -81,6 +107,9 @@ def login():
                 login_user(UserWrapper(user))
                 log_action(username, "login", ip_address=request.remote_addr)
                 next_url = request.args.get("next") or url_for("index")
+                # Faqat shu dashboard ichidagi nisbiy URL'ga qaytamiz.
+                if not next_url.startswith("/") or next_url.startswith("//"):
+                    next_url = url_for("index")
                 return redirect(next_url)
             log_action(username, "login", success=False, ip_address=request.remote_addr,
                        details="Foydalanuvchi topilmadi/faolsiz/parol noto'g'ri")

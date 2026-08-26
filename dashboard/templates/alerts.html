@@ -40,6 +40,7 @@
             <span style="color:#27ae60; font-size:12px;">✅ {{ a.acknowledged_by }}</span>
             {% elif current_user.role in ('analyst', 'admin') %}
             <form method="POST" action="/alerts/{{ a.id }}/acknowledge">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" style="font-size:11px; padding:4px 8px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tasdiqlash</button>
             </form>
             {% else %}
