@@ -93,7 +93,75 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 
-**Joriy: 69/69 test o'tadi (`run_full_test.py`).**
+**Joriy: 73/73 test o'tadi (`run_full_test.py`).**
+
+## Parallel ishlarni birlashtirish: main + codex/fix-deployment-security + xavfsizlik auditi
+
+Foydalanuvchi xavfsizlik auditi (25 topilma) bo'yicha ishni davom
+ettirayotganda, `main` branch **mustaqil ravishda** (boshqa sessiya/
+vosita orqali) 3 ta yangi commit bilan oldinga ketgani, va ustiga
+yana bir yangi `codex/fix-deployment-security` branch paydo bo'lgani
+aniqlandi - u ham xuddi shu auditning ko'p qismini **mustaqil**
+tuzatgan edi (AGENT_API_KEY standart qiymati - `hmac.compare_digest`
+bilan hatto yaxshiroq, RabbitMQ portlari/credential, CSRF himoyasi,
+DASHBOARD_SECRET_KEY majburiy qilish, agent_enroll+per-hostname
+token, 8443/8080/3000 portlarining 127.0.0.1'ga bog'lanishi TLS
+reverse proxy uchun tayyorgarlik sifatida).
+
+**Qaror (foydalanuvchi tanladi)**: barcha uch yo'nalishni (mening
+branch'im, main'ning o'z ilgarilashi, codex branch) bitta yagona
+branch'ga birlashtirish - hech birini yo'qotmasdan.
+
+**Birlashtirish natijasi** (`git merge origin/codex/fix-deployment-
+security`, 9 ta fayl - `api/server.py`, `config/settings.py`,
+`dashboard/app.py`, `docker-compose.yml`, `.env.example`, ikkala
+dashboard shablon, `run_full_test.py`, `CLAUDE.md` - qo'lda hal
+qilingan real merge conflict):
+- Mening rate-limiting (Flask-Limiter) ishim va Grafana standart
+  parol tuzatishim SAQLANDI (codex bunga tegmagan edi).
+- AGENT_API_KEY solishtirish ularning `hmac.compare_digest`
+  (timing-safe) versiyasiga o'tkazildi - bu mening oddiy `==`
+  solishtirishimdan xavfsizroq edi.
+- RabbitMQ nomlanishi ularning `RABBITMQ_USER`/`RABBITMQ_PASSWORD`
+  konvensiyasiga moslashtirildi (docker-compose.yml/.env.example
+  bo'ylab izchil).
+- Dashboard onlayn/offlayn: mening `Device.last_seen`-asosli (BARCHA
+  qurilmalar - DHCP/DNS/Suricata/ARP/UniFi orqali ko'rilgan) va
+  ularning `agent_last_heartbeat`-asosli (FAQAT Endpoint Agent
+  o'rnatilgan qurilmalar) ko'rsatkichlari **bir-birini to'ldiruvchi**
+  ekanligi aniqlandi (ikki BOSHQA savolga javob beradi) - ikkalasi
+  ham `/devices` va bosh sahifada saqlab qolindi.
+
+**Topilgan va tuzatilgan 2 ta real xato** (merge'dan keyingi to'liq
+test o'tkazishda):
+1. Mening RabbitMQ/Grafana testim hali eski `RABBITMQ_DEFAULT_USER/
+   PASS` nomini tekshirardi - yangi nomlanishga yangilandi.
+2. codex'ning o'z `agent_enroll` testida haqiqiy xato bor edi: yangi
+   `require_api_key`dagi `agent_hostname` bog'lash mantig'i endi
+   so'rov tanasida `hostname` maydonini talab qiladi (boshqa qurilma
+   nomidan token ishlatishning oldini olish uchun) - lekin ularning
+   o'z testi buni yubormagan edi (401 kelib, test muvaffaqiyatsiz
+   bo'lardi). Haqiqiy Agent (`agent_core/agent.py`) buni doim
+   yuboradi - faqat test ad-hoc so'rovi buni unutgan edi, testga
+   mos maydon qo'shildi.
+
+**YANGI infratuzilma** (merge natijasida paydo bo'lgan, ikkala
+tomon ham alohida yechmagan muammo): codex'ning yangi CSRF himoyasi
+(`dashboard/app.py`, `@app.before_request`) BARCHA (ikkala tomondan
+ham, oldindan yozilgan) Dashboard POST testlarini 400 bilan buzib
+qo'ygan edi - `run_full_test.py`ga `_dash_client()` yordamchi
+funksiyasi qo'shildi (joriy sessiyadan `csrf_token`ni avtomatik
+o'qib, real brauzerdagi `<form>` xatti-harakatini takrorlaydi) va
+barcha 20 ta dashboard test-client yaratish joyi shunga o'tkazildi.
+Shuningdek `DASHBOARD_SECRET_KEY` (endi majburiy) va `AGENT_API_KEY`
+kabi standart qiymatlar `run_full_test.py` boshida markazlashtirildi.
+
+**Real test qilingan**: to'liq `run_full_test.py` (73 test) HAM
+SQLite'da, HAM PostgreSQL'da (bu safar haqiqiy production-o'xshash
+sinov - RabbitMQ real broker bilan, guest foydalanuvchisi ataylab
+o'chirilib, faqat maxsus credential bilan ulanish tekshirildi) -
+72/73 va 73/73 (LibreOffice flake bir marta, keyingi urinishda
+o'tdi - sandbox resurs cheklovi, kod xatosi emas).
 
 ## Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol)
 
