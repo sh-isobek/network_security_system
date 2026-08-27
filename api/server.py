@@ -30,6 +30,7 @@ from functools import wraps
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, request, jsonify
+from flask_limiter import Limiter
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
@@ -46,7 +47,54 @@ logger = logging.getLogger("api_server")
 app = Flask(__name__)
 
 # Oddiy shared-secret autentifikatsiya (production'da mTLS/HTTPS bilan almashtirilishi kerak)
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
+#
+# XAVFSIZLIK (CRITICAL, tuzatilgan): bu yerda ilgari `os.getenv("AGENT_API_KEY",
+# "change-me-in-production")` bor edi - agar administrator .env faylida
+# AGENT_API_KEY'ni sozlashni unutsa, server SHU ANIQ, OMMAVIY MA'LUM
+# (GitHub'dagi ochiq manba kodida ko'rinadigan) qatorni "to'g'ri kalit"
+# sifatida qabul qilardi - istalgan kishi shu standart qiymatni yuborib,
+# himoyalanmagan production serverga to'liq kirishi mumkin edi.
+#
+# Endi standart qiymat YO'Q. Agar AGENT_API_KEY bo'sh bo'lsa, eski umumiy-
+# kalit autentifikatsiya yo'li BUTUNLAY O'CHIRILADI (pastda `if AGENT_API_KEY
+# and ...`) - faqat per-agent, bekor qilinadigan token'lar (`api/token_
+# manager.py`, /api-tokens Dashboard sahifasi) orqali kirish qoladi. Bu
+# "yopiq holatda muvaffaqiyatsiz bo'lish" (fail-closed) - noto'g'ri
+# sozlangan server hech kimni HAM kiritmaydi, noto'g'ri kishini emas.
+AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
+if not AGENT_API_KEY:
+    logger.warning(
+        "AGENT_API_KEY sozlanmagan - eski umumiy-kalit autentifikatsiyasi "
+        "O'CHIRILGAN (faqat per-agent token'lar orqali kirish mumkin). "
+        "Eski Agent'lar bilan orqaga moslik kerak bo'lsa, .env faylida "
+        "AGENT_API_KEY'ga kuchli, tasodifiy qiymat bering."
+    )
+
+
+# --- Rate limiting (XAVFSIZLIK: agent API'ga hech qanday so'rov chegarasi
+# yo'q edi - bitta buzilgan/zararli agent yoki tokenni o'g'irlagan
+# hujumchi cheksiz `check_hash` so'rovi yuborib, serverni va tashqi
+# VirusTotal/MalwareBazaar API kvotasini ishdan chiqarishi mumkin edi). ---
+def _rate_limit_key() -> str:
+    """
+    Har bir agent/token uchun ALOHIDA chegara (bitta buzilgan agent
+    boshqalarni bloklab qo'ymasin) - autentifikatsiya kaliti mavjud
+    bo'lsa shundan (xeshlab, log/xotirada ochiq saqlanmasin), aks holda
+    so'rov IP manzilidan foydalaniladi.
+    """
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key:
+        return "key:" + hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+    return "ip:" + (request.remote_addr or "unknown")
+
+
+limiter = Limiter(
+    key_func=_rate_limit_key,
+    app=app,
+    default_limits=[os.getenv("API_RATE_LIMIT_GLOBAL", "1000 per minute")],
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+    headers_enabled=True,
+)
 
 
 def require_api_key(fn):
@@ -54,8 +102,11 @@ def require_api_key(fn):
     def wrapper(*args, **kwargs):
         provided = request.headers.get("X-API-Key", "")
 
-        # 1) Eski, umumiy AGENT_API_KEY (orqaga moslik uchun saqlanadi)
-        if provided == AGENT_API_KEY:
+        # 1) Eski, umumiy AGENT_API_KEY (orqaga moslik uchun saqlanadi, LEKIN
+        # faqat AGENT_API_KEY haqiqatan sozlangan bo'lsagina tekshiriladi -
+        # bo'sh/sozlanmagan holatda bu yo'l butunlay o'chiq, `provided`
+        # bo'sh qatorga TENGLASHIB "muvaffaqiyatli" bo'lib qolmasligi kerak).
+        if AGENT_API_KEY and provided == AGENT_API_KEY:
             return fn(*args, **kwargs)
 
         # 2) Yangi, alohida kuzatiladigan/bekor qilinadigan API token'lar
@@ -68,11 +119,13 @@ def require_api_key(fn):
 
 
 @app.route("/api/v1/health", methods=["GET"])
+@limiter.exempt
 def health():
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/v1/check_hash", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_CHECK_HASH", "100 per minute"))
 @require_api_key
 def check_hash():
     """
@@ -138,6 +191,7 @@ def _add_to_blacklist(session, sha256: str, threat_name: str, source: str):
 
 
 @app.route("/api/v1/report_incident", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_REPORT_INCIDENT", "10 per minute"))
 @require_api_key
 def report_incident():
     """
@@ -207,6 +261,7 @@ def report_incident():
 
 
 @app.route("/api/v1/agent_heartbeat", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_HEARTBEAT", "12 per minute"))
 @require_api_key
 def agent_heartbeat():
     """

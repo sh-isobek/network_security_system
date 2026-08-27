@@ -42,9 +42,21 @@ services:
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     restart: unless-stopped
+    environment:
+      # XAVFSIZLIK: standart RabbitMQ o'zi bilan keladigan "guest:guest"
+      # foydalanuvchisi FAQAT localhost'dan kirishga ruxsat beradi -
+      # lekin biz pastda 15672'ni tashqariga ochganimiz sabab (admin panel
+      # kerak), "guest" hech qachon yetarli emas edi. Endi .env'da
+      # majburiy, kuchli login/parol talab qilinadi.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER .env faylida majburiy}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS .env faylida majburiy}
     ports:
-      - "5672:5672"    # AMQP protokoli
-      - "15672:15672"  # Web boshqaruv paneli (http://localhost:15672)
+      # XAVFSIZLIK: 5672 (AMQP) endi TASHQARIGA UMUMAN OCHILMAYDI - faqat
+      # Docker'ning ichki tarmog'idagi boshqa xizmatlar (`rabbitmq:5672`
+      # nomi orqali) unga ulanadi, host portiga ehtiyoj yo'q. 15672
+      # (Web boshqaruv paneli) esa faqat 127.0.0.1'ga bog'langan - LAN'ga
+      # OCHIQ EMAS (kerak bo'lsa admin SSH tunnel/VPN orqali kiradi).
+      - "127.0.0.1:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
       interval: 10s
@@ -60,7 +72,10 @@ services:
     command: python -m collectors.syslog_server_queued
     env_file: .env
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+      # XAVFSIZLIK: standart "guest:guest" o'rniga rabbitmq xizmatiga
+      # sozlangan haqiqiy login/parol ishlatiladi (yuqoridagi RABBITMQ_
+      # DEFAULT_USER/PASS bilan bir xil).
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER .env faylida majburiy}:${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS .env faylida majburiy}@rabbitmq:5672/%2F
     ports:
       - "515:5140/udp"  # standart syslog_collector bilan bir vaqtda sinash uchun boshqa port
     profiles: ["queue"]  # standart holatda ishga tushmaydi: docker compose --profile queue up
@@ -75,7 +90,10 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+      # XAVFSIZLIK: standart "guest:guest" o'rniga rabbitmq xizmatiga
+      # sozlangan haqiqiy login/parol ishlatiladi (yuqoridagi RABBITMQ_
+      # DEFAULT_USER/PASS bilan bir xil).
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER .env faylida majburiy}:${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS .env faylida majburiy}@rabbitmq:5672/%2F
     profiles: ["queue"]
     depends_on:
       postgres:
@@ -266,7 +284,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # XAVFSIZLIK: standart qiymat ("admin") olib tashlandi - ilgari
+      # GRAFANA_ADMIN_PASSWORD .env'da sozlanmasa, Grafana taniqli
+      # admin/admin login bilan ochiq qolardi. Endi .env'da majburiy.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD .env faylida majburiy}
       GF_INSTALL_PLUGINS: ""
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning

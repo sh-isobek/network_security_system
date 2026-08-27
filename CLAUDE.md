@@ -90,7 +90,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
 
-**Joriy: 66/66 test o'tadi (`run_full_test.py`).**
+**Joriy: 69/69 test o'tadi (`run_full_test.py`).**
 
 ## Foydalanuvchi qulayligi: API_SERVER_URL doimiy SYSVOL faylidan
 
@@ -173,6 +173,90 @@ xizmati (host tarmoq huquqi talab qiladigan, `--profile discovery`
 ortidagi) ishlamasa ham universal ishlaydi, lekin bu "ping orqali real
 vaqtli" tekshiruv emas - eng so'nggi ko'rilgan trafik/skanerlash vaqtiga
 asoslangan taxmin.
+
+## Xavfsizlik auditi (foydalanuvchi tomonidan yuborilgan, 25 topilma) - bosqichma-bosqich tuzatish boshlandi
+
+Foydalanuvchi tashqi (o'zi yoki boshqa vosita orqali qilingan) chuqur
+xavfsizlik auditi natijasini yubordi - 15 ta topilma (TLS/mTLS yo'qligi,
+AGENT_API_KEY standart qiymati, RabbitMQ/Grafana ochiq portlar/parollar,
+rate limiting yo'qligi, replay himoyasi yo'qligi, Alembic migratsiya
+yo'qligi va h.k.) + 10 ta ustuvor tuzatish ro'yxati. Bu **25 ta alohida
+ish** - bittasini ham "ishlashi kerak" deb taxmin qilib qoldirib
+bo'lmaydi (ayniqsa TLS/mTLS, Prometheus/Grafana, AD/Kerberos kabi
+haqiqiy infratuzilma talab qiladiganlari). Foydalanuvchi "hammasini
+bosqichma-bosqich, ko'p sessiyada" qilishni tanladi.
+
+**Diqqat (halol)**: auditning ba'zi tafsilotlari koddagi haqiqiy holatga
+mos EMAS ekanligi aniqlandi (masalan `agent_enroll` nomli endpoint
+umuman mavjud emas - loyihada per-agent token'lar `api/token_manager.py`
+CLI orqali yaratiladi, o'z-o'zidan ro'yxatdan o'tish API'si yo'q). Har
+bir topilma ishga tushirishdan oldin real kodga qarab tekshirildi.
+
+**Bu sessiyada TO'LIQ qurilgan va real test qilingan (CRITICAL/HIGH,
+sandbox'da to'liq sinash mumkin bo'lganlar)**:
+
+1. **AGENT_API_KEY standart qiymati olib tashlandi (CRITICAL)** -
+   `api/server.py` va `agent_core/agent.py`da ilgari
+   `os.getenv("AGENT_API_KEY", "change-me-in-production")` bor edi -
+   administrator buni sozlashni unutsa, server OCHIQ MANBA KODIDA
+   HAMMA KO'RADIGAN aniq shu qatorni "to'g'ri kalit" deb qabul qilardi.
+   Endi standart qiymat YO'Q - AGENT_API_KEY bo'sh bo'lsa, eski
+   umumiy-kalit yo'li BUTUNLAY o'chadi (fail-closed), faqat per-agent
+   token'lar ishlaydi.
+2. **Agent API rate limiting (HIGH)** - `flask-limiter` qo'shildi.
+   Har bir endpoint (`check_hash` 100/min, `report_incident` 10/min,
+   `agent_heartbeat` 12/min) uchun ALOHIDA, har bir agent/token uchun
+   MUSTAQIL chegara (X-API-Key xeshi bo'yicha - bitta buzilgan agent
+   boshqalarni bloklab qo'ymaydi). `.env`da sozlanadigan.
+3. **RabbitMQ xavfsizligi (HIGH)** - `docker-compose.yml`da 5672
+   (AMQP) endi tashqariga UMUMAN OCHILMAYDI, 15672 (boshqaruv paneli)
+   faqat `127.0.0.1`ga bog'langan (postgres bilan bir xil naqsh).
+   Standart "guest:guest" o'rniga `RABBITMQ_DEFAULT_USER`/`PASS`
+   `.env`da MAJBURIY.
+4. **Grafana standart paroli olib tashlandi (HIGH)** -
+   `${GRAFANA_ADMIN_PASSWORD:-admin}` -> `${GRAFANA_ADMIN_PASSWORD:?...
+   majburiy}` (POSTGRES_PASSWORD bilan bir xil naqsh).
+
+**Real test qilingan**: bu sandbox'ga maxsus `rabbitmq-server` va
+`nginx` o'rnatilib (ilgari `apt install`da yo'q edi), 3 ta yangi test
+qo'shildi (`run_full_test.py` #67-69):
+- AGENT_API_KEY: eski standart qiymat endi 401 qaytarishi, bo'sh
+  X-API-Key rad etilishi, per-agent token hamon ishlashi, aniq
+  sozlangan AGENT_API_KEY orqaga moslik uchun hali ishlashi - barchasi
+  real Flask HTTP orqali.
+- Rate limiting: real HTTP so'rovlar bilan - chegara ichida 200,
+  chegaradan oshganda 429, BOSHQA token/agent mustaqil ekanligi,
+  vaqt oynasi tugagach qayta ishlashi. (Muhim texnik nozik nuqta:
+  test uchun mahalliy blacklist'dagi hash ishlatildi - aks holda
+  har bir `check_hash` chaqiruvi bloklangan VirusTotal/MalwareBazaar
+  domenlariga urinib, >1 soniya kechikadi va "N so'rov/soniya"
+  chegarasini sinash imkonsiz bo'lib qolardi.)
+- RabbitMQ/Grafana: `docker-compose.yml`ning statik tekshiruvi
+  (portlar, `:?majburiy` sintaksisi) + HAQIQIY RabbitMQ broker bilan -
+  to'g'ri kredensial bilan ulanish muvaffaqiyatli, NOTO'G'RI parol
+  bilan esa `ProbableAuthenticationError` bilan rad etilishi tasdiqlandi
+  (broker "hammaga ochiq" emas, kredensialni HAQIQATAN tekshirayotgani
+  isbotlandi).
+- Bonus: RabbitMQ Queue testi (#21, ilgari sandbox'da `rabbitmq-server`
+  yo'qligi sabab doim o'tkazib yuborilardi) endi HAQIQATAN ishga
+  tushdi va o'tdi - loyihaning eng chuqur RabbitMQ integratsiya testi.
+
+**Keyingi navbatdagi (hali qurilmagan, kelgusi sessiyalarda)**:
+1. HTTPS + Internal CA / mTLS (Nginx reverse proxy, CRITICAL) -
+   sandbox'da `nginx`+`openssl` bilan real TLS termination sinash
+   mumkin, lekin katta ish - alohida sessiya.
+2. Replay protection (HMAC + timestamp/nonce agent<->server so'rovlarida).
+3. Alembic migratsiyalar (hozirgi `_sync_missing_columns()` avtomatik
+   ustun-qo'shish o'rniga/qo'shimcha sifatida).
+4. Secure AD Agent Enrollment (Kerberos/AD-asosli, uzoq muddatli
+   bootstrap secret o'rniga) - MUHIM: hozirgi kodda buni almashtiradigan
+   `agent_enroll` endpoint UMUMAN YO'Q, shuning uchun bu "mavjud
+   ojizlikni tuzatish" emas, balki "yangi, xavfsizroq mexanizm qurish".
+5. PostgreSQL index/retention siyosati (file_events jadvali uchun).
+6. Prometheus + Grafana monitoring metriklar.
+7. Notification uchun RabbitMQ-asosli retry/Dead Letter Queue.
+8. Qolgan xavfsizlik test turlari (SQL injection, path traversal,
+   CSRF, LDAP/AD failure, TLS sertifikat validatsiyasi va h.k.)
 
 ## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
 

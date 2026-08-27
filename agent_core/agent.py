@@ -86,7 +86,15 @@ logger = logging.getLogger("endpoint_agent")
 
 # --- Sozlamalar ---
 API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
+# XAVFSIZLIK: bu yerda hech qanday standart (fallback) qiymat YO'Q ataylab -
+# agar server ham xuddi shunday standart bilan ishga tushirilsa (masalan
+# admin AGENT_API_KEY'ni sozlashni unutsa), ikkalasi HAM bir xil ma'lum
+# qatorga "kelishib qolib", tashqi hujumchi ochiq manbadan o'sha qiymatni
+# o'qib API'ga kira olishi mumkin edi. AGENT_API_KEY bo'sh bo'lsa, server
+# tomon eski umumiy-kalit autentifikatsiyasini butunlay o'chiradi (faqat
+# per-agent token'lar orqali kirish qoladi) - shuning uchun bu yerda ham
+# bo'sh qoldirish xavfsiz: so'rov shunchaki 401 bilan rad etiladi.
+AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 AGENT_VERSION = os.getenv("AGENT_VERSION", "1.0.0")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "300"))  # 5 daqiqa
 LOCAL_CACHE_FILE = os.getenv(
@@ -264,6 +272,12 @@ class EndpointAgent:
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
+        if not AGENT_API_KEY:
+            logger.warning(
+                "AGENT_API_KEY sozlanmagan - serverga barcha so'rovlar (check_hash/"
+                "report_incident/heartbeat) 401 bilan rad etiladi. SYSVOL'dagi "
+                "api_key.secret faylini yoki AGENT_API_KEY muhit o'zgaruvchisini tekshiring."
+            )
         logger.info(f"Agent ishga tushmoqda: host={self.hostname}, ip={self.ip_address}")
 
     def _on_new_file(self, filepath: str):

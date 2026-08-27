@@ -4408,6 +4408,208 @@ def _test_device_online_offline_status():
 check("Dashboard: qurilma onlayn/offlayn holati + jami qurilmalar soni (real HTTP orqali)", _test_device_online_offline_status)
 
 # ---------------------------------------------------------------------------
+print("\n=== 67) XAVFSIZLIK: AGENT_API_KEY standart (fallback) qiymati butunlay olib tashlandi ===")
+
+
+def _test_no_default_agent_api_key():
+    """
+    Xavfsizlik auditida topilgan CRITICAL muammo: `AGENT_API_KEY = os.getenv(
+    "AGENT_API_KEY", "change-me-in-production")` - agar administrator .env
+    faylida buni sozlashni unutsa, server ochiq manba kodida hamma ko'radigan
+    ANIQ shu qatorni "to'g'ri kalit" sifatida qabul qilardi.
+
+    Tuzatish: standart qiymat YO'Q. AGENT_API_KEY bo'sh bo'lsa, eski
+    umumiy-kalit yo'li BUTUNLAY o'chadi (faqat per-agent token'lar
+    ishlaydi) - "yopiq holatda muvaffaqiyatsiz bo'lish" (fail-closed).
+    """
+    import importlib
+    from api import server as api_server
+    from api import token_manager
+
+    # 1) AGENT_API_KEY sozlanmagan holat - eski "standart" qiymat endi
+    #    ISHLAMASLIGI kerak, va bo'sh X-API-Key ham "" == ""ga o'xshab
+    #    muvaffaqiyatli bo'lib qolmasligi kerak.
+    os.environ.pop("AGENT_API_KEY", None)
+    importlib.reload(api_server)
+    assert api_server.AGENT_API_KEY == "", "AGENT_API_KEY sozlanmaganda bo'sh qator bo'lishi kerak edi"
+
+    client = api_server.app.test_client()
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "e" * 64},
+                     headers={"X-API-Key": "change-me-in-production"})
+    assert r.status_code == 401, (
+        f"ESKI STANDART QIYMAT hali ham qabul qilinmoqda! (status={r.status_code}) - "
+        f"bu aynan xavfsizlik auditida topilgan CRITICAL zaiflik"
+    )
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "f" * 64}, headers={"X-API-Key": ""})
+    assert r.status_code == 401, "Bo'sh X-API-Key rad etilishi kerak edi"
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "g" * 64})
+    assert r.status_code == 401, "X-API-Key umuman yo'q bo'lganda rad etilishi kerak edi"
+
+    # Per-agent token AGENT_API_KEY sozlanmagan bo'lsa ham ishlashi kerak
+    token = token_manager.create_token("ci-no-default-key-test", created_by="ci")
+    r = client.post("/api/v1/check_hash", json={"sha256": "h" * 64}, headers={"X-API-Key": token})
+    assert r.status_code == 200, "Per-agent token AGENT_API_KEY yo'q bo'lsa ham ishlashi kerak edi"
+
+    # 2) AGENT_API_KEY ANIQ sozlansa - orqaga moslik hali ishlashi kerak
+    os.environ["AGENT_API_KEY"] = "ci-explicit-legacy-key"
+    importlib.reload(api_server)
+    client = api_server.app.test_client()
+    r = client.post("/api/v1/check_hash", json={"sha256": "i" * 64},
+                     headers={"X-API-Key": "ci-explicit-legacy-key"})
+    assert r.status_code == 200, "Aniq sozlangan AGENT_API_KEY ishlashi kerak edi"
+
+    os.environ.pop("AGENT_API_KEY", None)
+    importlib.reload(api_server)
+
+
+check("XAVFSIZLIK: AGENT_API_KEY standart qiymati olib tashlandi (fail-closed, real HTTP orqali)", _test_no_default_agent_api_key)
+
+# ---------------------------------------------------------------------------
+print("\n=== 68) XAVFSIZLIK: Agent API so'rov chegaralash (rate limiting) ===")
+
+
+def _test_api_rate_limiting():
+    """
+    Xavfsizlik auditida topilgan HIGH muammo: Agent API'da hech qanday
+    so'rov chegarasi yo'q edi - bitta buzilgan/o'g'irlangan token
+    cheksiz `check_hash` so'rovi yuborib, serverni yoki tashqi
+    VirusTotal/MalwareBazaar API kvotasini tugatishi mumkin edi.
+
+    Bu test tez, deterministik tekshiruv uchun juda kichik chegara
+    ("3 per second") bilan real HTTP so'rovlar yuboradi.
+    """
+    import importlib
+    import time as _time
+    from db.database import get_session
+    from db.models import HashBlacklist
+    from api import server as api_server
+    from api import token_manager
+
+    # MUHIM: mahalliy blacklist'da OLDINDAN mavjud hash ishlatiladi -
+    # aks holda check_hash() har safar VirusTotal/MalwareBazaar'ga
+    # (sandbox'da bloklangan domenlar) chiqishga urinib, har bir so'rov
+    # sekunlab kechikadi - bu "N ta so'rov 1 soniyada" chegarasini real
+    # sinash imkonini bermaydi (har bir so'rov o'zi >1s cho'zilib ketadi).
+    s = get_session()
+    rl_hash = "7" * 64
+    if not s.query(HashBlacklist).filter_by(sha256=rl_hash).first():
+        s.add(HashBlacklist(sha256=rl_hash, threat_name="CI-RateLimit-Test", source="ci"))
+        s.commit()
+    s.close()
+
+    os.environ["AGENT_API_KEY"] = "ci-ratelimit-legacy-key"
+    os.environ["API_RATE_LIMIT_CHECK_HASH"] = "3 per second"
+    importlib.reload(api_server)
+    client = api_server.app.test_client()
+
+    token_a = token_manager.create_token("ci-ratelimit-agent-a", created_by="ci")
+    token_b = token_manager.create_token("ci-ratelimit-agent-b", created_by="ci")
+
+    def _check(token):
+        return client.post(
+            "/api/v1/check_hash", json={"sha256": rl_hash},
+            headers={"X-API-Key": token},
+        )
+
+    # 3 ta so'rov - chegara ichida, hammasi muvaffaqiyatli bo'lishi kerak
+    statuses = [_check(token_a).status_code for _ in range(3)]
+    assert statuses == [200, 200, 200], f"Chegara ichidagi so'rovlar 200 qaytarishi kerak edi: {statuses}"
+
+    # 4-so'rov - xuddi shu oynada, xuddi shu token/kalit - 429 bo'lishi kerak
+    r = _check(token_a)
+    assert r.status_code == 429, f"Chegaradan oshgan so'rov 429 qaytarishi kerak edi, {r.status_code} keldi"
+
+    # Boshqa agent/token - MUSTAQIL chegaraga ega, hali ham 200 bo'lishi kerak
+    # (bitta buzilgan agent boshqalarni bloklab qo'ymasligi kerak)
+    r = _check(token_b)
+    assert r.status_code == 200, "Boshqa token/agent alohida chegaraga ega bo'lishi kerak edi"
+
+    # Vaqt oynasi tugagach - qayta ishlashi kerak (doimiy bloklanmagan)
+    _time.sleep(1.1)
+    r = _check(token_a)
+    assert r.status_code == 200, "Vaqt oynasi tugagach so'rov qayta ishlashi kerak edi"
+
+    for k in ["API_RATE_LIMIT_CHECK_HASH", "AGENT_API_KEY"]:
+        os.environ.pop(k, None)
+    importlib.reload(api_server)
+
+
+check("XAVFSIZLIK: Agent API rate limiting (per-token chegara, real HTTP orqali)", _test_api_rate_limiting)
+
+# ---------------------------------------------------------------------------
+print("\n=== 69) XAVFSIZLIK: RabbitMQ va Grafana standart credential/portlari yopildi ===")
+
+
+def _test_rabbitmq_grafana_hardening():
+    """
+    Xavfsizlik auditida topilgan HIGH muammolar:
+      - RabbitMQ: 5672 (AMQP) va 15672 (boshqaruv paneli) docker-compose'da
+        BARCHA interfeyslarga (0.0.0.0) ochiq edi, va standart RabbitMQ
+        "guest:guest" login/paroli hech qanday o'zgartirishsiz ishlatilardi.
+      - Grafana: GF_SECURITY_ADMIN_PASSWORD `.env`'da sozlanmasa,
+        `${GRAFANA_ADMIN_PASSWORD:-admin}` orqali "admin/admin" bilan
+        ochiq qolardi.
+    """
+    import yaml
+
+    with open("docker-compose.yml") as f:
+        raw_compose = f.read()
+        compose = yaml.safe_load(raw_compose)
+
+    rabbitmq_svc = compose["services"]["rabbitmq"]
+    assert rabbitmq_svc.get("ports") == ["127.0.0.1:15672:15672"], (
+        f"RabbitMQ portlari xavfsiz emas: {rabbitmq_svc.get('ports')} - "
+        f"5672 tashqariga chiqmasligi, 15672 esa faqat 127.0.0.1'ga bog'lanishi kerak"
+    )
+    assert "amqp://guest:guest" not in raw_compose, "docker-compose.yml'da hali ham 'guest:guest' AMQP URL'ga hardcode qilingan"
+    assert ":?RABBITMQ_DEFAULT_USER" in raw_compose and ":?RABBITMQ_DEFAULT_PASS" in raw_compose, (
+        "RABBITMQ_DEFAULT_USER/PASS majburiy shaklida (':?') sozlanmagan"
+    )
+
+    grafana_svc = compose["services"]["grafana"]
+    grafana_pw = grafana_svc["environment"]["GF_SECURITY_ADMIN_PASSWORD"]
+    assert ":-admin" not in grafana_pw, f"Grafana hali ham 'admin' standart paroliga ega: {grafana_pw}"
+    assert ":?" in grafana_pw, f"GRAFANA_ADMIN_PASSWORD majburiy bo'lishi kerak: {grafana_pw}"
+
+    # --- Real RabbitMQ broker bilan - kredensial talab qilinishini tasdiqlash ---
+    import subprocess
+    if subprocess.run(["which", "rabbitmqctl"], capture_output=True).returncode != 0:
+        print("   (real broker qismi o'tkazib yuborildi - rabbitmq-server o'rnatilmagan bu muhitda)")
+        return
+
+    import pika
+    from pika.exceptions import AMQPConnectionError
+
+    test_user = "ci_hardening_user"
+    test_pass = "CiHardeningStrongPass123!"
+    subprocess.run(["rabbitmqctl", "delete_user", test_user], capture_output=True)
+    r = subprocess.run(["rabbitmqctl", "add_user", test_user, test_pass], capture_output=True, text=True)
+    assert r.returncode == 0, f"Test foydalanuvchi yaratilmadi: {r.stderr}"
+    subprocess.run(["rabbitmqctl", "set_permissions", "-p", "/", test_user, ".*", ".*", ".*"], check=True)
+
+    try:
+        # To'g'ri kredensial bilan - ulanish MUVAFFAQIYATLI bo'lishi kerak
+        conn = pika.BlockingConnection(pika.URLParameters(f"amqp://{test_user}:{test_pass}@localhost:5672/%2F"))
+        assert conn.is_open
+        conn.close()
+
+        # Noto'g'ri parol bilan - ulanish RAD ETILISHI kerak (broker
+        # haqiqatan kredensialni tekshiryapti, "hammaga ochiq" emas)
+        try:
+            pika.BlockingConnection(pika.URLParameters(f"amqp://{test_user}:WRONG_PASSWORD@localhost:5672/%2F"))
+            assert False, "Noto'g'ri parol bilan ulanish MUVAFFAQIYATLI bo'ldi - bu xavfsizlik xatosi"
+        except AMQPConnectionError:
+            pass  # kutilgan natija
+    finally:
+        subprocess.run(["rabbitmqctl", "delete_user", test_user], capture_output=True)
+
+
+check("XAVFSIZLIK: RabbitMQ portlari/credential + Grafana standart parol yopildi", _test_rabbitmq_grafana_hardening)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
