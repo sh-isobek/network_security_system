@@ -905,15 +905,33 @@ def _test_pdf_excel_reports():
     assert len(reader.pages) >= 1, "PDF'da sahifa yo'q"
 
     # Excel: LibreOffice orqali formulalarni haqiqiy hisoblash (recalc)
+    #
+    # MUHIM (sandbox'ga xos, tasdiqlangan xususiyat): headless soffice.bin
+    # bu konteynerda vaqti-vaqti bilan (deterministik sabab topilmadi -
+    # bir xil profil/fayl bilan qayta urinilganda odatda ~1 soniyada
+    # muvaffaqiyatli tugaydi) macro bajarish bosqichida "osilib qoladi"
+    # (deyarli 0% CPU bilan, timeout tugaguncha) - bu recalc.py skriptining
+    # o'zida emas (u alohida `/mnt/skills/` ostida, loyiha kodiga aloqasi
+    # yo'q), balki LibreOffice'ning o'zida (soffice.bin ichida hech qanday
+    # amaliy ish bajarilmasdan bloklanib qoladi). Qo'lda bir necha marta
+    # qayta sinab ko'rilganda har safar oxir-oqibat tez muvaffaqiyatli
+    # bo'lgani tasdiqlandi - shuning uchun bir marta timeout bo'lsa, yana
+    # 2 marta qayta uriniladi (real, o'lchangan xatti-harakatga mos
+    # mitigatsiya - "flaky"ni yashirish emas).
     recalc_script = "/mnt/skills/public/xlsx/scripts/recalc.py"
     if os.path.isfile(recalc_script):
-        proc = subprocess.run(
-            ["python3", recalc_script, result["excel"], "60"],
-            capture_output=True, text=True, timeout=90,
-        )
         import json as json_mod
-        recalc_result = json_mod.loads(proc.stdout)
-        assert recalc_result.get("status") == "success", f"Excel recalc muvaffaqiyatsiz: {recalc_result}"
+        recalc_result = None
+        for attempt in range(1, 4):
+            proc = subprocess.run(
+                ["python3", recalc_script, result["excel"], "60"],
+                capture_output=True, text=True, timeout=90,
+            )
+            recalc_result = json_mod.loads(proc.stdout)
+            if recalc_result.get("status") == "success":
+                break
+            print(f"   (recalc urinish {attempt}/3 muvaffaqiyatsiz: {recalc_result.get('error')} - qayta urinilmoqda)")
+        assert recalc_result.get("status") == "success", f"Excel recalc 3 urinishdan keyin ham muvaffaqiyatsiz: {recalc_result}"
         assert recalc_result.get("total_errors") == 0, f"Excel'da formula xatolari bor: {recalc_result}"
 
         # Hisoblangan qiymatlarni haqiqiy sonlar bilan solishtirish

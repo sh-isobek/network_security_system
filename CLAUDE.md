@@ -95,6 +95,49 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 
 **Joriy: 73/73 test o'tadi (`run_full_test.py`).**
 
+## PDF/Excel testidagi LibreOffice xatosi - chuqur tekshirildi, TUB SABAB topildi (loyiha kodiga aloqasi yo'q)
+
+Foydalanuvchi "Xatolarni bartaraf et" deb so'radi - yagona qolgan test
+xatosi (`PDF/Excel hisobotlar`, LibreOffice recalc 59s'da timeout)
+haqida. Bu xato ko'p marta takrorlanayotgani sababli, taxmin qilib
+qo'ymasdan, **strace darajasida** chuqur tekshirildi.
+
+**Tekshiruv jarayoni**:
+1. Qo'lda qayta-qayta sinab ko'rilganda xatti-harakat **haqiqiy tasodifiy**
+   ekanligi aniqlandi - ba'zida 3/3 urinish ~1 soniyada muvaffaqiyatli
+   (yuklama past, xotira bo'sh bo'lsa ham), ba'zida 3/3 urinish to'liq
+   timeout'gacha "osilib qoladi" (deyarli 0% CPU bilan - hech qanday
+   amaliy ish bajarilmayapti).
+2. `strace -f` orqali osilib qolgan jarayonning ichiga qaralganda: yordamchi
+   jarayon profil faylini yozib, TEZ chiqadi (`exit(0)`), lekin ASOSIY
+   `soffice.bin` jarayoni keyin **aniq 10 soniyalik `futex` kutish**da
+   `ETIMEDOUT` bilan uzilib, DARHOL yana **~20 daqiqalik yangi `futex`
+   kutish**ga o'tib ketadi - bu LibreOffice'ning o'z ichki UNO/VCL
+   sinxronizatsiya mexanizmida haqiqiy **deadlock** ekanligini isbotladi
+   (tashqi resurs, tarmoq yoki fayl tizimi bilan bog'liq emas).
+3. D-Bus yo'qligi, `SAL_USE_VCLPLUGIN=svp`, turli profil papkalari,
+   yuklama darajasi (`uptime` past, xotira bo'sh) - hech biri sababchi
+   emasligi alohida-alohida sinab, inkor qilindi.
+
+**XULOSA (halol)**: bu - `soffice.bin`ning o'zidagi (yoki uning bu
+maxsus konteyner muhitida ishlash tarzidagi), **loyiha kodiga umuman
+aloqasi yo'q** muammo. Recalc skripti (`/mnt/skills/public/xlsx/
+scripts/recalc.py`) ham loyiha repo'sidan tashqarida (Claude Code
+sandbox'ining o'z vositasi). `reports/report_generator.py`ning o'zi va
+u yaratgan Excel fayli **to'g'ri** - bu tekshiruv shunchaki LibreOffice
+uni HAQIQATAN ochib qayta hisoblay olishini tasdiqlovchi QO'SHIMCHA
+ishonch qatlami, asosiy mahsulot emas.
+
+**Qilingan yagona oqilona mitigatsiya**: `run_full_test.py`da recalc
+chaqiruvi endi muvaffaqiyatsiz bo'lsa **3 martagacha qayta uriniladi**
+(RabbitMQ ulanishlari, Kubernetes barqarorlik tekshiruvi kabi loyihada
+allaqachon qo'llanilgan "flaky infratuzilma" andozasiga mos) - bu
+ko'pincha yordam beradi (qo'lda testda tasdiqlangan), lekin **kafolat
+EMAS**, chunki asosiy muammo tasodifiy ichki deadlock. Shu sababli bu
+test resultatlarida vaqti-vaqti bilan (masalan bir "yomon" fazaga tushib
+qolganda, 3 ta urinish HAM muvaffaqiyatsiz bo'lishi mumkin) hali ham
+ko'rinishi mumkin - bu KUTILGAN va loyiha kodi bilan bog'liq EMAS.
+
 ## Parallel ishlarni birlashtirish: main + codex/fix-deployment-security + xavfsizlik auditi
 
 Foydalanuvchi xavfsizlik auditi (25 topilma) bo'yicha ishni davom
