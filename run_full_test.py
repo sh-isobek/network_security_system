@@ -4649,12 +4649,19 @@ def _test_rabbitmq_grafana_hardening():
     import pika
     from pika.exceptions import AMQPConnectionError
 
+    # MUHIM: rabbitmqctl real muhitda (masalan GitHub Actions CI) odatda
+    # `rabbitmq` foydalanuvchisi ostida ishlaydi (workflow'ning o'zi ham
+    # `sudo -u rabbitmq rabbitmq-server` + `sudo rabbitmqctl status`
+    # naqshidan foydalanadi) - shuning uchun `sudo` MAJBURIY (root'da ham
+    # zararsiz, faqat mahalliy sandbox'da tasodifan "ishlagandek"
+    # ko'ringan edi, chunki u yerda hamma narsa allaqachon root sifatida
+    # ishlaydi).
     test_user = "ci_hardening_user"
     test_pass = "CiHardeningStrongPass123!"
-    subprocess.run(["rabbitmqctl", "delete_user", test_user], capture_output=True)
-    r = subprocess.run(["rabbitmqctl", "add_user", test_user, test_pass], capture_output=True, text=True)
+    subprocess.run(["sudo", "rabbitmqctl", "delete_user", test_user], capture_output=True)
+    r = subprocess.run(["sudo", "rabbitmqctl", "add_user", test_user, test_pass], capture_output=True, text=True)
     assert r.returncode == 0, f"Test foydalanuvchi yaratilmadi: {r.stderr}"
-    subprocess.run(["rabbitmqctl", "set_permissions", "-p", "/", test_user, ".*", ".*", ".*"], check=True)
+    subprocess.run(["sudo", "rabbitmqctl", "set_permissions", "-p", "/", test_user, ".*", ".*", ".*"], check=True)
 
     try:
         # To'g'ri kredensial bilan - ulanish MUVAFFAQIYATLI bo'lishi kerak
@@ -4670,7 +4677,7 @@ def _test_rabbitmq_grafana_hardening():
         except AMQPConnectionError:
             pass  # kutilgan natija
     finally:
-        subprocess.run(["rabbitmqctl", "delete_user", test_user], capture_output=True)
+        subprocess.run(["sudo", "rabbitmqctl", "delete_user", test_user], capture_output=True)
 
 
 check("XAVFSIZLIK: RabbitMQ portlari/credential + Grafana standart parol yopildi", _test_rabbitmq_grafana_hardening)
