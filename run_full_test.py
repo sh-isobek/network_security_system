@@ -4613,8 +4613,8 @@ def _test_rabbitmq_grafana_hardening():
         f"5672 tashqariga chiqmasligi, 15672 esa faqat 127.0.0.1'ga bog'lanishi kerak"
     )
     assert "amqp://guest:guest" not in raw_compose, "docker-compose.yml'da hali ham 'guest:guest' AMQP URL'ga hardcode qilingan"
-    assert ":?RABBITMQ_DEFAULT_USER" in raw_compose and ":?RABBITMQ_DEFAULT_PASS" in raw_compose, (
-        "RABBITMQ_DEFAULT_USER/PASS majburiy shaklida (':?') sozlanmagan"
+    assert ":?RABBITMQ_USER" in raw_compose and ":?RABBITMQ_PASSWORD" in raw_compose, (
+        "RABBITMQ_USER/PASSWORD majburiy shaklida (':?') sozlanmagan"
     )
 
     grafana_svc = compose["services"]["grafana"]
@@ -4859,7 +4859,12 @@ def _test_agent_enroll_per_computer_token():
     s.close()
 
     # --- 3) YANGI token o'zi bilan ham (bootstrap kalitsiz) boshqa so'rovlar ishlashi ---
-    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64},
+    # MUHIM: token `agent_hostname`ga biriktirilgan (yuqoridagi require_api_key
+    # tekshiruvi) - so'rov o'zi ham SHU hostname'ni yuborishi kerak (xuddi
+    # haqiqiy Agent qiladigani kabi - agent_core/agent.py check_hash so'roviga
+    # doim `hostname`ni qo'shadi), aks holda boshqa qurilma nomidan
+    # foydalanishga urinish deb hisoblanib 401 qaytariladi.
+    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": first_token})
     assert r.status_code == 200
 
@@ -4870,11 +4875,11 @@ def _test_agent_enroll_per_computer_token():
     second_token = r.get_json()["token"]
     assert second_token != first_token
 
-    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64},
+    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": first_token})
     assert r.status_code == 401, "qayta enroll qilingandan keyin ESKI token endi ishlamasligi kerak (bekor qilingan)"
 
-    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64},
+    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": second_token})
     assert r.status_code == 200, "YANGI token esa ishlashi kerak"
 
