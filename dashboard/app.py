@@ -16,11 +16,12 @@ Ishga tushirish:
     python -m dashboard.app
 """
 import os
+import secrets
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session
+from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -40,8 +41,33 @@ def _device_online_cutoff():
     return utcnow() - timedelta(minutes=DEVICE_OFFLINE_THRESHOLD_MINUTES)
 
 app = Flask(__name__)
-app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "change-me-in-production-" + os.urandom(8).hex())
+app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "")
+if not app.secret_key:
+    raise RuntimeError("DASHBOARD_SECRET_KEY majburiy: Dashboard ishga tushirilmadi")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true",
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 login_manager.init_app(app)
+
+
+@app.context_processor
+def csrf_context():
+    """Har brauzer sessiyasi uchun tasodifiy CSRF tokenini template'larga beradi."""
+    token = flask_session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return {"csrf_token": token}
+
+
+@app.before_request
+def protect_post_requests():
+    # Login/MFA-verification hali autentifikatsiyadan o'tmagan oqimlar;
+    # ular sessiya huquqini o'zgartirmaydi. Barcha autentifikatsiyalangan
+    # boshqaruv POST so'rovlari esa token talab qiladi.
+    if request.method == "POST" and current_user.is_authenticated and not secrets.compare_digest(
+        request.form.get("csrf_token", ""), flask_session.get("csrf_token", "")
+    ):
+        abort(400, "CSRF token noto'g'ri yoki yo'q")
 
 
 @app.template_filter("local_dt")
@@ -89,6 +115,9 @@ def login():
                 login_user(UserWrapper(user))
                 log_action(username, "login", ip_address=request.remote_addr)
                 next_url = request.args.get("next") or url_for("index")
+                # Faqat shu dashboard ichidagi nisbiy URL'ga qaytamiz.
+                if not next_url.startswith("/") or next_url.startswith("//"):
+                    next_url = url_for("index")
                 return redirect(next_url)
             log_action(username, "login", success=False, ip_address=request.remote_addr,
                        details="Foydalanuvchi topilmadi/faolsiz/parol noto'g'ri")
@@ -191,11 +220,18 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    from datetime import timedelta
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+
     session = get_session()
     try:
         online_cutoff = _device_online_cutoff()
         device_count = session.query(Device).count()
         online_device_count = session.query(Device).filter(Device.last_seen >= online_cutoff).count()
+
+        agent_cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
+        agents_installed = session.query(Device).filter(Device.agent_last_heartbeat.isnot(None)).count()
+        agents_online = session.query(Device).filter(Device.agent_last_heartbeat >= agent_cutoff).count()
         stats = {
             "device_count": device_count,
             "online_device_count": online_device_count,
@@ -206,6 +242,8 @@ def index():
             "malicious_files": session.query(FileEvent).filter(FileEvent.verdict == "malicious").count(),
             "clean_files": session.query(FileEvent).filter(FileEvent.verdict == "clean").count(),
             "event_count": session.query(Event).count(),
+            "agents_online": agents_online,
+            "agents_offline": agents_installed - agents_online,
         }
         recent_alerts = session.query(Alert).order_by(Alert.timestamp.desc()).limit(10).all()
         recent_alerts_data = [_alert_to_dict(session, a) for a in recent_alerts]
@@ -249,6 +287,21 @@ def acknowledge_alert(alert_id):
         session.close()
 
 
+def _agent_status(agent_last_heartbeat):
+    """
+    "online" / "offline" / None (agent umuman o'rnatilmagan - hech
+    qachon heartbeat yubormagan) - `Device.agent_last_heartbeat` va
+    `AGENT_ONLINE_THRESHOLD_MINUTES` asosida.
+    """
+    from datetime import timedelta
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+
+    if agent_last_heartbeat is None:
+        return None
+    cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
+    return "online" if agent_last_heartbeat >= cutoff else "offline"
+
+
 @app.route("/devices")
 @login_required
 def devices():
@@ -276,6 +329,9 @@ def devices():
                 "hostname": d.hostname, "connection_type": d.connection_type,
                 "source": d.source, "last_seen": d.last_seen, "alert_count": alert_count,
                 "risk_score": d.risk_score or 0, "is_online": is_online,
+                "agent_status": _agent_status(d.agent_last_heartbeat),
+                "agent_last_heartbeat": d.agent_last_heartbeat,
+                "agent_version": d.agent_version, "agent_os": d.agent_os,
             })
         return render_template(
             "devices.html", devices=devices_data, status_filter=status_filter,
@@ -396,11 +452,14 @@ def files():
     session = get_session()
     try:
         verdict_filter = request.args.get("verdict", "")
+        channel_filter = request.args.get("channel", "")
         query = session.query(FileEvent)
         if verdict_filter:
             query = query.filter(FileEvent.verdict == verdict_filter)
+        if channel_filter:
+            query = query.filter(FileEvent.channel == channel_filter)
         all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
-        return render_template("files.html", files=all_files, verdict_filter=verdict_filter)
+        return render_template("files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter)
     finally:
         session.close()
 
@@ -481,6 +540,72 @@ def deactivate_user(user_id):
                 flash(f"'{user.username}' faolsizlantirildi", "success")
                 log_action(current_user.username, "deactivate_user", target_type="User",
                            target_id=user.username, ip_address=request.remote_addr)
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/activate", methods=["POST"])
+@role_required("admin")
+def activate_user(user_id):
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user:
+            user.is_active = True
+            session.commit()
+            flash(f"'{user.username}' faollashtirildi", "success")
+            log_action(current_user.username, "activate_user", target_type="User",
+                       target_id=user.username, ip_address=request.remote_addr)
+        else:
+            flash("Foydalanuvchi topilmadi", "error")
+    finally:
+        session.close()
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/edit", methods=["POST"])
+@role_required("admin")
+def edit_user(user_id):
+    """
+    Foydalanuvchining rolini o'zgartirish va/yoki parolini tiklash.
+    Login (username) o'zgartirilmaydi - bu identifikator sifatida
+    (audit log, ApiToken.created_by va h.k.) ishlatiladi.
+    """
+    new_role = request.form.get("role", "")
+    new_password = request.form.get("password", "").strip()
+
+    if new_role not in ("admin", "analyst", "viewer"):
+        flash("Noto'g'ri rol", "error")
+        return redirect(url_for("users"))
+
+    session = get_session()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            flash("Foydalanuvchi topilmadi", "error")
+            return redirect(url_for("users"))
+
+        changes = []
+        if user.role != new_role:
+            if user.username == current_user.username and new_role != "admin":
+                flash("O'zingizning admin rolingizni o'zgartira olmaysiz (o'zingizni qulflab qo'yish xavfi)", "error")
+                return redirect(url_for("users"))
+            user.role = new_role
+            changes.append(f"rol -> {new_role}")
+
+        if new_password:
+            user.password_hash = generate_password_hash(new_password)
+            changes.append("parol tiklandi")
+
+        if changes:
+            session.commit()
+            flash(f"'{user.username}' yangilandi: {', '.join(changes)}", "success")
+            log_action(current_user.username, "edit_user", target_type="User",
+                       target_id=user.username, details=", ".join(changes),
+                       ip_address=request.remote_addr)
+        else:
+            flash("Hech narsa o'zgartirilmadi", "success")
     finally:
         session.close()
     return redirect(url_for("users"))

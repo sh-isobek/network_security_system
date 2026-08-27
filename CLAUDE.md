@@ -89,8 +89,150 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Encryption at Rest (`crypto/field_encryption.py`) | ✅ MFA maxfiy kaliti endi bazada shifrlangan saqlanadi (Fernet, kalit almashtirish qo'llab-quvvatlanadi). To'liq MFA login oqimi orqali (shifrlash→saqlash→ochish) real test qilingan |
 | — | API Token boshqaruvi (`api/token_manager.py`) | ✅ Har bir agent uchun alohida, bekor qilinadigan, muddatli token (eski AGENT_API_KEY'ga qo'shimcha, orqaga moslik bilan). `/api-tokens` Dashboard sahifasi (RBAC bilan) |
 | — | Network Discovery (`network_discovery/`, 14 modul) | ✅✅ HAQIQIY tarmoqda (ARP/ICMP/TCP/SNMP), HAQIQIY OpenLDAP'da (AD), HAQIQIY L2 send+capture bilan (LLDP/CDP) test qilingan - bu loyihadagi eng chuqur real-infratuzilma testi |
+| — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
+| — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
+| — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 
 **Joriy: 69/69 test o'tadi (`run_full_test.py`).**
+
+## Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol)
+
+Foydalanuvchi so'radi: `/users` sahifasida (1) faolsizlantirilgan
+foydalanuvchini qayta faollashtirish, (2) tahrirlash (rol o'zgartirish,
+parol tiklash) imkoni qo'shilsin - avvalgi versiyada faqat "yaratish"
+va "faolsizlantirish" (bir tomonlama) bor edi.
+
+Qo'shildi:
+- `dashboard/app.py`: yangi `POST /users/<id>/activate` (`is_active =
+  True`) va `POST /users/<id>/edit` (rol o'zgartirish va/yoki parol
+  tiklash - bo'sh parol maydoni "o'zgartirmaslik" degani). O'zini-o'zi
+  qulflab qo'yishning oldini olish uchun: admin o'z rolini boshqa
+  rolga o'zgartira olmaydi (xuddi "o'zini faolsizlantira olmaslik"
+  cheklovi kabi).
+- `dashboard/templates/users.html`: har bir qator uchun `<details>`
+  orqali (JS'siz, oddiy HTML) ochiladigan "Tahrirlash" formasi (rol +
+  yangi parol), va faolsiz foydalanuvchilar uchun "Faollashtirish"
+  tugmasi.
+- Ikkalasi ham audit log'ga yoziladi (`activate_user`, `edit_user`).
+
+**Real test qilingan (SQLite VA PostgreSQL)**: real HTTP orqali to'liq
+zanjir - foydalanuvchi faolsizlantirilib qayta faollashtirilishi,
+rol o'zgartirilishi, parol tiklanib YANGI parol bilan HAQIQATAN login
+qilinishi (eski parol endi ishlamasligi), admin o'z rolini o'zgartira
+OLMASLIGI, va har ikkala amal audit log'da qayd etilishi tasdiqlandi.
+
+## GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll)
+
+Foydalanuvchi haqiqiy `Deploy-NetworkSecurityAgent.ps1`/`Install-
+NetworkSecurityAgent.ps1` fayllarini ko'rsatib, ikkita yangi funksiya
+so'radi: (1) ulanayotgan server manzili va API kalit `.env` faylidan
+olinsin, (2) AD orqali avtomatik ulanayotgan har bir kompyuter uchun
+YANGI, alohida API token yaratilib biriktirilsin (shu paytgacha
+barcha agentlar BITTA umumiy `AGENT_API_KEY`ni ishlatgan).
+
+**1) `.env` orqali sozlash**: `Deploy-NetworkSecurityAgent.ps1` va
+`Install-NetworkSecurityAgent.ps1`ga `Read-DotEnv` funksiyasi
+qo'shildi - avvalgi ikkita alohida fayl (`api_server_url.txt` +
+`api_key.secret`) o'rniga BITTA `.env` (server tomonidagi
+`.env.example` bilan bir xil `KEY=VALUE` format) o'qiladi. ORQAGA
+MOSLIK saqlangan: `.env` topilmasa, eski ikkita fayl hali ham
+ishlaydi - mavjud SYSVOL joylashuvlarini yangilash SHART EMAS.
+`Install-NetworkSecurityAgent.ps1`da `-ApiServerUrl`/`-ApiKey`
+Mandatory bo'lishdan chiqib, IXTIYORIY qilindi (skript papkasidagi
+`.env`dan o'qiladi, hech qaysi manbada topilmasa xato beriladi).
+
+**2) AD auto-enroll (har kompyuter uchun alohida token)**:
+- `db/models.py`: `ApiToken`ga yangi `agent_hostname` ustuni
+  (nullable - avtomatik migratsiya orqali qo'shiladi).
+- `api/token_manager.py`: yangi `enroll_agent_token(hostname)` -
+  shu hostname uchun avval chiqarilgan FAOL tokenlarni bekor qilib
+  (idempotent qayta-enroll), yangi, alohida token qaytaradi.
+- `api/server.py`: yangi `POST /api/v1/agent_enroll` endpoint
+  (`require_api_key` bilan himoyalangan - ya'ni chaqiruvchida
+  ALLAQACHON bironta amaldagi kalit, odatda umumiy "bootstrap"
+  `AGENT_API_KEY`, bo'lishi kerak).
+- `Deploy-NetworkSecurityAgent.ps1`: birinchi marta ishga tushganda
+  (mahalliy `C:\ProgramData\NetworkSecurityAgent\agent_api_token.
+  secret` fayli hali yo'q bo'lsa) `/api/v1/agent_enroll`ni bootstrap
+  kalit bilan chaqiradi, natijada olingan ALOHIDA tokenni mahalliy
+  saqlaydi va xizmat uchun shuni ishlatadi (bootstrap kalit endi
+  faqat DASTLABKI ishonch uchun). Enroll muvaffaqiyatsiz bo'lsa
+  (masalan tarmoq hali to'liq ko'tarilmagan) - fail-safe: bootstrap
+  kalit bilan davom etiladi, deploy to'xtamaydi, keyingi reboot'da
+  qayta urinib ko'radi.
+- `dashboard/templates/api_tokens.html`: yangi "Kompyuter" ustuni -
+  qaysi token qaysi hostname'ga tegishli ekanligi ko'rinadi.
+- `docs_WINDOWS_AGENT_SETUP.md` yangilandi.
+
+**Real test qilingan (SQLite VA PostgreSQL)**: `.env`/orqaga-moslik
+matn-asosida (PowerShell bu sandbox'da yo'q - Zeek/Grafana kabi
+holat, shuning uchun funksiya/o'zgaruvchi nomlari + qavslar balansi
+tekshirildi). Enroll zanjiri to'liq REAL HTTP + real DB orqali:
+bootstrap kalit -> `/api/v1/agent_enroll` -> yangi token -> o'sha
+token bilan `check_hash` ishlashi -> QAYTA enroll qilinganda ESKI
+token avtomatik bekor qilinishi (401 qaytarishi) va YANGI token
+ishlashi -> bazada bitta hostname uchun faqat BITTA faol token
+qolishi -> Dashboard `/api-tokens`da hostname ko'rinishi - barchasi
+tasdiqlandi.
+
+## Dashboard: Endpoint Agent Online/Offline holati + "agent fayllarni tekshirmayapti" muammosining haqiqiy sababi
+
+Foydalanuvchi ikkita kamchilikni bildirdi: (1) Dashboard'da ulangan
+agentlarning online/offline holati ko'rinmaydi, (2) agentlar
+fayllarni tekshirmayotgandek va Dashboard'ga bu haqida ma'lumot
+yubormayotgandek tuyuladi.
+
+**1-kamchilik sababi**: `Device.agent_last_heartbeat`/`agent_version`/
+`agent_os` maydonlari bazada allaqachon bor edi (`/api/v1/agent_heartbeat`
+orqali to'ldirilardi), lekin bu ma'lumot FAQAT `/agent-coverage`
+sahifasida (AD/LDAP sozlangan bo'lishini talab qiladi) ko'rinardi -
+oddiy `/devices` sahifasida yoki bosh sahifada UMUMAN ko'rsatilmasdi.
+AD sozlanmagan muhitlarda bu ma'lumot foydalanuvchiga butunlay
+ko'rinmas edi.
+
+**2-kamchilik - HAQIQIY ILDIZ SABAB (kod emas, ko'rinish/observability
+bo'shlig'i)**: Endpoint Agent'ning fayl tekshirish zanjiri
+(`check_hash` -> local/VT/MalwareBazaar) to'g'ri ishlab turibdi -
+lekin faqat fayl **ZARARLI** deb topilganda `report_incident` orqali
+Alert yaratilardi. Agar fayl **TOZA** chiqsa (haqiqiy hayotda
+ko'pchilik holat) - bu haqda Dashboard'da HECH QANDAY iz qolmasdi.
+Shuning uchun foydalanuvchi (to'g'ri asosda!) "agent fayllarni
+tekshirmayapti" deb xulosa chiqargan - aslida agent tekshirib turgan,
+lekin buning HECH QANDAY isboti ko'rinmagan.
+
+**Tuzatish**:
+1. `config/settings.py`: yangi `AGENT_ONLINE_THRESHOLD_MINUTES`
+   (standart 15 daqiqa = ~3 heartbeat davri).
+2. `dashboard/app.py`: yangi `_agent_status()` funksiyasi
+   (`online`/`offline`/`None`). `/devices` sahifasiga "Endpoint Agent"
+   ustuni (holat + OS + versiya + oxirgi heartbeat), bosh sahifaga
+   "Agent: Online/Offline" xulosa kartochkalari qo'shildi - AD/LDAP
+   SHART EMAS.
+3. `agent_core/agent.py`: `check_hash_with_server_or_cache()` endi
+   `filename`/`hostname`/`ip_address`ni ham serverga yuboradi (faqat
+   ko'rinish uchun - tekshiruv natijasiga ta'sir qilmaydi).
+4. `api/server.py`: `check_hash` endi har bir tekshiruvni (TOZA
+   bo'lsa ham) `file_events` jadvaliga `channel="endpoint_agent"`
+   bilan yozadi (`_log_endpoint_scan()`). `/files` sahifasiga "Faqat
+   Endpoint Agent" filtri va "Kanal" ustuni qo'shildi.
+
+**Real test qilingan (SQLite VA PostgreSQL, ikkalasida ham)**: sandbox'da
+`pip`/`sqlalchemy` o'rnatilmagan edi - shuning uchun avvalgi sessiyada
+qurilgan `network_security_system-agent_api` Docker image'i (barcha
+bog'liqliklar bilan) ishlatilib, joriy worktree kodi shu konteynerga
+mount qilindi. Natija: online/offline holat real Device yozuvlari
+bilan (`/devices` va bosh sahifa HTTP orqali) va toza+zararli fayl
+tekshiruvi `file_events`'ga to'g'ri yozilishi (`/files?channel=
+endpoint_agent` filtri bilan) tasdiqlandi. O'zgarishlar kiritilmagan
+holatdagi (`git stash`) test natijasi bilan solishtirilib, mavjud 5
+ta muvaffaqiyatsizlik (SMTP/`git`/`yaml`/`pg_dump` - shu Docker
+image'da o'rnatilmagan vositalar, kod xatosi EMAS) o'zgarishsiz
+qolgani, va yangi test ham SQLite'da, ham PostgreSQL'da (alohida,
+vaqtinchalik `run_full_test_ci` bazasi orqali, keyin o'chirilgan)
+muvaffaqiyatli o'tgani tasdiqlandi.
+
+VERSION 1.0.8 -> 1.0.9 (`agent_core/agent.py`ning `check_hash` so'rov
+payload'i o'zgardi - Windows Agent qayta build/deploy qilinishi kerak).
 
 ## Foydalanuvchi qulayligi: API_SERVER_URL doimiy SYSVOL faylidan
 

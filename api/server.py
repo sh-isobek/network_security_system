@@ -23,6 +23,7 @@ Ishga tushirish:
     python -m api.server
 """
 import hashlib
+import hmac
 import os
 import sys
 from functools import wraps
@@ -97,6 +98,32 @@ limiter = Limiter(
 )
 
 
+# --- Rate limiting (XAVFSIZLIK: agent API'ga hech qanday so'rov chegarasi
+# yo'q edi - bitta buzilgan/zararli agent yoki tokenni o'g'irlagan
+# hujumchi cheksiz `check_hash` so'rovi yuborib, serverni va tashqi
+# VirusTotal/MalwareBazaar API kvotasini ishdan chiqarishi mumkin edi). ---
+def _rate_limit_key() -> str:
+    """
+    Har bir agent/token uchun ALOHIDA chegara (bitta buzilgan agent
+    boshqalarni bloklab qo'ymasin) - autentifikatsiya kaliti mavjud
+    bo'lsa shundan (xeshlab, log/xotirada ochiq saqlanmasin), aks holda
+    so'rov IP manzilidan foydalaniladi.
+    """
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key:
+        return "key:" + hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+    return "ip:" + (request.remote_addr or "unknown")
+
+
+limiter = Limiter(
+    key_func=_rate_limit_key,
+    app=app,
+    default_limits=[os.getenv("API_RATE_LIMIT_GLOBAL", "1000 per minute")],
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+    headers_enabled=True,
+)
+
+
 def require_api_key(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -105,16 +132,33 @@ def require_api_key(fn):
         # 1) Eski, umumiy AGENT_API_KEY (orqaga moslik uchun saqlanadi, LEKIN
         # faqat AGENT_API_KEY haqiqatan sozlangan bo'lsagina tekshiriladi -
         # bo'sh/sozlanmagan holatda bu yo'l butunlay o'chiq, `provided`
-        # bo'sh qatorga TENGLASHIB "muvaffaqiyatli" bo'lib qolmasligi kerak).
-        if AGENT_API_KEY and provided == AGENT_API_KEY:
+        # bo'sh qatorga TENGLASHIB "muvaffaqiyatli" bo'lib qolmasligi kerak.
+        # `hmac.compare_digest` - vaqt-asosli (timing) hujumlardan himoya
+        # uchun oddiy `==` o'rniga).
+        if AGENT_API_KEY and hmac.compare_digest(provided, AGENT_API_KEY):
             return fn(*args, **kwargs)
 
         # 2) Yangi, alohida kuzatiladigan/bekor qilinadigan API token'lar
         token_info = token_manager.verify_token(provided)
-        if token_info is not None:
+        # Agent tokeni hostname'ga biriktirilgan bo'lsa, boshqa qurilma
+        # nomidan ma'lumot yuborishiga yo'l qo'ymaymiz. Qo'lda yaratilgan
+        # umumiy integratsiya tokenlarida agent_hostname bo'sh bo'ladi.
+        hostname = (request.get_json(silent=True) or {}).get("hostname")
+        if token_info is not None and (not token_info.agent_hostname or token_info.agent_hostname == hostname):
             return fn(*args, **kwargs)
 
         return jsonify({"error": "Ruxsat berilmagan - noto'g'ri API kalit"}), 401
+    return wrapper
+
+
+def require_bootstrap_key(fn):
+    """Yangi agent tokeni faqat bootstrap kaliti bilan chiqariladi."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        provided = request.headers.get("X-API-Key", "")
+        if not AGENT_API_KEY or not hmac.compare_digest(provided, AGENT_API_KEY):
+            return jsonify({"error": "Enrollment uchun bootstrap API kaliti kerak"}), 401
+        return fn(*args, **kwargs)
     return wrapper
 
 
@@ -124,12 +168,55 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def _log_endpoint_scan(session, data: dict, sha256: str, malicious: bool, threat_name: str, source: str):
+    """
+    Endpoint Agent tomonidan tekshirilgan har bir faylni `file_events`
+    jadvaliga yozadi - Dashboard'ning "Fayllar" sahifasida ko'rinishi
+    uchun.
+
+    MUHIM: bu yozuv YO'Q edi - agent zararli fayl topmaguncha (Alert
+    yaratilmaguncha) Dashboard'da agentning HECH QANDAY faoliyati
+    ko'rinmas edi, garchi agent aslida har bir yangi faylni haqiqatan
+    tekshirayotgan bo'lsa ham. Bu foydalanuvchida "agent fayllarni
+    tekshirmayapti" degan noto'g'ri taassurot qoldirgan. `hostname`/
+    `ip_address` yuborilmasa (masalan eski agent versiyasi yoki boshqa
+    chaqiruvchi) - jim o'tkazib yuboriladi, tekshiruv natijasiga
+    ta'sir qilmaydi.
+    """
+    hostname = data.get("hostname")
+    ip_address = data.get("ip_address")
+    if not hostname or not ip_address:
+        return
+
+    filename = data.get("filename") or ""
+    file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else None
+
+    entry = FileEvent(
+        src_ip=ip_address,
+        filename=filename,
+        file_ext=file_ext,
+        sha256=sha256,
+        protocol="endpoint",
+        channel="endpoint_agent",
+        checked=True,
+        verdict="malicious" if malicious else "clean",
+        threat_score=100 if malicious else 0,
+        checked_sources=source or "endpoint_agent",
+    )
+    session.add(entry)
+
+    device = session.query(Device).filter(Device.ip_address == ip_address).first()
+    if device is not None:
+        device.hostname = hostname
+        device.last_seen = utcnow()
+
+
 @app.route("/api/v1/check_hash", methods=["POST"])
 @limiter.limit(os.getenv("API_RATE_LIMIT_CHECK_HASH", "100 per minute"))
 @require_api_key
 def check_hash():
     """
-    So'rov: {"sha256": "...", "filename": "invoice.exe"}
+    So'rov: {"sha256": "...", "filename": "invoice.exe", "hostname": "...", "ip_address": "..."}
     Javob:  {"malicious": bool, "confirmed": bool, "threat_name": str|null, "source": str}
 
     MUHIM: `confirmed` maydoni - Endpoint Agent avtomatik karantin/
@@ -140,6 +227,10 @@ def check_hash():
     berishi talab qilinadi. MalwareBazaar (kurallangan zararli dastur
     bazasi) va mahalliy qora ro'yxat esa har doim "tasdiqlangan"
     hisoblanadi (aniq, deterministik moslik).
+
+    `hostname`/`ip_address`/`filename` ixtiyoriy - berilsa, tekshiruv
+    Dashboard'ning "Fayllar" sahifasida ko'rish uchun qayd etiladi
+    (pastdagi `_log_endpoint_scan` orqali).
     """
     data = request.get_json(silent=True) or {}
     sha256 = (data.get("sha256") or "").lower().strip()
@@ -151,6 +242,8 @@ def check_hash():
     try:
         local_result = check_local(session, sha256)
         if local_result:
+            _log_endpoint_scan(session, data, sha256, True, local_result.get("threat_name"), local_result.get("source") or "local")
+            session.commit()
             return jsonify({
                 "malicious": True,
                 "confirmed": True,
@@ -168,6 +261,8 @@ def check_hash():
             confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
             if confirmed:
                 _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
+            _log_endpoint_scan(session, data, sha256, True, vt.get("threat_name"), "virustotal")
+            session.commit()
             return jsonify({
                 "malicious": True, "confirmed": confirmed,
                 "threat_name": vt.get("threat_name"), "source": "virustotal",
@@ -177,8 +272,12 @@ def check_hash():
         mb = check_malwarebazaar(sha256)
         if mb and mb.get("malicious"):
             _add_to_blacklist(session, sha256, mb.get("threat_name"), "malwarebazaar")
+            _log_endpoint_scan(session, data, sha256, True, mb.get("threat_name"), "malwarebazaar")
+            session.commit()
             return jsonify({"malicious": True, "confirmed": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
 
+        _log_endpoint_scan(session, data, sha256, False, None, None)
+        session.commit()
         return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
     finally:
         session.close()
@@ -302,6 +401,38 @@ def agent_heartbeat():
         return jsonify({"status": "ok"})
     finally:
         session.close()
+
+
+@app.route("/api/v1/agent_enroll", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_ENROLL", "30 per minute"))
+@require_bootstrap_key
+def agent_enroll():
+    """
+    AD/GPO orqali avtomatik joylashtirilayotgan har bir yangi kompyuter
+    uchun ALOHIDA, `/api-tokens` sahifasida ko'rinadigan va bekor
+    qilinadigan API token chiqaradi.
+
+    So'rov: {"hostname": "ACCOUNTING-PC"}
+    Javob:  {"token": "nssk_...", "hostname": "ACCOUNTING-PC"}
+
+    MUHIM: bu endpoint ham `require_api_key` orqali himoyalangan - ya'ni
+    chaqiruvchida ALLAQACHON bironta amaldagi kalit (odatda GPO orqali
+    SYSVOL'dan tarqatiladigan umumiy "bootstrap" `AGENT_API_KEY`) bo'lishi
+    kerak. Natijada olingan token esa SHU KOMPYUTERGA ALOHIDA tegishli -
+    Deploy-NetworkSecurityAgent.ps1 buni mahalliy saqlab, keyingi barcha
+    so'rovlar uchun umumiy bootstrap kalit o'rniga ishlatadi. Token
+    QAYTA KO'RSATILMAYDI - shuning uchun bir xil hostname uchun qayta
+    chaqirilsa, oldingi token(lar) avtomatik bekor qilinadi (pastga
+    qarang: `token_manager.enroll_agent_token`).
+    """
+    data = request.get_json(silent=True) or {}
+    hostname = (data.get("hostname") or "").strip()
+    if not hostname:
+        return jsonify({"error": "hostname majburiy"}), 400
+
+    token = token_manager.enroll_agent_token(hostname)
+    logger.info(f"AGENT ENROLL: '{hostname}' uchun yangi alohida API token chiqarildi")
+    return jsonify({"token": token, "hostname": hostname})
 
 
 if __name__ == "__main__":

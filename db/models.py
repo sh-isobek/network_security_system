@@ -242,6 +242,10 @@ class ApiToken(Base):
     created_at = Column(DateTime, default=utcnow)
     last_used_at = Column(DateTime)
     expires_at = Column(DateTime)                              # null = muddatsiz
+    # AD/GPO orqali avtomatik ro'yxatdan o'tgan (enroll qilingan) agent
+    # token'lari uchun - qaysi kompyuterga tegishli ekanligini aniq
+    # bog'lash (qo'lda yaratilgan tokenlarda bo'sh qoladi).
+    agent_hostname = Column(String(255), index=True)
     revoked = Column(Boolean, default=False)
 
 

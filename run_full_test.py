@@ -16,6 +16,13 @@ import sys
 import traceback
 
 os.environ["DEMO_MODE"] = "true"
+# MUHIM: dashboard/app.py endi DASHBOARD_SECRET_KEY'ni MAJBURIY qiladi
+# (bo'sh bo'lsa import paytida RuntimeError) - production'da tasodifiy
+# per-process kalit xavfli (ko'p gunicorn worker orasida sessiya cookie
+# imzosi mos kelmay qolishi mumkin edi). Test muhitida esa doimiy, oldindan
+# ma'lum qiymat kerak - shu yerda, HAR QANDAY `dashboard.app` importidan
+# OLDIN o'rnatiladi.
+os.environ.setdefault("DASHBOARD_SECRET_KEY", "ci-test-dashboard-secret-key")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 RESULTS = []
@@ -30,6 +37,47 @@ def check(name, fn):
         RESULTS.append((name, False, f"{type(e).__name__}: {e}"))
         print(f"❌ {name}: {type(e).__name__}: {e}")
         traceback.print_exc()
+
+
+def _dash_client(flask_app):
+    """
+    `dashboard/app.py` endi CSRF himoyasini qo'shdi (autentifikatsiyalangan
+    sessiya POST so'rov yuborganda, forma ichidagi yashirin `csrf_token`
+    maydoni sessiyadagi qiymat bilan mos kelishi SHART - haqiqiy brauzerda
+    `<form>` ichidagi yashirin input orqali avtomatik yuboriladi). Oddiy
+    `flask_app.test_client()` buni bilmaydi va har bir POST 400 bilan rad
+    etiladi - shuning uchun bu yerda `.post()` avtomatik ravishda joriy
+    sessiyadan `csrf_token`ni o'qib, form ma'lumotlariga qo'shib yuboradigan
+    wrapper qaytariladi (login/mfa_verify kabi autentifikatsiyadan OLDINGI
+    POST'larga ta'sir qilmaydi - ular `current_user.is_authenticated` False
+    bo'lgani uchun CSRF tekshiruvidan umuman o'tmaydi).
+    """
+    client = flask_app.test_client()
+    orig_post = client.post
+
+    def _post_with_csrf(*args, **kwargs):
+        with client.session_transaction() as sess:
+            token = sess.get("csrf_token")
+        if not token:
+            # Sessiyada hali csrf_token yo'q (hali hech qanday shablon
+            # render qilinmagan) - "/" (autentifikatsiyalangan bo'lsa)
+            # yoki "/login" (bo'lmasa) orqali generatsiya qilamiz.
+            client.get("/")
+            with client.session_transaction() as sess:
+                token = sess.get("csrf_token")
+        if not token:
+            client.get("/login")
+            with client.session_transaction() as sess:
+                token = sess.get("csrf_token")
+        if token and kwargs.get("json") is None:
+            data = kwargs.get("data")
+            data = dict(data) if isinstance(data, dict) else {}
+            data.setdefault("csrf_token", token)
+            kwargs["data"] = data
+        return orig_post(*args, **kwargs)
+
+    client.post = _post_with_csrf
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +714,7 @@ def _test_dashboard():
     create_user("dashtest_admin", "dashtestpass123", "admin")
 
     dash_app.app.secret_key = "test-secret-key-dashboard"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # Autentifikatsiyasiz - login sahifasiga redirect (302)
     r = client.get("/", follow_redirects=False)
@@ -740,7 +788,7 @@ def _test_report_generator():
     from dashboard.create_user import create_user
     create_user("reporttest_admin", "reporttestpass123", "admin")
     dash_app.app.secret_key = "test-secret-key-report"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "reporttest_admin", "password": "reporttestpass123"})
 
     r = client.get("/reports/download?period_days=30&format=csv")
@@ -780,7 +828,7 @@ def _test_rbac():
     s.close()
 
     dash_app.app.secret_key = "test-secret-key"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # Autentifikatsiyasiz - login sahifasiga redirect
     r = client.get("/", follow_redirects=False)
@@ -887,7 +935,7 @@ def _test_pdf_excel_reports():
     from dashboard.create_user import create_user
     create_user("pdftest_admin", "pdftestpass123", "admin")
     dash_app.app.secret_key = "test-secret-key-pdf"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "pdftest_admin", "password": "pdftestpass123"})
 
     r = client.get("/reports/download?period_days=7&format=pdf")
@@ -1053,7 +1101,7 @@ def _test_mfa():
 
     create_user("mfatest_admin", "mfatestpass123", "admin", "local")
     dash_app.app.secret_key = "test-secret-mfa-full"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # MFA yo'qligida to'g'ridan-to'g'ri kirish
     r = client.post("/login", data={"username": "mfatest_admin", "password": "mfatestpass123"}, follow_redirects=True)
@@ -1242,7 +1290,7 @@ userPassword: CIPass456
 
         from dashboard import app as dash_app
         dash_app.app.secret_key = "test-secret-ldap-full"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
 
         r = client.post("/login", data={"username": "ciuser", "password": "CIPass456"}, follow_redirects=True)
         r2 = client.get("/")
@@ -1495,7 +1543,7 @@ def _test_audit_log():
 
     create_user("audit_test_admin", "audittestpass123", "admin")
     dash_app.app.secret_key = "test-secret-audit"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # MUHIM: avval noto'g'ri, keyin to'g'ri login - aks holda muvaffaqiyatli
     # login'dan keyingi sessiya cookie'si ikkinchi so'rovni "current_user.
@@ -1592,7 +1640,7 @@ def _test_live_map():
 
     create_user("livemap_test_admin", "livemaptestpass123", "admin")
     dash_app.app.secret_key = "test-secret-livemap"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "livemap_test_admin", "password": "livemaptestpass123"})
 
     s = get_session()
@@ -1628,7 +1676,7 @@ def _test_live_map():
     assert edge["value"] == 2, f"2 ta hodisa kutilgan edi, {edge['value']} keldi"
 
     # Autentifikatsiyasiz kirish rad etilishi kerak
-    anon_client = dash_app.app.test_client()
+    anon_client = _dash_client(dash_app.app)
     r = anon_client.get("/api/topology", follow_redirects=False)
     assert r.status_code == 302
 
@@ -1744,7 +1792,7 @@ def _test_encryption_at_rest():
 
     create_user("enc_ci_test", "enccitest123", "admin")
     dash_app.app.secret_key = "test-secret-encryption"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "enc_ci_test", "password": "enccitest123"})
     client.get("/mfa/setup")
     with client.session_transaction() as sess:
@@ -1819,7 +1867,7 @@ def _test_api_token_management():
 
     create_user("token_admin_ci", "tokenadminci123", "admin")
     dash_app.app.secret_key = "test-secret-tokens"
-    ui_client = dash_app.app.test_client()
+    ui_client = _dash_client(dash_app.app)
     ui_client.post("/login", data={"username": "token_admin_ci", "password": "tokenadminci123"})
 
     r1 = ui_client.post("/api-tokens/create", data={"name": "UI-CI-Token", "expires_days": ""}, follow_redirects=True)
@@ -2662,7 +2710,7 @@ dNSHostName: CI-MISSING.covci.local
         from dashboard.create_user import create_user
         create_user("coverage_ci_admin", "coverageci123", "admin")
         dash_app.app.secret_key = "test-secret-coverage"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
         client.post("/login", data={"username": "coverage_ci_admin", "password": "coverageci123"})
         r = client.get("/agent-coverage")
         assert r.status_code == 200
@@ -3035,7 +3083,7 @@ if __name__ == "__main__":
         from dashboard.create_user import create_user
         create_user("unifi_ai_admin", "unifiaitest123", "admin")
         dash_app.app.secret_key = "test-secret-unifi-ai"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
         client.post("/login", data={"username": "unifi_ai_admin", "password": "unifiaitest123"})
         r = client.get("/asset-inventory")
         assert r.status_code == 200
@@ -3211,7 +3259,7 @@ def _test_dashboard_timezone():
 
     create_user("tz_ci_admin", "tzcitest123", "admin")
     dash_app.secret_key = "test-secret-tz-ci"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "tz_ci_admin", "password": "tzcitest123"})
     r = client.get("/alerts")
     assert r.status_code == 200
@@ -3893,7 +3941,7 @@ def _test_web_activity_full_chain():
     from dashboard.create_user import create_user
     create_user("webactivity_ci_admin", "webactivityci123", "admin")
     dash_app.secret_key = "test-secret-webactivity"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "webactivity_ci_admin", "password": "webactivityci123"})
 
     r = client.get("/web-activity")
@@ -4368,7 +4416,7 @@ def _test_device_online_offline_status():
 
     create_user("device_status_ci_admin", "devstatusci123", "admin")
     dash_app.secret_key = "test-secret-device-status-ci"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "device_status_ci_admin", "password": "devstatusci123"})
 
     r = client.get("/devices")
@@ -4608,6 +4656,327 @@ def _test_rabbitmq_grafana_hardening():
 
 
 check("XAVFSIZLIK: RabbitMQ portlari/credential + Grafana standart parol yopildi", _test_rabbitmq_grafana_hardening)
+
+# ---------------------------------------------------------------------------
+print("\n=== 70) Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi ===")
+
+
+def _test_agent_online_offline_status():
+    """
+    Foydalanuvchi so'ragan 2 ta kamchilik:
+      1) Dashboard'da ulangan agentlarning online/offline holati ko'rinmasdi.
+      2) Agent tekshirgan (lekin toza chiqqan) fayllar Dashboard'da HECH
+         QAYERDA ko'rinmasdi - faqat zararli topilganda Alert yaratilardi,
+         shuning uchun "agent fayllarni tekshirmayapti" degan noto'g'ri
+         taassurot paydo bo'lardi.
+
+    Bu test ikkalasini ham real HTTP (Flask test client) + real DB orqali
+    tasdiqlaydi.
+    """
+    from datetime import timedelta
+    from dashboard.app import _agent_status
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+    from db.models import utcnow
+
+    now = utcnow()
+
+    # --- 1) _agent_status() mantig'i ---
+    assert _agent_status(None) is None
+    assert _agent_status(now) == "online"
+    assert _agent_status(now - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES + 5)) == "offline"
+
+    # --- 2) devices() route'da real qurilma online/offline ko'rinishi ---
+    s = get_session()
+    online_dev = Device(
+        ip_address="172.16.9.51", hostname="ONLINE-PC", source="endpoint_agent",
+        agent_last_heartbeat=now, agent_version="1.0.8", agent_os="windows",
+    )
+    offline_dev = Device(
+        ip_address="172.16.9.52", hostname="OFFLINE-PC", source="endpoint_agent",
+        agent_last_heartbeat=now - timedelta(hours=5), agent_version="1.0.8", agent_os="windows",
+    )
+    s.add_all([online_dev, offline_dev])
+    s.commit()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("agentstatus_ci_admin", "agentstatusci123", "admin")
+    dashboard_app.secret_key = "test-secret-agent-status"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "agentstatus_ci_admin", "password": "agentstatusci123"})
+
+    resp = client.get("/devices")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "ONLINE-PC" in html and "OFFLINE-PC" in html
+    assert "ONLINE" in html
+    assert "OFFLINE" in html
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+
+    # --- 3) check_hash orqali agent tekshirgan (toza VA zararli) fayllar
+    #         file_events jadvalida (Dashboard "Fayllar" sahifasi manbasi)
+    #         paydo bo'lishi ---
+    from api import server as api_server
+    api_server.AGENT_API_KEY = "test-key-online-offline"
+    api_client = api_server.app.test_client()
+
+    clean_sha = "d" * 64
+    r = api_client.post("/api/v1/check_hash", json={
+        "sha256": clean_sha, "filename": "gilocht.pdf",
+        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+    }, headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+    assert r.get_json()["malicious"] is False
+
+    s = get_session()
+    s.add(HashBlacklist(sha256="e" * 64, threat_name="Agent-Visibility-Test", source="manual"))
+    s.commit()
+    s.close()
+
+    r = api_client.post("/api/v1/check_hash", json={
+        "sha256": "e" * 64, "filename": "virus.exe",
+        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+    }, headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+    assert r.get_json()["malicious"] is True
+
+    s = get_session()
+    clean_event = s.query(FileEvent).filter(FileEvent.sha256 == clean_sha).first()
+    malicious_event = s.query(FileEvent).filter(FileEvent.sha256 == "e" * 64).first()
+    assert clean_event is not None, "Toza fayl ham file_events'ga yozilishi kerak edi (agent faoliyati ko'rinishi uchun)"
+    assert clean_event.verdict == "clean"
+    assert clean_event.channel == "endpoint_agent"
+    assert clean_event.filename == "gilocht.pdf"
+    assert malicious_event is not None
+    assert malicious_event.verdict == "malicious"
+    assert malicious_event.threat_score == 100
+    s.close()
+
+    # --- 4) hostname/ip_address yuborilmasa (eski chaqiruvchi/test) - xato bermasligi ---
+    r = api_client.post("/api/v1/check_hash", json={"sha256": "f" * 64},
+                         headers={"X-API-Key": "test-key-online-offline"})
+    assert r.status_code == 200
+
+    # --- 5) /files sahifasida "Faqat Endpoint Agent" filtri ishlashi ---
+    resp = client.get("/files?channel=endpoint_agent")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "gilocht.pdf" in html
+
+
+check("Dashboard: Agent Online/Offline holati + Fayllar sahifasida agent faoliyati ko'rinishi", _test_agent_online_offline_status)
+
+# ---------------------------------------------------------------------------
+print("\n=== 71) GPO skriptlari: '.env' orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) ===")
+
+
+def _test_gpo_env_file_config():
+    """
+    Foydalanuvchi so'rovi (1): ulanayotgan server manzili va API kalit
+    endi BITTA `.env` faylidan (server tomonidagi `.env.example` bilan
+    bir xil format) o'qilishi kerak - avvalgi ikkita alohida fayl
+    (`api_server_url.txt` + `api_key.secret`) o'rniga. Orqaga moslik
+    saqlanishi SHART - '.env' topilmasa, eski fayllarga qaytish kerak.
+
+    PowerShell bu sandbox'da mavjud emas (Zeek/Grafana kabi holat) -
+    shuning uchun matn-asosida (funksiya/o'zgaruvchi nomlari mavjudligi,
+    mantiqiy tartib, qavslar balansi) tekshiriladi - bu loyihada
+    GPO skriptlari uchun ilgari ham qo'llanilgan usul.
+    """
+    deploy_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1",
+    )
+    with open(deploy_path) as f:
+        deploy_content = f.read()
+
+    assert "Read-DotEnv" in deploy_content
+    assert 'Join-Path $ServerShare ".env"' in deploy_content
+    # Orqaga moslik - eski fayllar hali ham o'qiladi
+    assert "api_server_url.txt" in deploy_content
+    assert "api_key.secret" in deploy_content
+
+    install_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Install-NetworkSecurityAgent.ps1",
+    )
+    with open(install_path) as f:
+        install_content = f.read()
+
+    assert "Read-DotEnv" in install_content
+    assert "Mandatory=$true" not in install_content, (
+        "-ApiServerUrl/-ApiKey endi IXTIYORIY bo'lishi kerak (.env fallback bilan)"
+    )
+
+    for path, content in [(deploy_path, deploy_content), (install_path, install_content)]:
+        code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+        code_content = "".join(code_only)
+        for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+            assert code_content.count(open_c) == code_content.count(close_c), f"{path}: {open_c}{close_c} balansi buzilgan"
+
+
+check("GPO skriptlari: '.env' orqali sozlash (orqaga moslik bilan)", _test_gpo_env_file_config)
+
+
+def _test_agent_enroll_per_computer_token():
+    """
+    Foydalanuvchi so'rovi (2): AD orqali avtomatik ulanayotgan har bir
+    kompyuter uchun ALOHIDA API token yaratilsin va o'sha kompyuterga
+    biriktirilsin - shu paytgacha barcha agentlar bitta umumiy
+    AGENT_API_KEY'ni ishlatgan.
+
+    Real HTTP (Flask test client) + real DB orqali to'liq zanjir:
+    bootstrap kalit -> /api/v1/agent_enroll -> yangi, shu kompyuterga
+    xos token -> o'sha token bilan check_hash ishlashi -> qayta enroll
+    qilinsa eski token avtomatik bekor qilinishi -> Dashboard
+    /api-tokens sahifasida ko'rinishi.
+    """
+    from api import server as api_server
+    from db.models import ApiToken
+    api_server.AGENT_API_KEY = "bootstrap-key-enroll-test"
+    client = api_server.app.test_client()
+
+    # --- 1) hostname'siz so'rov - 400 ---
+    r = client.post("/api/v1/agent_enroll", json={},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 400
+
+    # --- 2) bootstrap kalit bilan enroll -> yangi, ALOHIDA token ---
+    r = client.post("/api/v1/agent_enroll", json={"hostname": "ENROLL-TEST-PC"},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 200
+    first_token = r.get_json()["token"]
+    assert first_token.startswith("nssk_")
+    assert first_token != "bootstrap-key-enroll-test"
+
+    s = get_session()
+    row = s.query(ApiToken).filter(ApiToken.agent_hostname == "ENROLL-TEST-PC", ApiToken.revoked.is_(False)).first()
+    assert row is not None, "enroll qilingan token bazada agent_hostname bilan bog'langan bo'lishi kerak"
+    assert row.created_by == "ad_auto_enroll"
+    s.close()
+
+    # --- 3) YANGI token o'zi bilan ham (bootstrap kalitsiz) boshqa so'rovlar ishlashi ---
+    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64},
+                     headers={"X-API-Key": first_token})
+    assert r.status_code == 200
+
+    # --- 4) bir xil hostname uchun QAYTA enroll -> eski token BEKOR qilinadi ---
+    r = client.post("/api/v1/agent_enroll", json={"hostname": "ENROLL-TEST-PC"},
+                     headers={"X-API-Key": "bootstrap-key-enroll-test"})
+    assert r.status_code == 200
+    second_token = r.get_json()["token"]
+    assert second_token != first_token
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64},
+                     headers={"X-API-Key": first_token})
+    assert r.status_code == 401, "qayta enroll qilingandan keyin ESKI token endi ishlamasligi kerak (bekor qilingan)"
+
+    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64},
+                     headers={"X-API-Key": second_token})
+    assert r.status_code == 200, "YANGI token esa ishlashi kerak"
+
+    s = get_session()
+    active_count = s.query(ApiToken).filter(ApiToken.agent_hostname == "ENROLL-TEST-PC", ApiToken.revoked.is_(False)).count()
+    assert active_count == 1, "faqat BITTA faol token qolishi kerak - qayta enroll eskilarini bekor qiladi"
+    s.close()
+
+    # --- 5) Dashboard /api-tokens sahifasida hostname ko'rinishi ---
+    from dashboard.app import app as dash_app
+    from dashboard.create_user import create_user
+    create_user("enroll_ci_admin", "enrollci123456", "admin")
+    dash_app.secret_key = "test-secret-enroll"
+    dash_client = _dash_client(dash_app)
+    dash_client.post("/login", data={"username": "enroll_ci_admin", "password": "enrollci123456"})
+    r = dash_client.get("/api-tokens")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "ENROLL-TEST-PC" in html
+
+
+check("AD auto-enroll: har kompyuter uchun alohida, bekor qilinadigan API token (real HTTP + real DB)", _test_agent_enroll_per_computer_token)
+
+# ---------------------------------------------------------------------------
+print("\n=== 72) Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) ===")
+
+
+def _test_user_activate_and_edit():
+    """
+    Foydalanuvchi so'rovi: foydalanuvchilarni boshqarishda (1) faolsiz
+    foydalanuvchini qayta faollashtira olish, (2) tahrirlash (rol
+    o'zgartirish, parol tiklash) funksiyalari qo'shilsin - avvalgi
+    versiyada faqat "yaratish" va "faolsizlantirish" bor edi, orqaga
+    qaytarib bo'lmasdi.
+    """
+    from dashboard.create_user import create_user
+    from dashboard.app import app as dash_app
+
+    create_user("useredit_ci_admin", "usereditci123", "admin")
+    create_user("useredit_ci_target", "targetpass123", "viewer")
+    dash_app.secret_key = "test-secret-useredit"
+    client = _dash_client(dash_app)
+    client.post("/login", data={"username": "useredit_ci_admin", "password": "usereditci123"})
+
+    s = get_session()
+    target = s.query(User).filter(User.username == "useredit_ci_target").first()
+    target_id = target.id
+    s.close()
+
+    # --- 1) Faolsizlantirish -> Faollashtirish (reaktivatsiya) ---
+    client.post(f"/users/{target_id}/deactivate")
+    s = get_session()
+    assert s.query(User).filter(User.id == target_id).first().is_active is False
+    s.close()
+
+    r = client.post(f"/users/{target_id}/activate", follow_redirects=True)
+    assert r.status_code == 200
+    s = get_session()
+    assert s.query(User).filter(User.id == target_id).first().is_active is True, "reaktivatsiyadan keyin foydalanuvchi FAOL bo'lishi kerak"
+    s.close()
+
+    # --- 2) Tahrirlash: rol o'zgartirish + parol tiklash ---
+    r = client.post(f"/users/{target_id}/edit", data={"role": "analyst", "password": "newpass456"}, follow_redirects=True)
+    assert r.status_code == 200
+    s = get_session()
+    updated = s.query(User).filter(User.id == target_id).first()
+    assert updated.role == "analyst", "rol 'analyst'ga o'zgargan bo'lishi kerak edi"
+    old_hash = updated.password_hash
+    s.close()
+
+    # Yangi parol bilan HAQIQATAN login qila olishini tekshirish
+    other_client = _dash_client(dash_app)
+    r = other_client.post("/login", data={"username": "useredit_ci_target", "password": "newpass456"}, follow_redirects=True)
+    assert r.status_code == 200
+    r2 = other_client.get("/")
+    assert r2.status_code == 200, "yangi parol bilan login muvaffaqiyatli bo'lishi va sahifaga kirish kerak edi"
+
+    # Eski parol endi ishlamasligi kerak
+    stale_client = _dash_client(dash_app)
+    stale_client.post("/login", data={"username": "useredit_ci_target", "password": "targetpass123"})
+    r3 = stale_client.get("/users")
+    assert r3.status_code != 200, "eski parol endi ishlamasligi kerak edi"
+
+    # --- 3) O'zini-o'zi qulflab qo'yishning oldini olish (o'z admin rolini o'zgartira olmaydi) ---
+    s = get_session()
+    self_id = s.query(User).filter(User.username == "useredit_ci_admin").first().id
+    s.close()
+    client.post(f"/users/{self_id}/edit", data={"role": "viewer"})
+    s = get_session()
+    assert s.query(User).filter(User.id == self_id).first().role == "admin", "admin o'z rolini o'zgartira OLMASLIGI kerak (qulflanib qolish xavfi)"
+    s.close()
+
+    # --- 4) Audit log'da qayd etilgani ---
+    from db.models import AuditLog
+    s = get_session()
+    actions = {a.action for a in s.query(AuditLog).filter(AuditLog.username == "useredit_ci_admin").all()}
+    assert "activate_user" in actions
+    assert "edit_user" in actions
+    s.close()
+
+
+check("Foydalanuvchilarni boshqarish: faollashtirish + tahrirlash (rol/parol, real HTTP + real DB)", _test_user_activate_and_edit)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

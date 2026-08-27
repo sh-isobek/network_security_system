@@ -17,10 +17,11 @@
 {% endif %}
 
 <table style="margin-bottom: 24px;">
-    <tr><th>Nomi</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
+    <tr><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
     {% for t in tokens %}
     <tr>
         <td>{{ t.name }}</td>
+        <td class="mono">{{ t.agent_hostname or '-' }}</td>
         <td class="mono">{{ t.token_prefix }}...</td>
         <td class="mono">{{ t.created_at | local_dt('%Y-%m-%d %H:%M') }}</td>
         <td>{{ t.created_by or '-' }}</td>
@@ -33,6 +34,7 @@
         <td>
             {% if not t.revoked %}
             <form method="POST" action="/api-tokens/{{ t.id }}/revoke">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:12px;">Bekor qilish</button>
             </form>
             {% endif %}
@@ -43,6 +45,7 @@
 
 <h1>Yangi token yaratish</h1>
 <form method="POST" action="/api-tokens/create" style="background:#fff; padding: 18px; border-radius: 6px; max-width: 360px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label style="display:block; font-size:12px; color:#5a6673; margin-bottom:4px;">Nomi (masalan "ACCOUNTING-PC agent")</label>
     <input type="text" name="name" required style="width:100%; padding:8px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:12px;">
 

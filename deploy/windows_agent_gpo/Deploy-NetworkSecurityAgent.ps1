@@ -155,44 +155,118 @@ try {
 # lekin xizmatni QAYTA ishga tushirish kerak (buni pastda 6-bosqichda
 # qilamiz).
 #
-# MUHIM (foydalanuvchi so'rovi bilan qo'shildi): $ApiServerUrl
-# parametrining standart qiymati - bu shunchaki UMUMIY SHABLON
-# (masalan "http://172.16.0.5:8443"), haqiqiy server manzili emas.
-# Avvalgi versiyada foydalanuvchi HAR SAFAR yangi skript versiyasini
-# GitHub'dan yuklab olganda, bu qiymatni QO'LDA o'z haqiqiy server
-# manziliga o'zgartirishi kerak edi. Endi bu - AGENT_API_KEY bilan
-# BIR XIL naqsh orqali hal qilingan: agar SYSVOL'da alohida
-# `api_server_url.txt` fayli mavjud bo'lsa, o'sha qiymat ishlatiladi
-# (skript parametridan USTUN turadi) - bu faylni FAQAT BIR MARTA
-# yaratasiz, undan keyin skript qancha marta yangilansa ham unga
-# tegilmaydi.
-$serverUrlFile = Join-Path $ServerShare "api_server_url.txt"
-if (Test-Path $serverUrlFile) {
-    $configuredUrl = (Get-Content $serverUrlFile -Raw).Trim()
-    if ($configuredUrl) {
-        $ApiServerUrl = $configuredUrl
-        Write-DeployLog "API_SERVER_URL 'api_server_url.txt' faylidan o'qildi: $ApiServerUrl"
+# MUHIM (yangilandi): endi SYSVOL'da BITTA `.env` fayli orqali sozlash
+# tavsiya etiladi (`API_SERVER_URL=...` va `AGENT_API_KEY=...` qatorlari
+# - loyihaning server tomonidagi `.env.example` bilan bir xil, tanish
+# format) - bu avvalgi ikkita alohida faylni (`api_server_url.txt` +
+# `api_key.secret`) bitta joyga birlashtiradi. ORQAGA MOSLIK: agar
+# `.env` topilmasa, eski ikkita fayl hali ham o'qiladi - mavjud SYSVOL
+# joylashuvlarini yangilash SHART EMAS.
+function Read-DotEnv {
+    param([string]$Path)
+    $result = @{}
+    if (-not (Test-Path $Path)) { return $result }
+    foreach ($line in Get-Content $Path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+        $parts = $trimmed.Split("=", 2)
+        if ($parts.Count -eq 2) {
+            $result[$parts[0].Trim()] = $parts[1].Trim()
+        }
+    }
+    return $result
+}
+
+$envFile = Join-Path $ServerShare ".env"
+$envValues = Read-DotEnv -Path $envFile
+$bootstrapApiKey = $null
+
+if ($envValues.Count -gt 0) {
+    Write-DeployLog "'.env' fayli topildi: $envFile"
+    if ($envValues.ContainsKey("API_SERVER_URL") -and $envValues["API_SERVER_URL"]) {
+        $ApiServerUrl = $envValues["API_SERVER_URL"]
+        Write-DeployLog "API_SERVER_URL '.env' faylidan o'qildi: $ApiServerUrl"
+    }
+    if ($envValues.ContainsKey("AGENT_API_KEY") -and $envValues["AGENT_API_KEY"]) {
+        $bootstrapApiKey = $envValues["AGENT_API_KEY"]
     }
 } else {
-    Write-DeployLog "OGOHLANTIRISH: api_server_url.txt topilmadi - skript standart qiymati ishlatilmoqda: $ApiServerUrl"
-}
-[Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
+    # Orqaga moslik - eski, alohida fayllar (agar '.env' hali yaratilmagan bo'lsa)
+    $serverUrlFile = Join-Path $ServerShare "api_server_url.txt"
+    if (Test-Path $serverUrlFile) {
+        $configuredUrl = (Get-Content $serverUrlFile -Raw).Trim()
+        if ($configuredUrl) {
+            $ApiServerUrl = $configuredUrl
+            Write-DeployLog "API_SERVER_URL 'api_server_url.txt' faylidan o'qildi (eski format): $ApiServerUrl"
+        }
+    } else {
+        Write-DeployLog "OGOHLANTIRISH: '.env' ham, api_server_url.txt' ham topilmadi - skript standart qiymati ishlatilmoqda: $ApiServerUrl"
+    }
 
-# MUHIM: AGENT_API_KEY qiymati bu skriptda HECH QACHON qattiq
-# kodlanmagan (GPO orqali tarqatiladigan skript domendagi barcha
-# kompyuterlarda o'qilishi mumkin bo'lgani uchun bu jiddiy xavfsizlik
-# xatosi bo'lardi). Kalit alohida, faqat kompyuter hisoblariga o'qish
-# huquqi berilgan SYSVOL faylidan (`api_key.secret`) olinadi - ushbu
-# faylning ACL'ini cheklash tashkilotingizning AD administratori
-# tomonidan amalga oshirilishi kerak.
-$apiKeyFile = Join-Path $ServerShare "api_key.secret"
-if (Test-Path $apiKeyFile) {
-    $apiKey = (Get-Content $apiKeyFile -Raw).Trim()
-    [Environment]::SetEnvironmentVariable("AGENT_API_KEY", $apiKey, "Machine")
-} else {
-    Write-DeployLog "OGOHLANTIRISH: api_key.secret topilmadi - agent kalitsiz ishga tushishi mumkin"
+    # MUHIM: AGENT_API_KEY qiymati bu skriptda HECH QACHON qattiq
+    # kodlanmagan (GPO orqali tarqatiladigan skript domendagi barcha
+    # kompyuterlarda o'qilishi mumkin bo'lgani uchun bu jiddiy xavfsizlik
+    # xatosi bo'lardi). SYSVOL fayllarining (`.env` yoki `api_key.secret`)
+    # ACL'ini cheklash tashkilotingizning AD administratori tomonidan
+    # amalga oshirilishi kerak.
+    $apiKeyFile = Join-Path $ServerShare "api_key.secret"
+    if (Test-Path $apiKeyFile) {
+        $bootstrapApiKey = (Get-Content $apiKeyFile -Raw).Trim()
+    }
 }
+
+[Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
 [Environment]::SetEnvironmentVariable("AGENT_VERSION", $availableVersion, "Machine")
+
+# --- 4.5) Har bir kompyuter uchun ALOHIDA API token (AD auto-enroll) ---
+# MUHIM (yangi funksiya): shu paytgacha BARCHA agentlar bitta umumiy
+# $bootstrapApiKey'ni ishlatgan (yuqoridagi `.env`/`api_key.secret`dan) -
+# agar bu kalit o'g'irlansa/kompaundlansa, HAMMA kompyuter uchun bekor
+# qilinishi kerak bo'lardi. Endi birinchi marta ishga tushganda markaziy
+# serverdan (`/api/v1/agent_enroll`) shu KOMPYUTERGA ALOHIDA tegishli
+# token so'raladi va mahalliy (`$agentTokenFile`) saqlanadi - shundan
+# keyin xizmat umumiy bootstrap kalit o'rniga SHU tokenni ishlatadi.
+#
+# Enroll FAQAT token fayli hali yo'q bo'lsagina chaqiriladi (har
+# reboot'da emas) - aks holda har xizmat qayta ishga tushganda oldingi
+# token bekor qilinib, keraksiz "churn" yaratilardi (`token_manager.
+# enroll_agent_token` bir xil hostname uchun qayta chaqirilsa, eski
+# tokenni avtomatik bekor qiladi).
+$agentTokenFile = "C:\ProgramData\NetworkSecurityAgent\agent_api_token.secret"
+$finalApiKey = $bootstrapApiKey
+
+if (Test-Path $agentTokenFile) {
+    $existingAgentToken = (Get-Content $agentTokenFile -Raw).Trim()
+    if ($existingAgentToken) {
+        $finalApiKey = $existingAgentToken
+        Write-DeployLog "Mavjud, shu kompyuterga xos API token ishlatilmoqda ($agentTokenFile)"
+    }
+} elseif ($bootstrapApiKey) {
+    try {
+        $body = @{ hostname = $env:COMPUTERNAME } | ConvertTo-Json
+        $response = Invoke-RestMethod -Uri "$ApiServerUrl/api/v1/agent_enroll" -Method Post `
+            -Headers @{ "X-API-Key" = $bootstrapApiKey } -ContentType "application/json" -Body $body -TimeoutSec 15
+        if ($response.token) {
+            $tokenDir = Split-Path $agentTokenFile -Parent
+            if (-not (Test-Path $tokenDir)) { New-Item -ItemType Directory -Path $tokenDir -Force | Out-Null }
+            Set-Content -Path $agentTokenFile -Value $response.token -NoNewline
+            $finalApiKey = $response.token
+            Write-DeployLog "Yangi, shu kompyuterga xos API token markazdan olindi va saqlandi ($agentTokenFile)"
+        }
+    } catch {
+        # Fail-safe: enroll muvaffaqiyatsiz bo'lsa (masalan tarmoq hali
+        # to'liq ko'tarilmagan) - umumiy bootstrap kalit bilan davom
+        # etiladi, deploy butunlay to'xtamaydi. Keyingi qayta yoqilishda
+        # (token fayli hali yo'q bo'lgani uchun) yana urinib ko'radi.
+        Write-DeployLog "OGOHLANTIRISH: agent_enroll muvaffaqiyatsiz bo'ldi ($_) - hozircha umumiy bootstrap kalit bilan davom etilmoqda"
+    }
+}
+
+if ($finalApiKey) {
+    [Environment]::SetEnvironmentVariable("AGENT_API_KEY", $finalApiKey, "Machine")
+} else {
+    Write-DeployLog "OGOHLANTIRISH: hech qanday API kalit topilmadi ('.env'dagi AGENT_API_KEY, api_key.secret yoki enroll) - agent kalitsiz ishga tushishi mumkin"
+}
 
 # --- 5) Windows Service sifatida o'rnatish (exe'ning O'Z 'install'
 #         buyrug'i orqali - raw sc.exe EMAS, chunki pywin32 xizmatlari

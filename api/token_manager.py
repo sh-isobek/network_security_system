@@ -20,7 +20,8 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_token(name: str, created_by: str = "system", expires_days: Optional[int] = None) -> str:
+def create_token(name: str, created_by: str = "system", expires_days: Optional[int] = None,
+                  agent_hostname: Optional[str] = None) -> str:
     """
     Yangi token yaratadi. MUHIM: to'liq token faqat SHU YERDA, bir marta
     qaytariladi - bazada faqat xesh saqlanadi, keyinroq qayta ko'rsatib
@@ -38,6 +39,7 @@ def create_token(name: str, created_by: str = "system", expires_days: Optional[i
             token_prefix=raw_token[:12],
             created_by=created_by,
             expires_at=expires_at,
+            agent_hostname=agent_hostname,
         )
         session.add(entry)
         session.commit()
@@ -46,6 +48,48 @@ def create_token(name: str, created_by: str = "system", expires_days: Optional[i
         session.close()
 
     return raw_token
+
+
+def enroll_agent_token(hostname: str, created_by: str = "ad_auto_enroll",
+                        expires_days: Optional[int] = None) -> str:
+    """
+    AD/GPO orqali avtomatik ulanayotgan har bir kompyuter uchun ALOHIDA
+    API token chiqaradi - shu paytgacha barcha Windows agentlar BITTA
+    umumiy `AGENT_API_KEY`ni ishlatgan (agar u o'g'irlansa/kompaundlansa,
+    HAMMA kompyuter uchun bekor qilinishi kerak bo'lardi). Endi GPO
+    Deploy skripti birinchi marta ishga tushganda shu funksiyani
+    chaqiradi (umumiy bootstrap kalit orqali) va natijada olingan
+    ALOHIDA tokenni shu kompyuterda doimiy saqlaydi - shundan keyin
+    barcha so'rovlar (check_hash/report_incident/heartbeat) shu ALOHIDA
+    token bilan yuboriladi.
+
+    MUHIM (idempotentlik): agar bu hostname uchun avval ham token
+    chiqarilgan bo'lsa (masalan kompyuter qayta obraz qilingan va
+    mahalliy token fayli yo'qolgan) - eskisi (eskilari) BEKOR qilinadi
+    (revoke) va yangisi chiqariladi. Bu eski, endi hech kim ishlatmaydigan
+    tokenlarning cheksiz to'planib qolishining oldini oladi.
+    """
+    session = get_session()
+    try:
+        stale = (
+            session.query(ApiToken)
+            .filter(ApiToken.agent_hostname == hostname, ApiToken.revoked.is_(False))
+            .all()
+        )
+        for entry in stale:
+            entry.revoked = True
+        session.commit()
+        if stale:
+            logger.info(f"'{hostname}' uchun {len(stale)} ta eski token bekor qilindi (qayta enroll)")
+    finally:
+        session.close()
+
+    return create_token(
+        name=f"{hostname} (AD auto-enroll)",
+        created_by=created_by,
+        expires_days=expires_days,
+        agent_hostname=hostname,
+    )
 
 
 def verify_token(raw_token: str) -> Optional[ApiToken]:
@@ -75,6 +119,7 @@ def verify_token(raw_token: str) -> Optional[ApiToken]:
             id=entry.id, name=entry.name, token_prefix=entry.token_prefix,
             created_by=entry.created_by, created_at=entry.created_at,
             last_used_at=entry.last_used_at, expires_at=entry.expires_at, revoked=entry.revoked,
+            agent_hostname=entry.agent_hostname,
         )
     finally:
         session.close()
