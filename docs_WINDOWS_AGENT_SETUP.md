@@ -60,15 +60,18 @@ pip install watchdog psutil requests pywin32
 
 ### d) Sozlash (muhit o'zgaruvchilari)
 
-**MUHIM**: `http://` ishlating, **`https://` EMAS**. Standart holatda
-server (docker-compose.yml'dagi gunicorn) hech qanday SSL/TLS
-sertifikati bilan sozlanmagan - faqat oddiy HTTP orqali ishlaydi.
-`https://` bilan ulanishga urinish **jim ravishda muvaffaqiyatsiz**
-bo'ladi (TLS handshake xatosi, aniq xato xabarisiz).
+**YANGILANDI (xavfsizlik auditi, CRITICAL)**: server endi `nginx`
+xizmati orqali HAQIQIY TLS bilan ishlaydi (ichki CA tomonidan
+imzolangan sertifikat - `docs_TLS_SETUP.md`ga qarang). Shuning uchun
+endi **`https://` ishlatiladi** (avvalgi versiyalarda TLS umuman
+sozlanmagani uchun `http://` tavsiya etilgan edi - bu endi ESKIRGAN).
+Agent CA'ga ishonishi uchun `AGENT_CA_BUNDLE_FILE`ni ham sozlang
+(yoki CA'ni Windows'ning Trusted Root do'koniga GPO orqali o'rnating).
 
 ```powershell
-setx API_SERVER_URL "http://172.16.0.5:8443"
+setx API_SERVER_URL "https://172.16.0.5:8443"
 setx AGENT_API_KEY "<markazdagi bilan bir xil kalit>"
+setx AGENT_CA_BUNDLE_FILE "C:\ProgramData\NetworkSecurityAgent\ca.crt"
 ```
 
 ### e) Windows Service sifatida o'rnatish
@@ -218,9 +221,15 @@ Copy-Item -Path "C:\Downloads\NetworkSecurityAgent-1.0.0\VERSION" -Destination $
 # O'QISH huquqini bering, boshqa hech kimga) - BIR MARTA yaratiladi,
 # keyingi versiya yangilanishlarida bu faylga tegilmaydi.
 @"
-API_SERVER_URL=http://<Ubuntu-server-IP>:8443
+API_SERVER_URL=https://<Ubuntu-server-IP>:8443
 AGENT_API_KEY=<markazdagi AGENT_API_KEY bilan bir xil>
+AGENT_CA_BUNDLE_FILE=C:\ProgramData\NetworkSecurityAgent\ca.crt
 "@ | Set-Content -Path "$SysvolPath\.env"
+
+# ca.crt'ni ham shu SYSVOL papkasiga qo'ying (deploy/pki/certs/ca.crt,
+# generate_ca.sh orqali yaratilgan) - Deploy-NetworkSecurityAgent.ps1
+# uni har kompyuterga nusxalaydi (docs_TLS_SETUP.md'ga qarang).
+Copy-Item -Path "\\path\to\repo\deploy\pki\certs\ca.crt" -Destination $SysvolPath
 ```
 
 **Yangilanish chiqarganda** (masalan versiya 1.1.0): yangi `.exe`ni
@@ -271,7 +280,7 @@ ko'ring (Administrator PowerShell'da, arxiv ichidagi papkada turib):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "http://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
+.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "https://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
 ```
 
 Muvaffaqiyatli bo'lsa, `Get-Service NetworkSecurityEndpointAgent`

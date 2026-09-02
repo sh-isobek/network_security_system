@@ -3375,19 +3375,24 @@ if __name__ == "__main__":
 check("UniFi Sync Loop - standart docker-compose xizmati sifatida (production bo'shlig'i tuzatilgan)", _test_unifi_sync_loop)
 
 # ---------------------------------------------------------------------------
-print("\n=== 48) API_SERVER_URL: https:// EMAS http:// (real production xatosi, regressiya himoyasi) ===")
+print("\n=== 48) API_SERVER_URL: https:// (nginx TLS reverse proxy tufayli endi TO'G'RI, regressiya himoyasi) ===")
 
 
-def _test_api_server_url_uses_http_not_https():
+def _test_api_server_url_uses_https_now():
     """
-    Real production'da topilgan xato: docker-compose.yml'dagi gunicorn
-    HECH QANDAY SSL/TLS sertifikatisiz oddiy HTTP orqali ishlaydi, lekin
-    hujjatlar/skriptlarda standart qiymat sifatida 'https://' yozilgan
-    edi - bu Windows Agent'ning serverga ulanishini JIM ravishda
-    (aniq xatosiz) muvaffaqiyatsizlikka olib kelardi.
+    TARIX (halol): ilgari bu test aksincha edi - docker-compose.yml'dagi
+    gunicorn HECH QANDAY SSL/TLS'siz oddiy HTTP orqali ishlagani uchun
+    'http://' talab qilinardi, 'https://' esa JIM ravishda ulanish
+    xatosiga olib kelardi (real production'da topilgan xato).
 
-    Bu test barcha tegishli fayllarda 'https://172.16.0.5:8443' (yoki
-    shunga o'xshash) endi qolmaganini tekshiradi.
+    XAVFSIZLIK AUDITI (CRITICAL) tuzatilgandan keyin bu holat TESKARI
+    bo'ldi: endi `nginx` xizmati (deploy/nginx/, ichki CA bilan -
+    docs_TLS_SETUP.md) HAQIQIY TLS termination qiladi, agent_api/
+    dashboard'ning o'zi esa faqat 127.0.0.1'ga bog'langan (LAN'ga OCHIQ
+    EMAS). Shuning uchun 'http://' endi TO'G'RI EMAS - LAN orqali
+    ulanish umuman muvaffaqiyatsiz bo'ladi (nginx faqat TLS bilan
+    tinglaydi). Bu test endi TESKARI regressiyani ushlaydi: kimdir
+    bexosdan 'http://172.16.0.5:8443'ni qaytarib qo'ysa.
     """
     files_to_check = [
         "agent_core/agent.py",
@@ -3395,7 +3400,6 @@ def _test_api_server_url_uses_http_not_https():
         "deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1",
         "docs_WINDOWS_AGENT_SETUP.md",
         "docs_LINUX_AGENT_SETUP.md",
-        ".env.example",
     ]
     for filepath in files_to_check:
         full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filepath)
@@ -3403,20 +3407,32 @@ def _test_api_server_url_uses_http_not_https():
             continue
         with open(full_path) as f:
             content = f.read()
-        assert "https://172.16.0.5:8443" not in content, (
-            f"{filepath}'da hali ham noto'g'ri 'https://172.16.0.5:8443' bor - "
-            f"server SSL/TLS'siz, bu jim ravishda ulanish xatosiga olib keladi"
+        assert "http://172.16.0.5:8443" not in content, (
+            f"{filepath}'da hali ham eskirgan 'http://172.16.0.5:8443' bor - "
+            f"nginx TLS reverse proxy endi FAQAT https:// bilan ishlaydi "
+            f"(docs_TLS_SETUP.md'ga qarang)"
         )
 
-    # agent_core/agent.py'ning standart qiymati aynan http:// bilan boshlanishini tasdiqlash
-    from agent_core.agent import API_SERVER_URL
-    assert API_SERVER_URL.startswith("http://"), (
-        f"API_SERVER_URL standart qiymati http:// bilan boshlanishi kerak, "
-        f"hozirgi qiymat: {API_SERVER_URL}"
+    # agent_core/agent.py'ning standart qiymati aynan https:// bilan boshlanishini tasdiqlash
+    import importlib
+    import agent_core.agent as agent_mod
+    importlib.reload(agent_mod)
+    assert agent_mod.API_SERVER_URL.startswith("https://"), (
+        f"API_SERVER_URL standart qiymati https:// bilan boshlanishi kerak "
+        f"(nginx TLS reverse proxy), hozirgi qiymat: {agent_mod.API_SERVER_URL}"
     )
 
+    # CA bundle/mTLS ixtiyoriy sozlamalari mavjudligini tekshirish
+    assert hasattr(agent_mod, "AGENT_CA_BUNDLE_FILE")
+    assert hasattr(agent_mod, "AGENT_TLS_CLIENT_CERT_FILE")
+    assert hasattr(agent_mod, "AGENT_TLS_CLIENT_KEY_FILE")
+    assert hasattr(agent_mod, "_tls_request_kwargs")
+    # verify=False HECH QACHON ishlatilmasligi (MITM xavfsizligi)
+    kwargs = agent_mod._tls_request_kwargs()
+    assert kwargs["verify"] is not False, "verify=False MITM hujumiga ochiq bo'lardi - hech qachon ishlatilmasligi kerak"
 
-check("API_SERVER_URL http:// (https:// emas) - real production ulanish xatosi tuzatilgan", _test_api_server_url_uses_http_not_https)
+
+check("API_SERVER_URL https:// (nginx TLS reverse proxy) - ichki CA/mTLS qo'llab-quvvatlash", _test_api_server_url_uses_https_now)
 
 # ---------------------------------------------------------------------------
 print("\n=== 49) SURICATA -> FILE ANALYSIS to'liq zanjiri (yettinchi marta topilgan production bo'shlig'i) ===")
@@ -5007,6 +5023,191 @@ def _test_user_activate_and_edit():
 
 
 check("Foydalanuvchilarni boshqarish: faollashtirish + tahrirlash (rol/parol, real HTTP + real DB)", _test_user_activate_and_edit)
+
+# ---------------------------------------------------------------------------
+print("\n=== 73) XAVFSIZLIK (CRITICAL): TLS reverse proxy (nginx) + Ichki CA + ixtiyoriy mTLS ===")
+
+
+def _test_tls_reverse_proxy():
+    """
+    Xavfsizlik auditi topilmasi (CRITICAL): "TLS/mTLS yo'qligi" - Agent
+    API va Dashboard endi haqiqiy `nginx` TLS reverse proxy (ichki CA
+    bilan imzolangan sertifikat) ortida ishlaydi. agent_api/dashboard'ning
+    o'zi hamon oddiy HTTP (faqat 127.0.0.1'ga bog'langan) - TLS
+    termination FAQAT nginx'da.
+
+    Bu test HECH NARSANI soxtalashtirmaydi:
+      - `api.server`/`dashboard.app` - HAQIQIY, alohida jarayonda ishga
+        tushirilgan Flask server (real HTTP, test_client emas).
+      - `deploy/pki/generate_ca.sh`/`issue_agent_cert.sh` - HAQIQIY
+        openssl chaqiruvlari orqali CA/server/client sertifikat.
+      - `deploy/nginx/entrypoint.sh` - production'da ishlatiladigan
+        AYNAN SHU, o'zgartirilmagan skript + haqiqiy `nginx` binary.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    import time as _time
+
+    if shutil.which("nginx") is None:
+        print("   (nginx o'rnatilmagan - test o'tkazib yuborildi; CI'da avtomatik o'rnatiladi)")
+        return
+    if shutil.which("envsubst") is None:
+        print("   (envsubst/gettext-base o'rnatilmagan - test o'tkazib yuborildi)")
+        return
+
+    import requests as requests_mod
+
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    work_dir = tempfile.mkdtemp(prefix="tls_test_")
+    cert_dir = os.path.join(work_dir, "certs")
+    agent_port, dash_port = 18501, 18801
+    nginx_agent_port, nginx_dash_port = 18444, 18844
+
+    # --- 1) Ichki CA + server sertifikat (haqiqiy generate_ca.sh) ---
+    gen_env = {**os.environ, "TLS_CERT_DIR": cert_dir,
+               "TLS_SERVER_HOSTNAMES": "localhost", "TLS_SERVER_IPS": "127.0.0.1"}
+    r = subprocess.run(["bash", os.path.join(repo_root, "deploy/pki/generate_ca.sh")],
+                        env=gen_env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"generate_ca.sh muvaffaqiyatsiz: {r.stdout}\n{r.stderr}"
+    ca_path = os.path.join(cert_dir, "ca.crt")
+    assert os.path.isfile(ca_path) and os.path.isfile(os.path.join(cert_dir, "server.crt"))
+
+    # --- 2) Client (mTLS) sertifikat - haqiqiy issue_agent_cert.sh ---
+    r2 = subprocess.run(["bash", os.path.join(repo_root, "deploy/pki/issue_agent_cert.sh"), "CI-TEST-PC"],
+                         env=gen_env, capture_output=True, text=True, timeout=30)
+    assert r2.returncode == 0, f"issue_agent_cert.sh muvaffaqiyatsiz: {r2.stdout}\n{r2.stderr}"
+    client_crt = os.path.join(cert_dir, "agents", "CI-TEST-PC.crt")
+    client_key = os.path.join(cert_dir, "agents", "CI-TEST-PC.key")
+    assert os.path.isfile(client_crt) and os.path.isfile(client_key)
+
+    # --- 3) Haqiqiy backend jarayonlar ---
+    api_env = {**os.environ, "API_PORT": str(agent_port), "AGENT_API_KEY": "ci-tls-test-key"}
+    dash_env = {**os.environ, "DASHBOARD_PORT": str(dash_port)}
+    api_proc = subprocess.Popen(["python3", "-m", "api.server"], env=api_env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    dash_proc = subprocess.Popen(["python3", "-m", "dashboard.app"], env=dash_env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _start_nginx(mtls_required: str, out_name: str):
+        nginx_env = {
+            **os.environ,
+            "NGINX_AGENT_API_PORT": str(nginx_agent_port),
+            "NGINX_DASHBOARD_PORT": str(nginx_dash_port),
+            "NGINX_TLS_CERT_FILE": os.path.join(cert_dir, "server.crt"),
+            "NGINX_TLS_KEY_FILE": os.path.join(cert_dir, "server.key"),
+            "NGINX_TLS_CA_FILE": ca_path,
+            "NGINX_AGENT_API_UPSTREAM": f"127.0.0.1:{agent_port}",
+            "NGINX_DASHBOARD_UPSTREAM": f"127.0.0.1:{dash_port}",
+            "NGINX_TEMPLATE_FILE": os.path.join(repo_root, "deploy/nginx/nginx.conf.template"),
+            "NGINX_OUT_FILE": os.path.join(work_dir, out_name),
+            "NGINX_ERROR_LOG": os.path.join(work_dir, f"{out_name}.error.log"),
+            "NGINX_ACCESS_LOG": os.path.join(work_dir, f"{out_name}.access.log"),
+            "NGINX_PID_FILE": os.path.join(work_dir, f"{out_name}.pid"),
+            "AGENT_MTLS_REQUIRED": mtls_required,
+        }
+        proc = subprocess.Popen(["sh", os.path.join(repo_root, "deploy/nginx/entrypoint.sh")],
+                                 env=nginx_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        _time.sleep(2)
+        if proc.poll() is not None:
+            raise AssertionError(f"nginx ({out_name}) ishga tushmadi: {proc.stdout.read() if proc.stdout else ''}")
+        return proc
+
+    def _stop_nginx(proc, out_name: str):
+        pid_file = os.path.join(work_dir, f"{out_name}.pid")
+        try:
+            with open(pid_file) as f:
+                os.kill(int(f.read().strip()), 15)
+        except (OSError, ValueError, FileNotFoundError):
+            pass
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    nginx_proc = None
+    try:
+        _time.sleep(2)  # backend'lar ko'tarilishi uchun
+
+        # ===== A) Server-tomon TLS (mTLS o'chiq, standart holat) =====
+        nginx_proc = _start_nginx("false", "nginx_a.conf")
+
+        resp = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health", verify=ca_path, timeout=5)
+        assert resp.status_code == 200, f"Agent API TLS orqali ishlamadi: {resp.status_code}"
+
+        resp2 = requests_mod.get(f"https://localhost:{nginx_dash_port}/login", verify=ca_path, timeout=5)
+        assert resp2.status_code == 200, f"Dashboard TLS orqali ishlamadi: {resp2.status_code}"
+
+        # Ichki CA'ga ISHONMAGAN (standart tizim do'koni) so'rov RAD
+        # ETILISHI kerak - bu haqiqatan tekshirilayotganini isbotlaydi
+        try:
+            requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health", timeout=5)
+            assert False, "CA tasdiqlanmasdan TLS ulanish MUVAFFAQIYATLI bo'ldi - haqiqiy tekshiruv yo'q"
+        except requests_mod.exceptions.SSLError:
+            pass  # kutilgan
+
+        # Agentning haqiqiy ishlaydigan yo'li (check_hash) TLS orqali
+        resp3 = requests_mod.post(
+            f"https://localhost:{nginx_agent_port}/api/v1/check_hash",
+            json={"sha256": "0" * 64, "filename": "test.txt"},
+            headers={"X-API-Key": "ci-tls-test-key"}, verify=ca_path, timeout=5,
+        )
+        assert resp3.status_code == 200, f"check_hash TLS orqali ishlamadi: {resp3.status_code}"
+
+        _stop_nginx(nginx_proc, "nginx_a.conf")
+        nginx_proc = None
+
+        # ===== B) mTLS MAJBURIY (AGENT_MTLS_REQUIRED=true) =====
+        nginx_proc = _start_nginx("true", "nginx_b.conf")
+
+        # Client sertifikatSIZ - RAD ETILISHI kerak
+        resp_no_cert = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                         verify=ca_path, timeout=5)
+        assert resp_no_cert.status_code == 400, (
+            f"mTLS talab qilinganda client sertifikatsiz so'rov RAD ETILISHI kerak edi, "
+            f"lekin http_code={resp_no_cert.status_code} qaytdi"
+        )
+
+        # Boshqa (ishonchsiz, o'z-o'zidan imzolangan) sertifikat bilan - RAD ETILISHI kerak
+        rogue_key = os.path.join(work_dir, "rogue.key")
+        rogue_crt = os.path.join(work_dir, "rogue.crt")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                         "-keyout", rogue_key, "-out", rogue_crt, "-days", "1",
+                         "-subj", "/CN=rogue-attacker"], capture_output=True, timeout=15)
+        resp_rogue = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                       verify=ca_path, cert=(rogue_crt, rogue_key), timeout=5)
+        assert resp_rogue.status_code == 400, (
+            f"mTLS: ishonchsiz (CA imzolamagan) client sertifikat RAD ETILISHI kerak edi, "
+            f"http_code={resp_rogue.status_code} qaytdi"
+        )
+
+        # Haqiqiy, CA tomonidan imzolangan client sertifikat bilan - MUVAFFAQIYATLI
+        resp_valid_cert = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                            verify=ca_path, cert=(client_crt, client_key), timeout=5)
+        assert resp_valid_cert.status_code == 200, (
+            f"mTLS: CA tomonidan imzolangan haqiqiy client sertifikat bilan ham MUVAFFAQIYATSIZ: "
+            f"{resp_valid_cert.status_code}"
+        )
+
+        # Dashboard'da mTLS talab qilinmaydi (foydalanuvchilar brauzer
+        # orqali kiradi, client sertifikatga ega emas) - server-tomon
+        # TLS bilan hamon ishlashi kerak
+        resp_dash_b = requests_mod.get(f"https://localhost:{nginx_dash_port}/login", verify=ca_path, timeout=5)
+        assert resp_dash_b.status_code == 200, "mTLS yoqilganda ham Dashboard oddiy TLS bilan ishlashi kerak edi"
+
+    finally:
+        if nginx_proc:
+            _stop_nginx(nginx_proc, "nginx_b.conf")
+        for p in (api_proc, dash_proc):
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+
+
+check("XAVFSIZLIK: TLS reverse proxy (nginx) + Ichki CA - server-tomon TLS VA ixtiyoriy mTLS (real jarayonlar bilan)", _test_tls_reverse_proxy)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

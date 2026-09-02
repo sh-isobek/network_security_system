@@ -275,6 +275,40 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------
+  # TLS reverse proxy (xavfsizlik auditi - CRITICAL: HTTPS + Internal CA)
+  # ---------------------------------------------------------------------
+  # agent_api va dashboard o'zlari oddiy HTTP orqali ishlaydi (yuqorida,
+  # faqat 127.0.0.1'ga bog'langan - LAN'ga OCHIQ EMAS). TLS termination
+  # FAQAT shu yerda, nginx'da bajariladi - haqiqiy tarmoq trafigi
+  # (Windows/Linux/Mac Agent'lar, Dashboard brauzerlari) endi HAR DOIM
+  # shifrlangan. Sertifikatlar `deploy/pki/generate_ca.sh` orqali
+  # yaratiladigan ichki CA bilan imzolanadi (docs_TLS_SETUP.md'ga qarang).
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./deploy/nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./deploy/nginx/entrypoint.sh:/entrypoint.sh:ro
+      - ./deploy/pki/certs:/etc/nginx/tls:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      NGINX_AGENT_API_PORT: "8443"
+      NGINX_DASHBOARD_PORT: "8843"
+      NGINX_TLS_CERT_FILE: /etc/nginx/tls/server.crt
+      NGINX_TLS_KEY_FILE: /etc/nginx/tls/server.key
+      NGINX_TLS_CA_FILE: /etc/nginx/tls/ca.crt
+      # XAVFSIZLIK (ixtiyoriy, standart o'chiq): "true" qilinsa, Agent
+      # API endi HAR BIR so'rovda CA tomonidan imzolangan client
+      # sertifikat (mTLS) talab qiladi - docs_TLS_SETUP.md'ga qarang.
+      AGENT_MTLS_REQUIRED: ${AGENT_MTLS_REQUIRED:-false}
+    ports:
+      - "8443:8443"   # Agent API (TLS) - LAN'ga OCHIQ (172.16.0.0/22)
+      - "8843:8843"   # Dashboard (TLS) - LAN'ga OCHIQ
+    depends_on:
+      - agent_api
+      - dashboard
+
+  # ---------------------------------------------------------------------
   # Grafana (yangi TZ 12-bo'lim) - ixtiyoriy, --profile grafana orqali
   # ---------------------------------------------------------------------
   grafana:

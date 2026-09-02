@@ -92,8 +92,9 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
+| — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
 
-**Joriy: 73/73 test o'tadi (`run_full_test.py`).**
+**Joriy: 74/74 test o'tadi (`run_full_test.py`).**
 
 ## PDF/Excel testidagi LibreOffice xatosi - chuqur tekshirildi, TUB SABAB topildi (loyiha kodiga aloqasi yo'q)
 
@@ -495,21 +496,90 @@ qo'shildi (`run_full_test.py` #67-69):
   tushdi va o'tdi - loyihaning eng chuqur RabbitMQ integratsiya testi.
 
 **Keyingi navbatdagi (hali qurilmagan, kelgusi sessiyalarda)**:
-1. HTTPS + Internal CA / mTLS (Nginx reverse proxy, CRITICAL) -
-   sandbox'da `nginx`+`openssl` bilan real TLS termination sinash
-   mumkin, lekin katta ish - alohida sessiya.
+1. ~~HTTPS + Internal CA / mTLS~~ - ✅ **QURILDI** (pastga, "TLS +
+   Ichki CA / mTLS" bo'limiga qarang).
 2. Replay protection (HMAC + timestamp/nonce agent<->server so'rovlarida).
 3. Alembic migratsiyalar (hozirgi `_sync_missing_columns()` avtomatik
    ustun-qo'shish o'rniga/qo'shimcha sifatida).
-4. Secure AD Agent Enrollment (Kerberos/AD-asosli, uzoq muddatli
-   bootstrap secret o'rniga) - MUHIM: hozirgi kodda buni almashtiradigan
-   `agent_enroll` endpoint UMUMAN YO'Q, shuning uchun bu "mavjud
-   ojizlikni tuzatish" emas, balki "yangi, xavfsizroq mexanizm qurish".
+4. Secure AD Agent Enrollment (Kerberos/AD-asosli) - MUHIM (yangilandi):
+   `codex/fix-deployment-security` bilan birlashtirilgandan keyin
+   `/api/v1/agent_enroll` endpoint ENDI MAVJUD (bootstrap
+   `AGENT_API_KEY` orqali himoyalangan, har hostname uchun alohida
+   token chiqaradi) - shuning uchun bu band endi "yangi mexanizm
+   qurish" emas, balki "mavjud bootstrap-kalit mexanizmini
+   Kerberos/AD-asosli usulga almashtirish/kuchaytirish".
 5. PostgreSQL index/retention siyosati (file_events jadvali uchun).
 6. Prometheus + Grafana monitoring metriklar.
 7. Notification uchun RabbitMQ-asosli retry/Dead Letter Queue.
 8. Qolgan xavfsizlik test turlari (SQL injection, path traversal,
-   CSRF, LDAP/AD failure, TLS sertifikat validatsiyasi va h.k.)
+   CSRF, LDAP/AD failure - TLS sertifikat validatsiyasi ENDI QURILDI).
+9. TLS sertifikat avtomatik yangilanish/rotatsiya (hozircha qo'lda -
+   "TLS + Ichki CA" bo'limidagi "Halol cheklovlar"ga qarang).
+
+## TLS + Ichki CA / mTLS (xavfsizlik auditi, CRITICAL - nihoyat qurildi)
+
+Audit ro'yxatidagi #1 CRITICAL topilma ("TLS/mTLS yo'qligi") tuzatildi.
+Yangi `nginx` docker-compose xizmati (profilsiz, standart holatda
+ishga tushadi) Agent API (8443) va Dashboard (8843) uchun HAQIQIY TLS
+termination qiladi - `agent_api`/`dashboard`ning o'zi hamon oddiy HTTP
+(soddaligicha qoladi), lekin endi FAQAT `127.0.0.1`ga bog'langan.
+
+Qurilgan:
+- `deploy/pki/generate_ca.sh` - ichki (korxona) Root CA + server
+  sertifikat (SAN'lar bilan). Idempotent: CA qayta yaratilmaydi, faqat
+  server sertifikati (SAN o'zgarganda) yangilanadi.
+- `deploy/pki/issue_agent_cert.sh <hostname>` - mTLS uchun ixtiyoriy,
+  har-kompyuter uchun alohida client sertifikat.
+- `deploy/nginx/nginx.conf.template` + `entrypoint.sh` - portativ
+  (GNU/BusyBox sed muammosidan qochish uchun `awk` bilan) shablon
+  to'ldirish, ikkala backend uchun ham (`NGINX_*_UPSTREAM` orqali)
+  parametrlashtirilgan - bu bir xil skript HAM production Docker
+  tarmog'ida (`agent_api:8443`), HAM `run_full_test.py`ning real
+  (docker'siz) testida (`127.0.0.1:<port>`) ishlatiladi - nusxa yoki
+  soxta konfiguratsiya YO'Q.
+- mTLS ixtiyoriy (`AGENT_MTLS_REQUIRED=true`, standart o'chiq) -
+  yoqilganda Agent API HAR BIR so'rovda CA tomonidan imzolangan client
+  sertifikat talab qiladi (Dashboard'ga tegmaydi - brauzer
+  foydalanuvchilari login/parol bilan kiraveradi).
+- `agent_core/agent.py`: yangi `AGENT_CA_BUNDLE_FILE` (ichki CA'ga
+  ishonish uchun, HECH QACHON `verify=False` ishlatilmaydi - MITM
+  xavfsizligi), `AGENT_TLS_CLIENT_CERT_FILE`/`_KEY_FILE` (mTLS).
+  `API_SERVER_URL` standart qiymati `http://` dan `https://`ga
+  o'zgardi (endi TLS reverse proxy standart topologiya).
+
+**MUHIM (o'z-o'ziga qarama-qarshilik tuzatildi)**: bu o'zgarish avvalgi
+"Oltinchi marta topilgan xato" bilan bevosita ZID edi (o'sha safar
+`https://` standart holatda TLS yo'qligi sabab NOTO'G'RI edi, `http://`
+talab qilinardi). Endi vaziyat TESKARI - nginx TLS haqiqiy standart
+holat bo'lgani uchun `https://` TO'G'RI, `http://` esa endi ishlamaydi
+(nginx faqat TLS bilan tinglaydi, LAN'dan oddiy HTTP orqali umuman
+erishib bo'lmaydi). `run_full_test.py`dagi tegishli regressiya testi
+(#48) shunga mos ravishda TO'LIQ TESKARI qilib qayta yozildi - bu ikki
+holat orasidagi farq faqat vaqt o'tishi bilan (TLS qurilgandan keyin)
+paydo bo'lgani uchun ikkalasi ham o'z davrida to'g'ri edi, ziddiyat
+emas.
+
+**Real test qilingan (HECH NARSA soxtalashtirilmagan)**:
+- `deploy/pki/generate_ca.sh`/`issue_agent_cert.sh` - haqiqiy
+  `openssl` chaqiruvlari (CA, server, client sertifikat, `openssl
+  verify` orqali tasdiqlangan).
+- `deploy/nginx/entrypoint.sh` - production'da ishlatiladigan AYNAN
+  SHU (o'zgartirilmagan) skript, haqiqiy `nginx` binary bilan.
+- Backend'lar - haqiqiy, alohida jarayonda ishlaydigan `api.server`/
+  `dashboard.app` (real Flask dev server, test_client EMAS).
+- Tekshirilgan: to'g'ri CA bilan HTTPS orqali muvaffaqiyatli ulanish
+  (Agent API + Dashboard + real `check_hash` so'rovi); ichki CA'ga
+  ishonmagan so'rov SSL xatosi bilan RAD ETILISHI (haqiqiy tekshiruv
+  borligini isbotlaydi); mTLS yoqilganda client sertifikatsiz/
+  ishonchsiz (boshqa, CA imzolamagan) sertifikat bilan so'rov HTTP 400
+  bilan RAD ETILISHI; CA tomonidan imzolangan haqiqiy client
+  sertifikat bilan MUVAFFAQIYATLI o'tishi; mTLS yoqilganda ham
+  Dashboard'ning oddiy TLS bilan ishlashda davom etishi.
+- Ham SQLite, ham PostgreSQL'da: 73/74 (yagona xato - oldindan
+  hujjatlashtirilgan LibreOffice sandbox-flake, bunga aloqasi yo'q).
+
+To'liq hujjat: `docs_TLS_SETUP.md` (o'rnatish, Agent/brauzer tomonida
+CA'ga ishonish, mTLS yoqish, halol cheklovlar).
 
 ## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
 

@@ -22,6 +22,8 @@
         <string>https://172.16.0.5:8443</string>
         <key>AGENT_API_KEY</key>
         <string>__AGENT_API_KEY__</string>
+        <key>AGENT_CA_BUNDLE_FILE</key>
+        <string>/opt/network-security-agent/ca.crt</string>
         <key>AGENT_LOG_FILE</key>
         <string>/usr/local/var/log/network-security-agent.log</string>
         <key>AGENT_CACHE_FILE</key>
