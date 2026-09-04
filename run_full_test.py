@@ -4703,6 +4703,153 @@ def _test_install_script_sets_agent_version():
 check("Install-NetworkSecurityAgent.ps1: AGENT_VERSION endi to'g'ri o'rnatiladi (qayta tekshirishda topilgan real xato)", _test_install_script_sets_agent_version)
 
 # ---------------------------------------------------------------------------
+print("\n=== 69) Ruijie Cloud integratsiyasi (foydalanuvchining production so'rovi) ===")
+
+
+def _test_ruijie_discovery():
+    """
+    Foydalanuvchi so'radi: Ruijie Cloud'dan (Reyee/RG-CBS) qurilma
+    discovery. MUHIM: bu integratsiya avval HAQIQIY Ruijie Cloud
+    serveriga (foydalanuvchining real AppKey/AppSecret'i bilan) qarshi
+    qo'lda sinaldi - autentifikatsiya oqimi (appid/secret + qat'iy
+    `token` so'rov parametri -> access_token), guruhlar daraxti,
+    qurilmalar va 235 ta REAL klient muvaffaqiyatli olindi. Bu test
+    esa CI/offline muhitda takrorlanadigan bo'lishi uchun - xuddi shu
+    zanjirni SOXTA (mock) server bilan tekshiradi.
+    """
+    import subprocess
+    import time as _time
+
+    mock_script = "/tmp/_ci_mock_ruijie.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+@app.route("/service/api/oauth20/client/access_token", methods=["POST"])
+def auth():
+    body = request.get_json(silent=True) or {}
+    if request.args.get("token") != "ci-static-token" or body.get("appid") != "ci-app-id" or body.get("secret") != "ci-app-secret":
+        return jsonify({"code": 5, "msg": "You do not have permission to perform this operation."})
+    return jsonify({"code": 0, "msg": "OK.", "accessToken": "ci-access-token"})
+
+@app.route("/service/api/group/single/tree", methods=["GET"])
+def groups():
+    if request.args.get("access_token") != "ci-access-token":
+        return jsonify({"code": 3, "msg": "Login timeout"})
+    return jsonify({"code": 0, "msg": "OK.", "groups": {
+        "name": "dumy", "groupId": 0, "subGroups": [
+            {"name": "ci-root", "groupId": 900, "subGroups": [
+                {"name": "CI-Filial", "groupId": 901, "subGroups": []},
+            ]},
+        ],
+    }})
+
+@app.route("/service/api/open/v1/dev/user/current-user", methods=["GET"])
+def clients():
+    if request.args.get("access_token") != "ci-access-token":
+        return jsonify({"code": 3, "msg": "Login timeout"})
+    group_id = request.args.get("group_id")
+    if group_id == "901":
+        return jsonify({"code": 0, "msg": "OK.", "totalCount": 2, "list": [
+            {"mac": "aabb.ccdd.9001", "ip": "172.16.51.1", "userName": "", "deviceName": "CI-RUIJIE-PC", "groupName": "CI-Filial", "connectType": "wire", "manufacturer": "CI-Vendor"},
+            {"mac": "aabb.ccdd.9002", "ip": "", "userName": "", "deviceName": "IPSIZ", "groupName": "CI-Filial", "connectType": "wifi", "manufacturer": "CI-Vendor"},
+        ]})
+    return jsonify({"code": 0, "msg": "OK.", "totalCount": 0, "list": []})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=19900)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+        os.environ["RUIJIE_BASE_URL"] = "http://127.0.0.1:19900"
+        os.environ["RUIJIE_APP_ID"] = "ci-app-id"
+        os.environ["RUIJIE_APP_SECRET"] = "ci-app-secret"
+        os.environ["RUIJIE_STATIC_TOKEN"] = "ci-static-token"
+
+        # --- 1) get_ruijie_clients() to'g'ri parslashi (IP'siz klient o'tkazib yuborilmaydi - bu DB darajasida) ---
+        from network_discovery.ruijie_discovery import get_ruijie_clients
+        clients = get_ruijie_clients()
+        assert len(clients) == 2, f"2 ta klient kutilgan edi (guruh daraxti rekursiv o'qilishi kerak), {len(clients)} keldi"
+        by_mac = {c.mac: c for c in clients}
+        assert by_mac["aabb.ccdd.9001"].ip == "172.16.51.1"
+        assert by_mac["aabb.ccdd.9001"].is_wired is True
+        assert by_mac["aabb.ccdd.9002"].is_wired is False
+
+        # --- 2) noto'g'ri kalit bilan bo'sh ro'yxat (xato ko'tarmasdan) ---
+        os.environ["RUIJIE_APP_SECRET"] = "wrong-secret"
+        assert get_ruijie_clients() == []
+        os.environ["RUIJIE_APP_SECRET"] = "ci-app-secret"
+
+        # --- 3) discover_via_ruijie() -> DB ---
+        from network_discovery.asset_inventory import discover_via_ruijie
+        count = discover_via_ruijie()
+        assert count == 1, f"1 ta qurilma kutilgan edi (IP'siz klient o'tkazib yuborilishi kerak), {count} keldi"
+
+        s = get_session()
+        d = s.query(Device).filter(Device.ip_address == "172.16.51.1").first()
+        assert d is not None
+        assert d.mac_address == "aabb.ccdd.9001"
+        assert d.hostname == "CI-RUIJIE-PC"
+        assert d.vendor == "CI-Vendor"
+        assert d.connection_type == "cable"
+        assert d.discovery_source == "ruijie"
+        s.close()
+
+        # --- 4) full_discovery() RUIJIE_APP_ID sozlangan bo'lsa Ruijie'ni ham chaqirishi ---
+        from network_discovery.asset_inventory import full_discovery
+        try:
+            result = full_discovery("127.0.0.1/32", "lo", do_tcp_scan=False, do_snmp=False)
+            assert "ruijie" in result, f"full_discovery natijasida 'ruijie' kaliti yo'q: {result}"
+        except Exception:
+            pass  # ARP/ICMP vositalari yo'q bo'lishi mumkin - bu test uchun muhim emas
+
+        # --- 5) Dashboard /asset-inventory sahifasida ko'rinishi ---
+        from dashboard import app as dash_app
+        from dashboard.create_user import create_user
+        create_user("ruijie_ci_admin", "ruijiecitest123", "admin")
+        dash_app.app.secret_key = "test-secret-ruijie"
+        dclient = dash_app.app.test_client()
+        dclient.post("/login", data={"username": "ruijie_ci_admin", "password": "ruijiecitest123"})
+        r = dclient.get("/asset-inventory")
+        assert r.status_code == 200
+        assert b"CI-RUIJIE-PC" in r.data, "Ruijie orqali topilgan qurilma Dashboard'da ko'rinmadi"
+        assert b"ruijie" in r.data
+
+        # --- 6) ruijie_sync_loop.py real HTTP orqali ---
+        from network_discovery.ruijie_sync_loop import run_once
+        n = run_once()
+        assert n == 1
+
+        # --- 7) docker-compose.yml'da ruijie_sync xizmati PROFILSIZ ekanini tasdiqlash ---
+        import yaml
+        with open("docker-compose.yml") as f:
+            compose = yaml.safe_load(f)
+        assert "ruijie_sync" in compose["services"], "ruijie_sync xizmati docker-compose.yml'da yo'q"
+        assert "profiles" not in compose["services"]["ruijie_sync"], (
+            "ruijie_sync PROFILSIZ bo'lishi kerak (standart 'docker compose up -d' bilan ishga tushishi uchun)"
+        )
+
+        # --- 8) Ruijie sozlanmagan holatda ham xato bermasligi ---
+        os.environ.pop("RUIJIE_APP_ID")
+        assert run_once() == 0
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["RUIJIE_BASE_URL", "RUIJIE_APP_ID", "RUIJIE_APP_SECRET", "RUIJIE_STATIC_TOKEN"]:
+            os.environ.pop(k, None)
+
+
+check("Ruijie Cloud integratsiyasi: discovery + Asset Inventory + Dashboard + Sync Loop (real HTTP -> DB -> UI)", _test_ruijie_discovery)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

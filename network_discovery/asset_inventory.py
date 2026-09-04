@@ -24,6 +24,7 @@ from network_discovery.mac_vendor import lookup_vendor
 from network_discovery.snmp_discovery import snmp_discover
 from network_discovery.tcp_scanner import tcp_scan
 from network_discovery.unifi_discovery import get_unifi_clients
+from network_discovery.ruijie_discovery import get_ruijie_clients
 
 logger = logging.getLogger("asset_inventory")
 
@@ -143,6 +144,48 @@ def discover_via_unifi() -> int:
         session.close()
 
 
+def discover_via_ruijie() -> int:
+    """
+    Ruijie Cloud'dan (`network_discovery/ruijie_discovery.py`ga
+    qarang - `RUIJIE_APP_ID`/`RUIJIE_APP_SECRET` orqali) hozir
+    ulangan barcha klientlarni olib, DB'ga yozadi. MAC Vendor lookup
+    shu yerda EMAS - Ruijie'ning o'zi allaqachon `manufacturer`
+    maydonini beradi (real testda tasdiqlangan: HIKVISION, VMware,
+    UBNT va h.k. to'g'ri aniqlangan), shuning uchun mahalliy OUI
+    bazasidan qayta qidirish shart emas.
+
+    MUHIM (halol cheklov, UniFi bilan bir xil): bu discovery FAQAT
+    o'qish uchun - avtomatik bloklash hali ULANMAGAN (`response/
+    ruijie_adapter.py` hali yo'q, chunki Ruijie Cloud'ning ochiq
+    bloklash API'si hali tasdiqlanmagan - `ruijie_discovery.py`dagi
+    modul docstring'iga qarang).
+    """
+    clients = get_ruijie_clients()
+    session = get_session()
+    count = 0
+    try:
+        for c in clients:
+            if not c.ip:
+                continue  # IP'siz klientni Device jadvaliga yozib bo'lmaydi (ip_address majburiy)
+            _upsert_device(
+                session, c.ip,
+                mac_address=c.mac or None,
+                hostname=c.hostname,
+                vendor=c.manufacturer,
+                connection_type="cable" if c.is_wired else "wifi",
+                discovery_source="ruijie",
+            )
+            count += 1
+        session.commit()
+        logger.info(f"Ruijie discovery: {count} ta qurilma yangilandi")
+        return count
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def enrich_with_snmp(ip_list: list, community: str = "public") -> int:
     """Berilgan IP ro'yxati uchun SNMP orqali qo'shimcha ma'lumot (tur, joylashuv) qo'shadi."""
     session = get_session()
@@ -221,6 +264,12 @@ def full_discovery(cidr: str, interface: str, do_tcp_scan: bool = False, do_snmp
     if os.getenv("UNIFI_CONTROLLER_URL"):
         stats["unifi"] = discover_via_unifi()
 
+    # Ruijie xuddi shu naqsh - faqat RUIJIE_APP_ID/RUIJIE_APP_SECRET
+    # sozlangan bo'lsa ishga tushadi, aks holda get_ruijie_clients()
+    # baribir bo'sh ro'yxat qaytaradi (xavfsiz, xato ko'tarmaydi).
+    if os.getenv("RUIJIE_APP_ID"):
+        stats["ruijie"] = discover_via_ruijie()
+
     session = get_session()
     try:
         all_ips = [d.ip_address for d in session.query(Device).filter(Device.discovery_source.in_(["arp_scan", "icmp"])).all()]
@@ -245,11 +294,15 @@ if __name__ == "__main__":
     ap.add_argument("--tcp-scan", action="store_true")
     ap.add_argument("--snmp", action="store_true")
     ap.add_argument("--unifi-only", action="store_true", help="Faqat UniFi Controller'dan (ARP/ICMP'siz)")
+    ap.add_argument("--ruijie-only", action="store_true", help="Faqat Ruijie Cloud'dan (ARP/ICMP'siz)")
     args = ap.parse_args()
 
     if args.unifi_only:
         count = discover_via_unifi()
         print(f"UniFi discovery yakunlandi: {count} ta qurilma")
+    elif args.ruijie_only:
+        count = discover_via_ruijie()
+        print(f"Ruijie discovery yakunlandi: {count} ta qurilma")
     else:
         if not args.cidr or not args.interface:
             ap.error("--cidr va --interface talab qilinadi (yoki --unifi-only ishlating)")

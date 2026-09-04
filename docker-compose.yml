@@ -297,6 +297,21 @@ services:
       postgres:
         condition: service_healthy
 
+  # Ruijie Cloud discovery - unifi_sync bilan bir xil naqsh (shunchaki
+  # HTTPS API so'rovi, host tarmoq/maxsus huquq shart emas) - shuning
+  # uchun profilsiz, standart `docker compose up -d` bilan avtomatik
+  # ishga tushadi. RUIJIE_APP_ID sozlanmagan bo'lsa zararsiz jim turadi.
+  ruijie_sync:
+    build: .
+    restart: unless-stopped
+    command: python -m network_discovery.ruijie_sync_loop --loop --interval ${RUIJIE_POLL_INTERVAL:-300}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   network_discovery:
     build: .
     restart: unless-stopped

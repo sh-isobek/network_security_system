@@ -93,8 +93,72 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 | — | Install-NetworkSecurityAgent.ps1: AGENT_VERSION o'rnatilmagan edi | ✅ Endi heartbeat orqali HAQIQIY o'rnatilgan versiya yuboriladi (avval doim "1.0.0" - standart qiymat - yuborilardi) |
+| — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235 real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
 
-**Joriy: 70/70 test o'tadi (`run_full_test.py`).**
+**Joriy: 71/71 test o'tadi (`run_full_test.py`).**
+
+## Ruijie Cloud (Reyee/RG-CBS) integratsiyasi - UniFi'ga o'xshash, lekin API'si hech qayerda to'liq hujjatlashtirilmagan
+
+Foydalanuvchi Ruijie Cloud (`cloud.ruijienetworks.com`) orqali
+boshqariladigan tarmog'i uchun UniFi'dagi kabi discovery + avtomatik
+bloklash so'radi. **Muhim farq UniFi'dan**: Ruijie Cloud'ning rasmiy,
+ochiq API hujjati YO'Q (yoki hech bo'lmasa oson topilmaydi) - shuning
+uchun bu integratsiya **faqat real, jonli so'rovlar orqali** (kod
+yozishdan OLDIN, taxmin qilmasdan) qurildi:
+
+1. Ochiq manba `pyruijie` kutubxonasi orqali (GitHub) auth oqimi va
+   endpoint nomlari (`appid`/`secret`, `access_token`) topildi - lekin
+   bu bitta o'zi YETARLI EMAS chiqdi: haqiqiy serverga so'rov yuborilganda
+   doim `{"code":5,"msg":"You do not have permission..."}` qaytdi.
+2. Foydalanuvchi ikkita alohida, BIR-BIRIGA ZID hujjat topib berdi -
+   ikkalasi ham qisman noto'g'ri chiqdi (masalan bittasida `/api/auth/
+   token` yo'li serverda umuman mavjud emas - 404). Lekin ULARNI
+   BIRLASHTIRIB (to'g'ri yo'l `pyruijie`dan, to'g'ri `token` so'rov
+   parametri ikkinchi hujjatdan) **haqiqiy, muvaffaqiyatli** so'rov
+   qurish mumkin bo'ldi.
+3. **ENG MUHIM KASHFIYOT**: to'g'ri baza manzili `cloud.ruijienetworks.
+   com` (mintaqaviy suffikssiz) ekan - `cloud-as`/`cloud-us` (pyruijie
+   standart qiymatlari) BUTUNLAY BOSHQA (yoki hozircha faol bo'lmagan)
+   hisob maydoni bo'lib chiqdi.
+4. `token` so'rov parametri (`d63dss0a81e4415a889ac5b78fsc904a`) -
+   hujjatda ko'rsatilganidek, mijozga xos MAXFIY kalit EMAS, balki
+   barcha mijozlar uchun BIR XIL qat'iy qiymat (`RUIJIE_STATIC_TOKEN`
+   orqali qayta belgilanishi mumkin, kodda standart qiymat sifatida
+   saqlangan).
+
+**Real test qilingan (chinakam production ma'lumoti bilan)**: to'g'ri
+baza manzil + to'g'ri token qiymati bilan avtorizatsiya, guruhlar
+daraxti (3 filial: "Asosiy ofis", "Oybek", "Perfetto"), qurilmalar
+(7 ta switch/AP, real serial raqamlar bilan), va **235 ta real ulangan
+klient** (IP/MAC/ishlab chiqaruvchi bilan) muvaffaqiyatli olindi -
+bu docker konteyner ichida, `network_discovery.ruijie_discovery`
+modulini to'g'ridan-to'g'ri ishga tushirib tasdiqlandi.
+
+**Qurilgan**:
+- `network_discovery/ruijie_discovery.py` - autentifikatsiya + guruhlar
+  daraxtini rekursiv aylanib, har bir filialdan klientlarni yig'ish.
+- `network_discovery/asset_inventory.py`ga `discover_via_ruijie()` -
+  UniFi bilan bir xil naqsh (`_upsert_device`, discovery_source
+  ustuvorligi).
+- `network_discovery/ruijie_sync_loop.py` + `docker-compose.yml`da
+  `ruijie_sync` xizmati - `unifi_sync`ga o'xshab PROFILSIZ, standart
+  `docker compose up -d` bilan avtomatik ishga tushadi.
+- `.env.example`ga `RUIJIE_APP_ID`/`RUIJIE_APP_SECRET`/`RUIJIE_BASE_
+  URL`/`RUIJIE_POLL_INTERVAL` qo'shildi. Production `.env`'ga
+  foydalanuvchining real kalitlari qo'shildi (`ruijie_sync` xizmati
+  keyingi `docker compose up -d`da avtomatik ishga tushadi).
+
+**HALOL CHEKLOV (UniFi bilan bir xil naqsh)**: bloklash/kick
+FUNKSIYASI HALI QURILMAGAN. Ruijie Cloud'ning veb-interfeysida "MAC
+bloklash" funksiyasi borligi tasdiqlangan (community forum
+muhokamalari orqali), lekin buning ochiq, hujjatlashtirilgan API
+endpoint'i HECH QAYERDA (na `pyruijie`da, na ikkita foydalanuvchi
+topgan hujjatda) topilmadi. Taxminiy/tasdiqlanmagan endpoint bilan
+yozish XAVFSIZ EMAS - noto'g'ri so'rov real ishlayotgan qurilmani
+kutilmaganda tarmoqdan uzib qo'yishi mumkin. Buni qurish uchun
+foydalanuvchidan Ruijie Cloud veb-interfeysida "bloklash" amalini
+DevTools orqali ushlab, aniq endpoint/payload formatini olish
+so'ralgan (javob hali kutilmoqda).
 
 ## Foydalanuvchi "qayta tekshir" deb so'raganda topilgan: fayl tekshirish funksiyasi ALLAQACHON ISHLAYAPTI + 2 ta yangi real xato
 
