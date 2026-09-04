@@ -9,11 +9,17 @@ FROM python:3.12-slim
 # Tizim darajasidagi bog'liqliklar:
 #   - clamav: scanners/clamav_scanner.py uchun (clamscan CLI)
 #   - snmp: response/switch_adapter.py uchun (snmpset CLI)
+#   - arp-scan: network_discovery/arp_scanner.py uchun (ARP discovery)
+#   - nmap: network_discovery/tcp_scanner.py uchun (port/OS aniqlash)
+#   - iputils-ping: network_discovery/icmp_scanner.py uchun (ping sweep)
 #   - build-essential: yara-python kompilyatsiyasi uchun
 RUN apt-get update && apt-get install -y --no-install-recommends \
         clamav \
         clamav-freshclam \
         snmp \
+        arp-scan \
+        nmap \
+        iputils-ping \
         tzdata \
         build-essential \
         libssl-dev \
