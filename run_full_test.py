@@ -4658,6 +4658,51 @@ def _test_user_activate_and_edit():
 check("Foydalanuvchilarni boshqarish: faollashtirish + tahrirlash (rol/parol, real HTTP + real DB)", _test_user_activate_and_edit)
 
 # ---------------------------------------------------------------------------
+print("\n=== 68) Install-NetworkSecurityAgent.ps1: AGENT_VERSION o'rnatilmagan edi (qayta tekshirishda topilgan real xato) ===")
+
+
+def _test_install_script_sets_agent_version():
+    """
+    Foydalanuvchi "qayta tekshir" deb so'raganda, real production
+    bazasini tekshirib chiqdim: DC1101TAS haqiqatan v1.0.9 kodi bilan
+    ishlayotgan edi (file_events endi to'g'ri to'lib turibdi - fayl
+    tekshirish funksiyasi ISHLAYAPTI!), lekin heartbeat hamon
+    "agent_version": "1.0.0" deb yuborardi - bu Dashboard'da chalg'ituvchi
+    "eskirgan" taassurot qoldiradi.
+
+    Sabab: Install-NetworkSecurityAgent.ps1 (qo'lda o'rnatish skripti)
+    API_SERVER_URL/AGENT_API_KEY'ni Machine muhit o'zgaruvchisi sifatida
+    o'rnatardi, lekin AGENT_VERSION'ni HECH QACHON o'rnatmasdi -
+    shuning uchun agent_core/agent.py'dagi standart qiymat ("1.0.0")
+    doim ishlatilardi, .exe'ning haqiqiy versiyasidan qat'iy nazar.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "deploy", "windows_agent_gpo", "Install-NetworkSecurityAgent.ps1",
+    )
+    with open(script_path) as f:
+        content = f.read()
+
+    assert 'SetEnvironmentVariable("AGENT_VERSION"' in content, (
+        "Install-NetworkSecurityAgent.ps1 AGENT_VERSION'ni Machine muhit "
+        "o'zgaruvchisi sifatida o'rnatishi kerak - aks holda Dashboard "
+        "doim eskirgan versiyani ko'rsatadi"
+    )
+    # AGENT_VERSION o'rnatilishi VERSION fayli o'qilgandan KEYIN bo'lishi kerak
+    version_read_pos = content.find("$installedVersion = (Get-Content $versionSource")
+    version_set_pos = content.find('SetEnvironmentVariable("AGENT_VERSION"')
+    assert version_read_pos != -1 and version_set_pos != -1
+    assert version_read_pos < version_set_pos
+
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c)
+
+
+check("Install-NetworkSecurityAgent.ps1: AGENT_VERSION endi to'g'ri o'rnatiladi (qayta tekshirishda topilgan real xato)", _test_install_script_sets_agent_version)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

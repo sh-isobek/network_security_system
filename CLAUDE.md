@@ -92,8 +92,51 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi | ✅ `Device.agent_last_heartbeat` asosida (AD/LDAP shart emas). `check_hash`'da toza fayllar ham endi `file_events`'ga yoziladi |
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
+| — | Install-NetworkSecurityAgent.ps1: AGENT_VERSION o'rnatilmagan edi | ✅ Endi heartbeat orqali HAQIQIY o'rnatilgan versiya yuboriladi (avval doim "1.0.0" - standart qiymat - yuborilardi) |
 
-**Joriy: 69/69 test o'tadi (`run_full_test.py`).**
+**Joriy: 70/70 test o'tadi (`run_full_test.py`).**
+
+## Foydalanuvchi "qayta tekshir" deb so'raganda topilgan: fayl tekshirish funksiyasi ALLAQACHON ISHLAYAPTI + 2 ta yangi real xato
+
+Foydalanuvchi "qayta tekshir" deb so'radi (avvalgi "fayl tekshirish
+ishlamayapti" muammosidan keyin). Production bazasini (real
+PostgreSQL, `docker exec`) to'g'ridan-to'g'ri tekshirdim:
+
+**YAXSHI XABAR**: `DC1101TAS` (172.16.0.249) uchun `file_events`
+jadvalida endi **5 ta haqiqiy yozuv** bor (`channel=endpoint_agent`,
+barchasi "clean" - masalan `CL_Utility.ps1`, `Tarmoq_Inventarizatsiya.
+csv`) - ya'ni **fayl tekshirish funksiyasi HAQIQATAN ishlayapti**,
+foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
+
+**Lekin 2 ta yangi muammo topildi**:
+
+1. **`Install-NetworkSecurityAgent.ps1` `AGENT_VERSION`ni hech qachon
+   o'rnatmagan edi** - shuning uchun heartbeat doim standart qiymatni
+   ("1.0.0") yuborardi, garchi `.exe` aslida ancha yangi versiya
+   bo'lsa ham (buni file_events'dagi yangi xatti-harakat - filename/
+   hostname yuborish, faqat v1.0.9'da qo'shilgan - isbotlaydi). Bu
+   Dashboard'da chalg'ituvchi "eskirgan agent" taassurotini beradi.
+   Tuzatildi: VERSION fayli o'qilib, `AGENT_VERSION` Machine muhit
+   o'zgaruvchisi sifatida ham o'rnatiladi.
+
+2. **`.env` faylida IKKITA har xil `AGENT_API_KEY`** (production
+   serverning o'z `.env`'ida, kod emas) - Docker Compose'ning
+   `env_file` semantikasi bo'yicha OXIRGI qiymat amal qiladi (bu
+   real konteynerdan `os.getenv()` orqali tasdiqlandi). Agar biror
+   kompyuterning SYSVOL/`.env`/`api_key.secret`'iga BIRINCHI
+   (endi ishlamaydigan) kalit yozilgan bo'lsa - har bir so'rov
+   jim ravishda 401 bilan rad etiladi, xizmat "Running" ko'rinsa
+   ham heartbeat/fayl tekshiruvi hech qachon serverga yetmaydi. Bu -
+   "Isobek" kompyuteridagi muammoning eng ehtimoliy sababi (bazada
+   "Isobek" nomli ApiToken ham ALOHIDA BEKOR QILINGAN (`revoked=true`)
+   holatda topildi - bu ikkinchi, mustaqil sabab bo'lishi ham
+   mumkin). **`.env` fayli parollar/kalitlar saqlagani uchun
+   xavfsizlik siyosati uni to'g'ridan-to'g'ri tahrirlashga ruxsat
+   bermadi** - foydalanuvchiga aniq qaysi 2 qatorni o'chirish
+   kerakligi ko'rsatildi, o'zi bajarishi so'raldi.
+
+VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
+`.exe`ning ichki kodi emas).
 
 ## Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol)
 

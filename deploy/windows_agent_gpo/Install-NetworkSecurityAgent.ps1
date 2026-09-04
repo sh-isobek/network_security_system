@@ -98,15 +98,26 @@ if (-not (Test-Path $InstallDir)) {
 }
 Copy-Item -Path $ExeSource -Destination $InstallDir -Force
 $versionSource = Join-Path $ScriptDir "VERSION"
+$installedVersion = $null
 if (Test-Path $versionSource) {
     Copy-Item -Path $versionSource -Destination $InstallDir -Force
+    $installedVersion = (Get-Content $versionSource -Raw).Trim()
 }
 Write-Host "Fayllar nusxalandi: $InstallDir"
 
 # --- 4) Muhit o'zgaruvchilarini o'rnatish (agent shu orqali sozlamalarni o'qiydi) ---
 [Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
 [Environment]::SetEnvironmentVariable("AGENT_API_KEY", $ApiKey, "Machine")
-Write-Host "Muhit o'zgaruvchilari o'rnatildi (API_SERVER_URL, AGENT_API_KEY)"
+# MUHIM (qayta tekshirishda topilgan xato): bu skript `AGENT_VERSION`ni
+# HECH QACHON o'rnatmagan edi - `agent_core/agent.py`dagi standart
+# qiymat ("1.0.0") har doim heartbeat orqali yuborilardi, hatto haqiqiy
+# .exe ancha yangi bo'lsa ham. Natijada Dashboard/`/api-tokens` doim
+# eskirgan versiyani ko'rsatib, admin'ni chalg'itardi (agent aslida
+# yangilangan, lekin buni HECH QAYERDA to'g'ri ko'rsatmagan).
+if ($installedVersion) {
+    [Environment]::SetEnvironmentVariable("AGENT_VERSION", $installedVersion, "Machine")
+}
+Write-Host "Muhit o'zgaruvchilari o'rnatildi (API_SERVER_URL, AGENT_API_KEY, AGENT_VERSION=$installedVersion)"
 
 # --- 5) Xizmat sifatida o'rnatish va ishga tushirish ---
 $exePath = Join-Path $InstallDir "NetworkSecurityAgent.exe"
