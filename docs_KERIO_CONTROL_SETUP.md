@@ -34,19 +34,46 @@ Host log:
 Parser endi shu HAQIQIY formatlarni o'qiydi (real, hujjatlashtirilgan
 namunalar bilan sinovdan o'tkazilgan - `run_full_test.py`).
 
-## Sozlash qadamlari (Kerio Control Administration)
+## 0-qadam (MUHIM, ko'pincha unutiladi): Connection loggingni Traffic Rules'da yoqish
+
+**Real production'da aniqlangan holat**: syslog forwarding to'g'ri
+sozlangan bo'lsa ham, agar Kerio Control'ning o'zi **"Connection"** log
+sahifasida "Данные отсутствуют" / "No data" ko'rsatsa - muammo syslog'da
+EMAS, Kerio hech qanday ulanishni umuman qayd etmayapti. Kerio
+Control'da trafik oqimi avtomatik loglanmaydi - buni har bir **Traffic
+Rule** (trafik qoidasi) uchun ALOHIDA yoqish kerak:
+
+1. **Configuration → Traffic Rules** (yoki eski versiyalarda
+   **Traffic Policy**) bo'limiga o'ting.
+2. Qaysi qoidalar bo'yicha o'tayotgan trafikni ko'rmoqchi bo'lsangiz
+   (odatda asosiy "Internet access" qoidasi), o'sha qatorning **"Log"**
+   ustunidagi katakchani (yoki qoidani ochib, **"Log matched
+   connections"** belgisini) yoqing.
+3. O'zgarishlarni saqlang (**Apply**).
+
+Shundan keyin **Connection** log sahifasida (Kerio'ning o'z
+interfeysida) yozuvlar ko'rina boshlashi kerak - agar hali ham bo'sh
+bo'lsa, syslog sozlashga o'tishdan oldin shuni tekshiring (ulanish
+tugagandan/uzilgandan KEYIN yoziladi - uzoq davom etadigan ulanishlar
+darhol ko'rinmasligi mumkin).
+
+## Sozlash qadamlari (Kerio Control Administration) - syslog forwarding
 
 Kerio Control'da syslog **har bir log turi uchun ALOHIDA** yoqiladi
-(bitta umumiy "syslog yoqish" tugmasi yo'q):
+(bitta umumiy "syslog yoqish" tugmasi yo'q). Ekranning chap tomonidagi
+log ro'yxatida (Alert/Config/Connection/Debug/Dial/Error/Filter/
+Host/Http/Security/Warning/Web) kerakli logni tanlang:
 
-1. **Administration → Logs** bo'limiga o'ting.
-2. **Connection** log'ni oching.
+1. **Status → Logs** (yoki chap paneldagi "hujjat" belgisi) bo'limiga
+   o'ting.
+2. **Connection** log'ni tanlang.
 3. Log ichida istalgan joyga o'ng tugma bosing → **Log Settings**.
 4. **External Logging** tab'ida **"Enable Syslog logging"**ni belgilang.
 5. **Syslog Server** maydoniga bu serverning manzilini kiriting:
    `<server-IP>:514` (masalan `172.16.1.206:514` - standart syslog
    porti, agent_api/dashboard portlari bilan aralashtirmang).
-6. Xuddi shu amalni **Host** log uchun ham takrorlang (2-5 qadamlar).
+6. Xuddi shu amalni **Host** log uchun ham takrorlang (2-5 qadamlar) -
+   bu allaqachon sizda ishlab turibdi (real testda tasdiqlangan).
 
 **Boshqa log turlarini (Debug, Filter, Security va h.k.) yoqish shart
 emas** - parser ularni tanimaydi, faqat keraksiz trafik yaratadi.
