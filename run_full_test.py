@@ -16,6 +16,13 @@ import sys
 import traceback
 
 os.environ["DEMO_MODE"] = "true"
+# MUHIM: dashboard/app.py endi DASHBOARD_SECRET_KEY'ni MAJBURIY qiladi
+# (bo'sh bo'lsa import paytida RuntimeError) - production'da tasodifiy
+# per-process kalit xavfli (ko'p gunicorn worker orasida sessiya cookie
+# imzosi mos kelmay qolishi mumkin edi). Test muhitida esa doimiy, oldindan
+# ma'lum qiymat kerak - shu yerda, HAR QANDAY `dashboard.app` importidan
+# OLDIN o'rnatiladi.
+os.environ.setdefault("DASHBOARD_SECRET_KEY", "ci-test-dashboard-secret-key")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 RESULTS = []
