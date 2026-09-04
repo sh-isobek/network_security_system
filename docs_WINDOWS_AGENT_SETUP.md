@@ -69,7 +69,7 @@ Agent CA'ga ishonishi uchun `AGENT_CA_BUNDLE_FILE`ni ham sozlang
 (yoki CA'ni Windows'ning Trusted Root do'koniga GPO orqali o'rnating).
 
 ```powershell
-setx API_SERVER_URL "https://172.16.0.5:8443"
+setx API_SERVER_URL "http://172.16.0.5:8443"
 setx AGENT_API_KEY "<markazdagi bilan bir xil kalit>"
 setx AGENT_CA_BUNDLE_FILE "C:\ProgramData\NetworkSecurityAgent\ca.crt"
 ```
@@ -280,7 +280,7 @@ ko'ring (Administrator PowerShell'da, arxiv ichidagi papkada turib):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "https://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
+.\Install-NetworkSecurityAgent.ps1 -ApiServerUrl "http://172.16.0.5:8443" -ApiKey "sizning-kalitingiz"
 ```
 
 Muvaffaqiyatli bo'lsa, `Get-Service NetworkSecurityEndpointAgent`

@@ -23,7 +23,7 @@ pip install -r requirements-agent.txt --break-system-packages
 
 ```bash
 sudo tee /opt/network-security-agent/.env << EOF
-API_SERVER_URL=https://172.16.0.5:8443
+API_SERVER_URL=http://172.16.0.5:8443
 AGENT_API_KEY=<markazdagi bilan bir xil kalit>
 AGENT_CA_BUNDLE_FILE=/opt/network-security-agent/ca.crt
 AGENT_LOG_FILE=/var/log/network-security-agent-app.log

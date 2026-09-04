@@ -4578,8 +4578,13 @@ def _test_agent_enroll_per_computer_token():
     assert row.created_by == "ad_auto_enroll"
     s.close()
 
-    # --- 3) YANGI token o'zi bilan ham (bootstrap kalitsiz) boshqa so'rovlar ishlashi ---
-    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64},
+    # --- 3) YANGI token o'zi bilan ham (bootstrap kalitsiz) boshqa so'rovlar
+    # ishlashi - MUHIM: `require_api_key` endi hostname'ga bog'langan
+    # tokenlar uchun so'rov tanasidagi `hostname`ning ANIQ mos kelishini
+    # talab qiladi (boshqa qurilma nomidan token ishlatishning oldini
+    # olish uchun - xavfsizlik auditida qo'shilgan) - haqiqiy Agent
+    # (`agent_core/agent.py`) buni check_hash'da DOIM yuboradi. ---
+    r = client.post("/api/v1/check_hash", json={"sha256": "1" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": first_token})
     assert r.status_code == 200
 
@@ -4590,11 +4595,11 @@ def _test_agent_enroll_per_computer_token():
     second_token = r.get_json()["token"]
     assert second_token != first_token
 
-    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64},
+    r = client.post("/api/v1/check_hash", json={"sha256": "2" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": first_token})
     assert r.status_code == 401, "qayta enroll qilingandan keyin ESKI token endi ishlamasligi kerak (bekor qilingan)"
 
-    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64},
+    r = client.post("/api/v1/check_hash", json={"sha256": "3" * 64, "hostname": "ENROLL-TEST-PC"},
                      headers={"X-API-Key": second_token})
     assert r.status_code == 200, "YANGI token esa ishlashi kerak"
 

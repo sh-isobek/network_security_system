@@ -201,7 +201,11 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
 
-**Joriy: 75/75 test o'tadi (`run_full_test.py`).**
+**Joriy: 72/72 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
+Bu ishlab chiqilgan Docker image'da (git/pg_dump o'rnatilmagan, SMTP
+fixture'i boshqa muammoli) 70/72 (SQLite) va 69/72 (PostgreSQL) - ikkala
+qolgan xato ham shu image'ga xos, kod xatosi EMAS (avval ham
+hujjatlashtirilgan holat).**
 
 ## Ikkita mustaqil sessiya BIR XIL Ruijie integratsiyasini qurgani aniqlandi - qo'lda birlashtirildi
 
@@ -243,6 +247,37 @@ qayta SQLite'da VA PostgreSQL'da (docker orqali) ishga tushirilib,
 hech qanday regressiya yo'qligi, va ikkala tomonning ishi (CSRF
 himoyali forma'lar, TLS/mTLS, mening Ruijie/foydalanuvchi boshqaruvi
 ishlarim) birga to'g'ri ishlashi tasdiqlandi.
+
+**Merge'dan keyingi to'liq test o'tkazishda topilgan va tuzatilgan
+3 ta muammo**:
+1. `flask-limiter>=3.5` yangi bog'liqlik - docker image qayta
+   qurilishi kerak edi (avvalgi image'da yo'q edi).
+2. `docker-compose.yml` endi `RABBITMQ_USER`/`RABBITMQ_PASSWORD`ni
+   MAJBURIY qiladi (xavfsizlik auditi - `guest`/`guest` standart
+   Login endi yo'q) - production `.env`ga real qiymatlar qo'shildi.
+   `DASHBOARD_SECRET_KEY` ham eski placeholder qiymatidan (`CHANGE_ME_
+   RANDOM_SECRET_FOR_SESSIONS`) haqiqiy tasodifiy qiymatga almashtirildi.
+3. **TLS ishi `agent_core/agent.py`ning standart (fallback)
+   `API_SERVER_URL`ini `https://`ga qaytarib qo'ygan edi** - bu aynan
+   avvalgi "OLTINCHI marta topilgan xato"ni TAKRORLAYDI (yuqoriga
+   qarang). Sabab: yangi `nginx` TLS reverse proxy (profilsiz, standart
+   `docker compose up -d`da ishga tushadi) HALI production'da faol
+   emas (sertifikat generatsiya qilinmagan, hozirgi yagona real agent -
+   `DC1101TAS` - hamon oddiy HTTP orqali ulanadi) - standart qiymatni
+   `https://`ga o'zgartirish shu agentni JIM ravishda uzib qo'yishi
+   mumkin edi. Tuzatildi: standart qiymat `http://`ga qaytarildi (5 ta
+   fayl: `agent_core/agent.py`, ikkala GPO `.ps1`, `docs_WINDOWS_AGENT_
+   SETUP.md`, `docs_LINUX_AGENT_SETUP.md`) - TLS'ga o'tish ENDI ham
+   mumkin, lekin ANIQ `.env`/SYSVOL orqali, standart qiymatga
+   tayanmasdan. `nginx` xizmati **ATAYLAB ishga tushirilmadi** bu
+   sessiyada - bu alohida, foydalanuvchi bilan kelishilgan qaror talab
+   qiladigan infratuzilma o'zgarishi (barcha mavjud agentlar CA
+   sertifikatini ishonch ro'yxatiga qo'shishi kerak bo'ladi).
+4. Mening `AD auto-enroll` testim yangi xavfsizlik qattiqlashtirishga
+   mos kelmadi: `require_api_key` endi hostname'ga bog'langan tokenlar
+   uchun so'rov tanasidagi `hostname`ning ANIQ mos kelishini talab
+   qiladi (codex qo'shgan himoya) - test yangilandi (haqiqiy Agent
+   buni allaqachon doim yuboradi).
 
 ## XAVFSIZLIK (CRITICAL): TLS reverse proxy (nginx) + Ichki CA + ixtiyoriy mTLS
 

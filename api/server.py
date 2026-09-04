@@ -415,10 +415,11 @@ def agent_enroll():
     So'rov: {"hostname": "ACCOUNTING-PC"}
     Javob:  {"token": "nssk_...", "hostname": "ACCOUNTING-PC"}
 
-    MUHIM: bu endpoint ham `require_api_key` orqali himoyalangan - ya'ni
-    chaqiruvchida ALLAQACHON bironta amaldagi kalit (odatda GPO orqali
-    SYSVOL'dan tarqatiladigan umumiy "bootstrap" `AGENT_API_KEY`) bo'lishi
-    kerak. Natijada olingan token esa SHU KOMPYUTERGA ALOHIDA tegishli -
+    MUHIM: bu endpoint `require_bootstrap_key` orqali himoyalangan - ya'ni
+    chaqiruvchida ANIQ umumiy "bootstrap" `AGENT_API_KEY` bo'lishi kerak
+    (boshqa hostname'ga bog'langan token bilan enroll qilib bo'lmaydi -
+    xavfsizlik auditida qattiqlashtirildi). Natijada olingan token esa
+    SHU KOMPYUTERGA ALOHIDA tegishli -
     Deploy-NetworkSecurityAgent.ps1 buni mahalliy saqlab, keyingi barcha
     so'rovlar uchun umumiy bootstrap kalit o'rniga ishlatadi. Token
     QAYTA KO'RSATILMAYDI - shuning uchun bir xil hostname uchun qayta

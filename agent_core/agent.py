@@ -85,7 +85,15 @@ logging.basicConfig(
 logger = logging.getLogger("endpoint_agent")
 
 # --- Sozlamalar ---
-API_SERVER_URL = os.getenv("API_SERVER_URL", "https://172.16.0.5:8443")
+# MUHIM: standart (fallback) qiymat ataylab `http://` - `docker-compose.
+# yml`ning STANDART (profilsiz) holati hamon TLS'siz (nginx reverse
+# proxy - `docs_TLS_SETUP.md` - ixtiyoriy, hali auto-start emas).
+# Bu yerda `https://` standart qilib qo'yish avvalgi real production
+# xatosini ("OLTINCHI marta topilgan xato" - CLAUDE.md) TAKRORLAYDI -
+# agent JIM ravishda ulana olmay qoladi, TLS proxy ishga tushirilmagan
+# bo'lsa. TLS'ga o'tganda `API_SERVER_URL`ni ANIQ (`.env`/SYSVOL
+# orqali) `https://...`ga o'zgartiring - standart qiymatga tayanmang.
+API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
 # XAVFSIZLIK: bu yerda hech qanday standart (fallback) qiymat YO'Q ataylab -
 # agar server ham xuddi shunday standart bilan ishga tushirilsa (masalan
 # admin AGENT_API_KEY'ni sozlashni unutsa), ikkalasi HAM bir xil ma'lum

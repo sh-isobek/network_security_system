@@ -28,6 +28,8 @@ deploy/pki/certs/
 # qoidasi ularni QAMRAB OLMAYDI (fayl nomi boshqacha).
 *.swp
 *.swo
+*.save
+*.bak
 
 # Hisobot chiqishlari
 report_output/
