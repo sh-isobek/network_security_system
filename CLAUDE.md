@@ -97,6 +97,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
 | — | Kerio Control parser - HAQIQIY log formatiga tuzatildi (`parsers/kerio_parser.py`, `network_discovery/dhcp_reader.py`) | ✅✅ Rasmiy Kerio hujjatlari orqali tasdiqlangan format bilan almashtirildi (avvalgi `SRC=...`/`DHCP: Lease granted...` Kerio'da UMUMAN mavjud emas edi) - `docs_KERIO_CONTROL_SETUP.md` |
 | — | `network_discovery` xizmati (ARP/ICMP/SNMP/LLDP) production'da ISHGA TUSHIRILDI | ✅✅ Dockerfile'da `arp-scan`/`nmap` yetishmagani topildi va qo'shildi - HAQIQIY LAN'da (172.16.0.0/22) tasdiqlandi: 261 ARP javob, 266 tirik host, 17 yangi qurilma DB'ga yozildi |
+| — | Kerio Connection log - IKKINCHI marta tuzatildi (haqiqiy production format hujjatdagidan farq qildi) | ✅✅ `hostname (ip):port -> hostname (ip):port` (eski `>` o'rniga `->`) - Live Map endi HAQIQIY ishlaydi: 123 qurilma, 60 aloqa, 1400+ event (production'da to'g'ridan-to'g'ri tasdiqlandi) |
 
 ## Live Map bo'sh edi - TUB SABAB: Kerio Control parser HECH QACHON to'g'ri formatga mos kelmagan
 
@@ -322,9 +323,9 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
 
-**Joriy: 74/74 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
+**Joriy: 75/75 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
 Bu ishlab chiqilgan Docker image'da (git/pg_dump o'rnatilmagan, SMTP
-fixture'i boshqa muammoli) 72/74 (SQLite) va 71/74 (PostgreSQL) - ikkala
+fixture'i boshqa muammoli) 73/75 (SQLite) va 72/75 (PostgreSQL) - ikkala
 qolgan xato ham shu image'ga xos, kod xatosi EMAS (avval ham
 hujjatlashtirilgan holat).**
 
