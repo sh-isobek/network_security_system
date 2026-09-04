@@ -93,8 +93,9 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 | — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
+| — | Ruijie Cloud Discovery (`network_discovery/ruijie_discovery.py`) | ✅ UniFi'ga o'xshash naqsh (App ID/Secret+API Token, guruh daraxti avtomatik topish, pagination) - mock server orqali to'liq test qilingan; haqiqiy `cloud.ruijienetworks.com`ga qarshi live test hali qilinmagan (kredensial olish jarayoni qo'lda, `docs_RUIJIE_CLOUD_SETUP.md`) |
 
-**Joriy: 74/74 test o'tadi (`run_full_test.py`).**
+**Joriy: 75/75 test o'tadi (`run_full_test.py`).**
 
 ## PDF/Excel testidagi LibreOffice xatosi - chuqur tekshirildi, TUB SABAB topildi (loyiha kodiga aloqasi yo'q)
 
@@ -515,6 +516,69 @@ qo'shildi (`run_full_test.py` #67-69):
    CSRF, LDAP/AD failure - TLS sertifikat validatsiyasi ENDI QURILDI).
 9. TLS sertifikat avtomatik yangilanish/rotatsiya (hozircha qo'lda -
    "TLS + Ichki CA" bo'limidagi "Halol cheklovlar"ga qarang).
+
+## Ruijie Cloud Discovery (`network_discovery/ruijie_discovery.py`)
+
+Foydalanuvchi so'radi: Ruijie Cloud API orqali loyiha/switchga ulangan
+mijozlar (Clients/Devices) ro'yxatini olish - `unifi_discovery.py`
+bilan bir xil naqshda.
+
+**Tekshiruv jarayoni (halol)**: loyihada Ruijie API'ning rasmiy
+hujjatiga (PDF/veb) to'g'ridan-to'g'ri, to'liq matn darajasida kirish
+imkoni bo'lmadi (JS-render qilinadigan sahifalar) - shuning uchun
+ochiq-manbali, Apache 2.0 litsenziyali `pyruijie` mijoz kutubxonasi
+(GitHub: `dannielperez/pyruijie`) **manba kodi** o'qib chiqildi -
+aynan so'rov yo'llari, JSON konvert shakli va autentifikatsiya oqimi
+shu yerdan olindi (bu, hech bo'lmasa, ochiq-manba darajasida
+tekshirilgan - taxmin emas).
+
+**Aniqlangan autentifikatsiya oqimi** (UniFi'nikidan farqli):
+1. `POST /service/api/oauth20/client/access_token?token=<API_TOKEN>`
+   tanasida `{"appid":..., "secret":...}` - vaqtinchalik `accessToken`
+   oladi.
+2. Keyingi HAR BIR so'rovga `access_token` QUERY parametri qo'shiladi
+   (UniFi'ning `X-API-Key` SARLAVHASIdan farqli).
+3. `GET /service/api/group/single/tree?depth=DEVICE` - guruh (loyiha/
+   filial) daraxti, `"type":"BUILDING"` bo'lgan tugunlar - UniFi'ning
+   "site"iga o'xshash. `RUIJIE_GROUP_ID` sozlanmasa, BARCHA BUILDING
+   guruhlar avtomatik topilib, ularning barchasidan yig'iladi.
+4. `GET /service/api/open/v1/dev/user/current-user?group_id=&page_
+   index=&page_size=` - klientlar ro'yxati, TO'LIQ sahifalab
+   (`totalCount` ga yetguncha).
+
+**MUHIM (RUIJIE_API_TOKEN - o'z-o'zidan xizmat KO'RSATILMAYDI)**:
+foydalanuvchi kredensiallarni qayerdan olishni bilmasligini aytdi -
+tekshirilganda, App ID/App Secret/API Token Ruijie Cloud konsolida
+o'z-o'zidan yaratib bo'lmasligi, faqat `service_rj@ruijienetworks.com`
+ga email yoki RITA qo'llab-quvvatlash chati orqali QO'LDA so'rov
+(Customer Name/Email/Country/API Purpose/User Role) orqali olinishi
+aniqlandi (rasmiy Ruijie forumidagi 2 ta alohida xodim javobi bilan
+tasdiqlangan). Bu jarayon `docs_RUIJIE_CLOUD_SETUP.md`ga to'liq
+yozildi.
+
+**Real test qilingan (SQLite VA PostgreSQL)**: real HTTP protokoli,
+real JSON konvert (`{"code":0,...}`), real autentifikatsiya oqimi va
+real sahifalab-olish mantig'i - soxta (mock) Flask server orqali.
+Tekshirilgan: noto'g'ri App Secret -> bo'sh ro'yxat (crash yo'q);
+guruh daraxti avtomatik topilishi (ichma-ich joylashgan BUILDING
+guruh ham); 11 ta klientning 3 sahifaga (server so'ralgan
+`page_size`ni e'tiborsiz qoldirib, har doim 4tadan qaytarganda ham)
+to'g'ri yig'ilishi; `connectType` orqali wired/wireless aniqlash;
+`RUIJIE_GROUP_ID` aniq sozlansa faqat o'sha guruh so'ralishi;
+`asset_inventory.discover_via_ruijie()` -> DB -> Dashboard `/asset-
+inventory` to'liq zanjiri.
+
+**Topilgan va tuzatilgan real xato**: `_is_wired()`ning dastlabki
+`"wire" in value.lower()` tekshiruvi "WIRELESS" so'zining ICHIDA ham
+"wire" substring'i borligi sababli uni HAM noto'g'ri "wired" deb
+belgilardi - mock-test orqali darhol ushlandi, "wireless"/"wifi"/
+"wlan" avval aniq istisno qilinadigan qilib tuzatildi.
+
+**Haqiqiy `cloud.ruijienetworks.com`ga qarshi live test hali
+QILINMAGAN** (kredensiallar hali mavjud emas - yuqoriga qarang) -
+bu halol, ochiq cheklov (`docs_RUIJIE_CLOUD_SETUP.md`da ham
+yozilgan). Foydalanuvchi kredensial olgach, real hisobga qarshi bir
+martalik tekshiruv qilinishi kerak.
 
 ## TLS + Ichki CA / mTLS (xavfsizlik auditi, CRITICAL - nihoyat qurildi)
 

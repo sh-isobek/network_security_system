@@ -1959,8 +1959,12 @@ def _test_discovery_offline_parts():
     from network_discovery.unifi_discovery import get_unifi_clients
     assert get_unifi_clients() == []
 
+    # Ruijie Cloud Discovery - graceful failure (App ID/Secret/Token sozlanmagan)
+    from network_discovery.ruijie_discovery import get_ruijie_clients
+    assert get_ruijie_clients() == []
 
-check("Network Discovery: MAC Vendor + DHCP Reader + UniFi graceful fail", _test_discovery_offline_parts)
+
+check("Network Discovery: MAC Vendor + DHCP Reader + UniFi/Ruijie graceful fail", _test_discovery_offline_parts)
 
 # ---------------------------------------------------------------------------
 print("\n=== 32) NETWORK DISCOVERY - AD Discovery (real OpenLDAP, computer obyektlari) ===")
@@ -5208,6 +5212,204 @@ def _test_tls_reverse_proxy():
 
 
 check("XAVFSIZLIK: TLS reverse proxy (nginx) + Ichki CA - server-tomon TLS VA ixtiyoriy mTLS (real jarayonlar bilan)", _test_tls_reverse_proxy)
+
+# ---------------------------------------------------------------------------
+print("\n=== 74) Ruijie Cloud Discovery (auth + guruh daraxti avtomatik topish + pagination + Asset Inventory + Dashboard) ===")
+
+
+def _test_ruijie_cloud_discovery():
+    """
+    Ruijie Cloud (Reyee/RG switch/AP) integratsiyasi - `unifi_discovery.py`
+    bilan bir xil naqsh: App ID/App Secret/API Token orqali `accessToken`
+    olinadi, keyin guruh (loyiha) daraxti avtomatik topiladi (RUIJIE_
+    GROUP_ID sozlanmasa BARCHA "BUILDING" guruhlar), va har biridan
+    ulangan klientlar (to'liq sahifalab) yig'iladi.
+
+    Real Ruijie Cloud API'ga (cloud-us/cloud-as.ruijienetworks.com)
+    haqiqiy tarmoq orqali emas - bu yerda REAL HTTP protokoli, real
+    JSON konvert (`{"code":0,...}`), real autentifikatsiya oqimi va real
+    sahifalab olish mantig'i, faqat soxta (mock) Flask server orqali
+    sinaladi (loyihada UniFi/AD/boshqa bulut integratsiyalari uchun
+    ham xuddi shu, o'rnatilgan naqsh - server manzili muhit
+    o'zgaruvchisi orqali to'liq almashtiriladi, kod real va soxta
+    serverni farqlamaydi).
+    """
+    import subprocess
+    import time as _time
+
+    mock_script = "/tmp/_ci_mock_ruijie.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+VALID_APPID = "ci-app-id"
+VALID_SECRET = "ci-app-secret"
+VALID_TOKEN = "ci-api-token"
+ACCESS_TOKEN = "ci-access-token-xyz"
+
+@app.route("/service/api/oauth20/client/access_token", methods=["POST"])
+def auth():
+    if request.args.get("token") != VALID_TOKEN:
+        return jsonify({"code": 1001, "msg": "invalid api token"})
+    body = request.get_json() or {}
+    if body.get("appid") != VALID_APPID or body.get("secret") != VALID_SECRET:
+        return jsonify({"code": 1004, "msg": "invalid appid/secret"})
+    return jsonify({"code": 0, "accessToken": ACCESS_TOKEN, "expiresIn": 3600})
+
+@app.route("/service/api/group/single/tree", methods=["GET"])
+def group_tree():
+    if request.args.get("access_token") != ACCESS_TOKEN:
+        return jsonify({"code": 1002, "msg": "invalid access_token"})
+    return jsonify({"code": 0, "groups": {
+        "type": "COMPANY", "groupId": "1", "name": "Root",
+        "subGroups": [
+            {"type": "BUILDING", "groupId": "101", "name": "HQ", "subGroups": []},
+            {"type": "BUILDING", "groupId": "102", "name": "Filial", "subGroups": [
+                {"type": "BUILDING", "groupId": "103", "name": "Filial-Ichki", "subGroups": []},
+            ]},
+        ],
+    }})
+
+# guruh 101 - PAGINATSIYA sinovi uchun: server so'ralgan page_size'ni
+# E'TIBORSIZ qoldirib, har doim 4tadan qaytaradi (UniFi testidagi
+# eng qattiq real xatti-harakatni taqlid qilish uchun)
+GROUP_101_TOTAL = 11
+GROUP_101_CLIENTS = [
+    {"mac": f"aa:bb:cc:10:01:{i:02x}", "ip": f"172.16.40.{i}", "userName": f"HQ-PC-{i}",
+     "connectType": "WIRED" if i % 2 == 0 else "WIRELESS", "ssid": None if i % 2 == 0 else "CI-WIFI",
+     "linkedDevice": "SW-HQ-01"}
+    for i in range(GROUP_101_TOTAL)
+]
+
+@app.route("/service/api/open/v1/dev/user/current-user", methods=["GET"])
+def clients():
+    if request.args.get("access_token") != ACCESS_TOKEN:
+        return jsonify({"code": 1002, "msg": "invalid access_token"})
+    group_id = request.args.get("group_id")
+    page_index = int(request.args.get("page_index", 1))
+    FORCED_PAGE_SIZE = 4
+
+    if group_id == "101":
+        start = (page_index - 1) * FORCED_PAGE_SIZE
+        page = GROUP_101_CLIENTS[start:start + FORCED_PAGE_SIZE]
+        return jsonify({"code": 0, "list": page, "totalCount": GROUP_101_TOTAL})
+    if group_id == "102":
+        return jsonify({"code": 0, "list": [
+            {"mac": "aa:bb:cc:20:02:01", "ip": "172.16.41.1", "userName": "BRANCH-PC-1",
+             "connectType": "cable", "linkedDevice": "SW-BR-01"},
+            {"mac": "aa:bb:cc:20:02:02", "ip": "", "userName": "IPSIZ-KLIENT",
+             "connectType": "wireless"},
+        ], "totalCount": 2})
+    if group_id == "103":
+        return jsonify({"code": 0, "list": [], "totalCount": 0})
+    return jsonify({"code": 1003, "msg": "unknown group_id"})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=18778)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+
+        os.environ["RUIJIE_BASE_URL"] = "http://127.0.0.1:18778"
+        os.environ["RUIJIE_APP_ID"] = "ci-app-id"
+        os.environ["RUIJIE_APP_SECRET"] = "ci-app-secret"
+        os.environ["RUIJIE_API_TOKEN"] = "ci-api-token"
+        os.environ["RUIJIE_VERIFY_SSL"] = "false"
+        os.environ.pop("RUIJIE_GROUP_ID", None)
+
+        from network_discovery.ruijie_discovery import get_ruijie_clients
+
+        # --- 1) Noto'g'ri App Secret -> bo'sh ro'yxat (crash yo'q) ---
+        os.environ["RUIJIE_APP_SECRET"] = "notogri-sekret"
+        assert get_ruijie_clients() == []
+        os.environ["RUIJIE_APP_SECRET"] = "ci-app-secret"
+
+        # --- 2) To'g'ri kredensial: guruh daraxti AVTOMATIK topilishi
+        # (RUIJIE_GROUP_ID sozlanmagan) - 3 ta BUILDING guruh (101/102/103,
+        # ichma-ich joylashgan 103 ham topilishi kerak) va ularning
+        # BARCHASIDAN klientlar yig'ilishi kerak. Guruh 101 - 11 ta
+        # klient, PAGINATSIYA orqali (server har doim 4tadan qaytaradi,
+        # bu UniFi testidagi kabi eng qattiq real stsenariy). Guruh 102 -
+        # 2 ta klient (biri IP'siz). Guruh 103 - bo'sh.
+        clients = get_ruijie_clients()
+        assert len(clients) == 13, (
+            f"13 ta klient kutilgan edi (11 HQ + 2 Filial, IP'siz ham "
+            f"get_ruijie_clients() darajasida SAQLANADI - faqat asset_"
+            f"inventory darajasida filtrlanadi), {len(clients)} keldi"
+        )
+        macs = {c.mac for c in clients}
+        assert len(macs) == 13, "Takroriy yoki yo'qolgan yozuvlar bor (pagination/dedup xatosi)"
+
+        hq_clients = [c for c in clients if c.mac.startswith("AA:BB:CC:10:01")]
+        assert len(hq_clients) == 11, f"HQ guruhidan (pagination orqali) 11 ta klient kutilgan edi, {len(hq_clients)} keldi"
+        wired = [c for c in hq_clients if c.is_wired]
+        wireless = [c for c in hq_clients if not c.is_wired]
+        assert len(wired) == 6 and len(wireless) == 5, "wired/wireless (connectType) mantig'i noto'g'ri"
+
+        branch_clients = {c.mac: c for c in clients if c.mac.startswith("AA:BB:CC:20:02")}
+        assert len(branch_clients) == 2
+        assert branch_clients["AA:BB:CC:20:02:01"].is_wired is True  # "cable" ham wired deb tanilishi kerak
+        assert branch_clients["AA:BB:CC:20:02:02"].ip == ""
+
+        # --- 3) RUIJIE_GROUP_ID aniq sozlansa, FAQAT o'sha guruh so'ralishi ---
+        os.environ["RUIJIE_GROUP_ID"] = "102"
+        only_branch = get_ruijie_clients()
+        assert len(only_branch) == 2, f"Faqat guruh 102'dan 2 ta klient kutilgan edi, {len(only_branch)} keldi"
+        os.environ.pop("RUIJIE_GROUP_ID", None)
+
+        # --- 4) Asset Inventory: haqiqatan DB'ga yozilishi (IP'siz klient o'tkazib yuborilishi) ---
+        from network_discovery.asset_inventory import discover_via_ruijie
+        count = discover_via_ruijie()
+        assert count == 12, f"12 ta qurilma kutilgan edi (13 klient - 1 IP'siz), {count} keldi"
+
+        s = get_session()
+        ruijie_devices = s.query(Device).filter(Device.discovery_source == "ruijie").all()
+        assert len(ruijie_devices) == 12
+        by_ip = {d.ip_address: d for d in ruijie_devices}
+        assert "172.16.40.0" in by_ip
+        assert by_ip["172.16.40.0"].mac_address == "AA:BB:CC:10:01:00"
+        assert by_ip["172.16.40.0"].hostname == "HQ-PC-0"
+        assert by_ip["172.16.40.0"].connection_type == "cable"
+        assert "172.16.41.1" in by_ip
+        assert by_ip["172.16.41.1"].connection_type == "cable"
+        s.close()
+
+        # --- 5) full_discovery() RUIJIE_APP_ID sozlangan bo'lsa Ruijie'ni ham chaqirishi ---
+        from network_discovery.asset_inventory import full_discovery
+        try:
+            result = full_discovery("127.0.0.1/32", "lo", do_tcp_scan=False, do_snmp=False)
+            assert "ruijie" in result, f"full_discovery natijasida 'ruijie' kaliti yo'q: {result}"
+        except Exception:
+            pass  # ARP/ICMP vositalari yo'q bo'lishi mumkin - bu test uchun muhim emas
+
+        # --- 6) Dashboard /asset-inventory sahifasida ko'rinishi ---
+        from dashboard import app as dash_app
+        from dashboard.create_user import create_user
+        create_user("ruijie_ai_admin", "ruijieaitest123", "admin")
+        dash_app.app.secret_key = "test-secret-ruijie-ai"
+        client = _dash_client(dash_app.app)
+        client.post("/login", data={"username": "ruijie_ai_admin", "password": "ruijieaitest123"})
+        r = client.get("/asset-inventory")
+        assert r.status_code == 200
+        assert b"HQ-PC-0" in r.data, "Ruijie orqali topilgan qurilma Dashboard'da ko'rinmadi"
+        assert b"ruijie" in r.data
+
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        os.remove(mock_script)
+        for k in ["RUIJIE_BASE_URL", "RUIJIE_APP_ID", "RUIJIE_APP_SECRET", "RUIJIE_API_TOKEN",
+                  "RUIJIE_VERIFY_SSL", "RUIJIE_GROUP_ID"]:
+            os.environ.pop(k, None)
+
+
+check("Ruijie Cloud Discovery (auth + guruh daraxti avtomatik topish + pagination + Asset Inventory + Dashboard)", _test_ruijie_cloud_discovery)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

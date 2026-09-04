@@ -72,7 +72,7 @@ class Device(Base):
     vendor = Column(String(255))                        # MAC OUI orqali aniqlangan ishlab chiqaruvchi
     os_guess = Column(String(255))                       # OS fingerprint yoki AD/SNMP orqali aniqlangan
     open_ports = Column(Text)                             # JSON: [{"port":22,"service":"ssh"},...]
-    discovery_source = Column(String(50))                  # "arp_scan" | "icmp" | "snmp" | "ad" | "unifi" | "kerio_dhcp"
+    discovery_source = Column(String(50))                  # "arp_scan" | "icmp" | "snmp" | "ad" | "unifi" | "ruijie" | "kerio_dhcp"
     last_discovered_at = Column(DateTime)
 
     # --- Endpoint Agent Coverage (yangi TZ 6-bo'lim: AD orqali avtomatlashtirish) ---
