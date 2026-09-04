@@ -5291,6 +5291,60 @@ def _test_kerio_parser_real_production_capture():
 check("Kerio Control parser - HAQIQIY production log formatiga qarshi (ikkinchi marta tuzatilgan, real qatorlar bilan)", _test_kerio_parser_real_production_capture)
 
 # ---------------------------------------------------------------------------
+print("\n=== 76) Live Map: vis-network kutubxonasi mahalliy xizmat qilinishi (tashqi CDN havolasi buzilgan edi) ===")
+
+
+def _test_live_map_vis_network_local_asset():
+    """
+    Foydalanuvchi backend to'liq ishlayotganini (135 node, 60 edge -
+    to'g'ridan-to'g'ri tasdiqlangan) qat'i nazar, "Live Map bo'sh"
+    deb xabar qildi. TUB SABAB: `live_map.html` `vis-network`
+    kutubxonasini tashqi CDN'dan (`cdnjs.cloudflare.com`) yuklardi -
+    lekin cdnjs o'z fayl yo'lini o'zgartirib qo'ygan edi
+    (`/9.1.9/vis-network.min.js` -> `/9.1.9/standalone/umd/vis-
+    network.min.js`), eski havola JIM ravishda HTTP 404 qaytarardi.
+    Natijada brauzerda `vis` global obyekti hech qachon aniqlanmasdi,
+    xarita chizilmasdi - lekin sahifaning o'zi (va backend API) xato
+    bermasdi, shuning uchun bu FAQAT brauzer DevTools konsolida
+    ko'rinardi, oddiy foydalanuvchiga esa shunchaki "bo'sh" bo'lib
+    tuyulardi.
+
+    Tuzatildi: kutubxona endi MAHALLIY saqlanadi
+    (`dashboard/static/vis-network.min.js`) - tashqi CDN'ga UMUMAN
+    bog'liq emas (na noto'g'ri yo'l, na korporativ faervol muammosi
+    bo'lishi mumkin emas).
+    """
+    import os as _os
+
+    static_path = _os.path.join(
+        _os.path.dirname(_os.path.abspath(__file__)),
+        "dashboard", "static", "vis-network.min.js",
+    )
+    assert _os.path.isfile(static_path), "dashboard/static/vis-network.min.js topilmadi - mahalliy vendoring qilinmagan"
+    assert _os.path.getsize(static_path) > 100_000, "vis-network.min.js fayli juda kichik - to'liq yuklab olinmagan bo'lishi mumkin"
+
+    with open(static_path, "rb") as f:
+        head = f.read(200)
+    assert b"vis-network" in head, "Fayl mazmuni vis-network kutubxonasiga o'xshamayapti"
+
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "templates", "live_map.html")) as f:
+        template = f.read()
+    assert '<script src="https://cdnjs.cloudflare.com' not in template, (
+        "live_map.html <script> tegi hali ham tashqi CDN'ga bog'liq (buzilishi mumkin bo'lgan havola)"
+    )
+    assert '<script src="/static/vis-network.min.js">' in template, "live_map.html mahalliy static faylni ishlatmayapti"
+
+    # --- Real HTTP orqali: Flask static route to'g'ri xizmat qilishini tasdiqlash ---
+    from dashboard.app import app as dash_app
+    client = dash_app.test_client()
+    r = client.get("/static/vis-network.min.js")
+    assert r.status_code == 200, f"/static/vis-network.min.js 200 qaytarishi kerak edi, {r.status_code} keldi"
+    assert len(r.data) > 100_000
+
+
+check("Live Map: vis-network mahalliy static asset sifatida xizmat qilinadi (tashqi CDN havolasi buzilgan edi, real production xatosi tuzatilgan)", _test_live_map_vis_network_local_asset)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

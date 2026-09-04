@@ -12,6 +12,7 @@ FROM python:3.12-slim
 #   - arp-scan: network_discovery/arp_scanner.py uchun (ARP discovery)
 #   - nmap: network_discovery/tcp_scanner.py uchun (port/OS aniqlash)
 #   - iputils-ping: network_discovery/icmp_scanner.py uchun (ping sweep)
+#   - iproute2: network_discovery/ipv6_discovery.py uchun (`ip -6 neigh` CLI)
 #   - build-essential: yara-python kompilyatsiyasi uchun
 RUN apt-get update && apt-get install -y --no-install-recommends \
         clamav \
@@ -20,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         arp-scan \
         nmap \
         iputils-ping \
+        iproute2 \
         tzdata \
         build-essential \
         libssl-dev \

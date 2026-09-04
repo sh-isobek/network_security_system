@@ -9,7 +9,19 @@
 
 <div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/vis-network.min.js"></script>
+<!-- MUHIM (real production'da aniqlangan xato): bu kutubxona avval
+     tashqi CDN (cdnjs.cloudflare.com)dan yuklanardi - lekin cdnjs
+     o'z fayl yo'lini ("/9.1.9/..." -> "/9.1.9/standalone/umd/...")
+     o'zgartirib qo'yganida, eski havola JIM ravishda 404 bera
+     boshladi (Live Map'ning o'zi hech qanday xato ko'rsatmasdan
+     bo'sh qolib ketardi - brauzer konsolida ko'rinadigan
+     ReferenceError, lekin oddiy foydalanuvchi buni ko'rmaydi).
+     Bundan tashqari, tashqi CDN'ga umuman ishonish xavfli - korporativ
+     tarmoq faervoli tashqi domenlarni bloklashi ham mumkin edi. Shu
+     sabablarga ko'ra kutubxona endi mahalliy saqlanadi
+     (`dashboard/static/vis-network.min.js`) - tashqi tarmoqqa umuman
+     bog'liq emas. -->
+<script src="/static/vis-network.min.js"></script>
 <script>
 let network = null;
 
