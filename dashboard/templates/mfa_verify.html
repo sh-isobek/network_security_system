@@ -25,6 +25,7 @@
             {% endfor %}
         {% endwith %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
             <button type="submit">Tasdiqlash</button>
         </form>

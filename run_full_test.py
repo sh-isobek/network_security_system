@@ -32,6 +32,47 @@ def check(name, fn):
         traceback.print_exc()
 
 
+def _dash_client(flask_app):
+    """
+    `dashboard/app.py` endi CSRF himoyasini qo'shdi (autentifikatsiyalangan
+    sessiya POST so'rov yuborganda, forma ichidagi yashirin `csrf_token`
+    maydoni sessiyadagi qiymat bilan mos kelishi SHART - haqiqiy brauzerda
+    `<form>` ichidagi yashirin input orqali avtomatik yuboriladi). Oddiy
+    `flask_app.test_client()` buni bilmaydi va har bir POST 400 bilan rad
+    etiladi - shuning uchun bu yerda `.post()` avtomatik ravishda joriy
+    sessiyadan `csrf_token`ni o'qib, form ma'lumotlariga qo'shib yuboradigan
+    wrapper qaytariladi (login/mfa_verify kabi autentifikatsiyadan OLDINGI
+    POST'larga ta'sir qilmaydi - ular `current_user.is_authenticated` False
+    bo'lgani uchun CSRF tekshiruvidan umuman o'tmaydi).
+    """
+    client = flask_app.test_client()
+    orig_post = client.post
+
+    def _post_with_csrf(*args, **kwargs):
+        with client.session_transaction() as sess:
+            token = sess.get("csrf_token")
+        if not token:
+            # Sessiyada hali csrf_token yo'q (hali hech qanday shablon
+            # render qilinmagan) - "/" (autentifikatsiyalangan bo'lsa)
+            # yoki "/login" (bo'lmasa) orqali generatsiya qilamiz.
+            client.get("/")
+            with client.session_transaction() as sess:
+                token = sess.get("csrf_token")
+        if not token:
+            client.get("/login")
+            with client.session_transaction() as sess:
+                token = sess.get("csrf_token")
+        if token and kwargs.get("json") is None:
+            data = kwargs.get("data")
+            data = dict(data) if isinstance(data, dict) else {}
+            data.setdefault("csrf_token", token)
+            kwargs["data"] = data
+        return orig_post(*args, **kwargs)
+
+    client.post = _post_with_csrf
+    return client
+
+
 # ---------------------------------------------------------------------------
 print("\n=== 0) BAZANI TOZALASH VA QAYTA YARATISH ===")
 db_path = "logs/security_system.db"
@@ -666,7 +707,7 @@ def _test_dashboard():
     create_user("dashtest_admin", "dashtestpass123", "admin")
 
     dash_app.app.secret_key = "test-secret-key-dashboard"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # Autentifikatsiyasiz - login sahifasiga redirect (302)
     r = client.get("/", follow_redirects=False)
@@ -740,7 +781,7 @@ def _test_report_generator():
     from dashboard.create_user import create_user
     create_user("reporttest_admin", "reporttestpass123", "admin")
     dash_app.app.secret_key = "test-secret-key-report"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "reporttest_admin", "password": "reporttestpass123"})
 
     r = client.get("/reports/download?period_days=30&format=csv")
@@ -780,7 +821,7 @@ def _test_rbac():
     s.close()
 
     dash_app.app.secret_key = "test-secret-key"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # Autentifikatsiyasiz - login sahifasiga redirect
     r = client.get("/", follow_redirects=False)
@@ -887,7 +928,7 @@ def _test_pdf_excel_reports():
     from dashboard.create_user import create_user
     create_user("pdftest_admin", "pdftestpass123", "admin")
     dash_app.app.secret_key = "test-secret-key-pdf"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "pdftest_admin", "password": "pdftestpass123"})
 
     r = client.get("/reports/download?period_days=7&format=pdf")
@@ -1053,7 +1094,7 @@ def _test_mfa():
 
     create_user("mfatest_admin", "mfatestpass123", "admin", "local")
     dash_app.app.secret_key = "test-secret-mfa-full"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # MFA yo'qligida to'g'ridan-to'g'ri kirish
     r = client.post("/login", data={"username": "mfatest_admin", "password": "mfatestpass123"}, follow_redirects=True)
@@ -1242,7 +1283,7 @@ userPassword: CIPass456
 
         from dashboard import app as dash_app
         dash_app.app.secret_key = "test-secret-ldap-full"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
 
         r = client.post("/login", data={"username": "ciuser", "password": "CIPass456"}, follow_redirects=True)
         r2 = client.get("/")
@@ -1495,7 +1536,7 @@ def _test_audit_log():
 
     create_user("audit_test_admin", "audittestpass123", "admin")
     dash_app.app.secret_key = "test-secret-audit"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
 
     # MUHIM: avval noto'g'ri, keyin to'g'ri login - aks holda muvaffaqiyatli
     # login'dan keyingi sessiya cookie'si ikkinchi so'rovni "current_user.
@@ -1592,7 +1633,7 @@ def _test_live_map():
 
     create_user("livemap_test_admin", "livemaptestpass123", "admin")
     dash_app.app.secret_key = "test-secret-livemap"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "livemap_test_admin", "password": "livemaptestpass123"})
 
     s = get_session()
@@ -1628,7 +1669,7 @@ def _test_live_map():
     assert edge["value"] == 2, f"2 ta hodisa kutilgan edi, {edge['value']} keldi"
 
     # Autentifikatsiyasiz kirish rad etilishi kerak
-    anon_client = dash_app.app.test_client()
+    anon_client = _dash_client(dash_app.app)
     r = anon_client.get("/api/topology", follow_redirects=False)
     assert r.status_code == 302
 
@@ -1744,7 +1785,7 @@ def _test_encryption_at_rest():
 
     create_user("enc_ci_test", "enccitest123", "admin")
     dash_app.app.secret_key = "test-secret-encryption"
-    client = dash_app.app.test_client()
+    client = _dash_client(dash_app.app)
     client.post("/login", data={"username": "enc_ci_test", "password": "enccitest123"})
     client.get("/mfa/setup")
     with client.session_transaction() as sess:
@@ -1819,7 +1860,7 @@ def _test_api_token_management():
 
     create_user("token_admin_ci", "tokenadminci123", "admin")
     dash_app.app.secret_key = "test-secret-tokens"
-    ui_client = dash_app.app.test_client()
+    ui_client = _dash_client(dash_app.app)
     ui_client.post("/login", data={"username": "token_admin_ci", "password": "tokenadminci123"})
 
     r1 = ui_client.post("/api-tokens/create", data={"name": "UI-CI-Token", "expires_days": ""}, follow_redirects=True)
@@ -2662,7 +2703,7 @@ dNSHostName: CI-MISSING.covci.local
         from dashboard.create_user import create_user
         create_user("coverage_ci_admin", "coverageci123", "admin")
         dash_app.app.secret_key = "test-secret-coverage"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
         client.post("/login", data={"username": "coverage_ci_admin", "password": "coverageci123"})
         r = client.get("/agent-coverage")
         assert r.status_code == 200
@@ -3035,7 +3076,7 @@ if __name__ == "__main__":
         from dashboard.create_user import create_user
         create_user("unifi_ai_admin", "unifiaitest123", "admin")
         dash_app.app.secret_key = "test-secret-unifi-ai"
-        client = dash_app.app.test_client()
+        client = _dash_client(dash_app.app)
         client.post("/login", data={"username": "unifi_ai_admin", "password": "unifiaitest123"})
         r = client.get("/asset-inventory")
         assert r.status_code == 200
@@ -3211,7 +3252,7 @@ def _test_dashboard_timezone():
 
     create_user("tz_ci_admin", "tzcitest123", "admin")
     dash_app.secret_key = "test-secret-tz-ci"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "tz_ci_admin", "password": "tzcitest123"})
     r = client.get("/alerts")
     assert r.status_code == 200
@@ -3893,7 +3934,7 @@ def _test_web_activity_full_chain():
     from dashboard.create_user import create_user
     create_user("webactivity_ci_admin", "webactivityci123", "admin")
     dash_app.secret_key = "test-secret-webactivity"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "webactivity_ci_admin", "password": "webactivityci123"})
 
     r = client.get("/web-activity")
@@ -4382,7 +4423,7 @@ def _test_agent_online_offline_status():
     from dashboard.create_user import create_user
     create_user("agentstatus_ci_admin", "agentstatusci123", "admin")
     dashboard_app.secret_key = "test-secret-agent-status"
-    client = dashboard_app.test_client()
+    client = _dash_client(dashboard_app)
     client.post("/login", data={"username": "agentstatus_ci_admin", "password": "agentstatusci123"})
 
     resp = client.get("/devices")
@@ -4567,7 +4608,7 @@ def _test_agent_enroll_per_computer_token():
     from dashboard.create_user import create_user
     create_user("enroll_ci_admin", "enrollci123456", "admin")
     dash_app.secret_key = "test-secret-enroll"
-    dash_client = dash_app.test_client()
+    dash_client = _dash_client(dash_app)
     dash_client.post("/login", data={"username": "enroll_ci_admin", "password": "enrollci123456"})
     r = dash_client.get("/api-tokens")
     assert r.status_code == 200
@@ -4595,7 +4636,7 @@ def _test_user_activate_and_edit():
     create_user("useredit_ci_admin", "usereditci123", "admin")
     create_user("useredit_ci_target", "targetpass123", "viewer")
     dash_app.secret_key = "test-secret-useredit"
-    client = dash_app.test_client()
+    client = _dash_client(dash_app)
     client.post("/login", data={"username": "useredit_ci_admin", "password": "usereditci123"})
 
     s = get_session()
@@ -4625,14 +4666,14 @@ def _test_user_activate_and_edit():
     s.close()
 
     # Yangi parol bilan HAQIQATAN login qila olishini tekshirish
-    other_client = dash_app.test_client()
+    other_client = _dash_client(dash_app)
     r = other_client.post("/login", data={"username": "useredit_ci_target", "password": "newpass456"}, follow_redirects=True)
     assert r.status_code == 200
     r2 = other_client.get("/")
     assert r2.status_code == 200, "yangi parol bilan login muvaffaqiyatli bo'lishi va sahifaga kirish kerak edi"
 
     # Eski parol endi ishlamasligi kerak
-    stale_client = dash_app.test_client()
+    stale_client = _dash_client(dash_app)
     stale_client.post("/login", data={"username": "useredit_ci_target", "password": "targetpass123"})
     r3 = stale_client.get("/users")
     assert r3.status_code != 200, "eski parol endi ishlamasligi kerak edi"
@@ -4703,7 +4744,194 @@ def _test_install_script_sets_agent_version():
 check("Install-NetworkSecurityAgent.ps1: AGENT_VERSION endi to'g'ri o'rnatiladi (qayta tekshirishda topilgan real xato)", _test_install_script_sets_agent_version)
 
 # ---------------------------------------------------------------------------
-print("\n=== 69) Ruijie Cloud integratsiyasi (foydalanuvchining production so'rovi) ===")
+print("\n=== 69) XAVFSIZLIK (CRITICAL): TLS reverse proxy (nginx) + Ichki CA + ixtiyoriy mTLS ===")
+
+
+def _test_tls_reverse_proxy():
+    """
+    Xavfsizlik auditi topilmasi (CRITICAL): "TLS/mTLS yo'qligi" - Agent
+    API va Dashboard endi haqiqiy `nginx` TLS reverse proxy (ichki CA
+    bilan imzolangan sertifikat) ortida ishlaydi. agent_api/dashboard'ning
+    o'zi hamon oddiy HTTP (faqat 127.0.0.1'ga bog'langan) - TLS
+    termination FAQAT nginx'da.
+
+    Bu test HECH NARSANI soxtalashtirmaydi:
+      - `api.server`/`dashboard.app` - HAQIQIY, alohida jarayonda ishga
+        tushirilgan Flask server (real HTTP, test_client emas).
+      - `deploy/pki/generate_ca.sh`/`issue_agent_cert.sh` - HAQIQIY
+        openssl chaqiruvlari orqali CA/server/client sertifikat.
+      - `deploy/nginx/entrypoint.sh` - production'da ishlatiladigan
+        AYNAN SHU, o'zgartirilmagan skript + haqiqiy `nginx` binary.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    import time as _time
+
+    if shutil.which("nginx") is None:
+        print("   (nginx o'rnatilmagan - test o'tkazib yuborildi; CI'da avtomatik o'rnatiladi)")
+        return
+    if shutil.which("envsubst") is None:
+        print("   (envsubst/gettext-base o'rnatilmagan - test o'tkazib yuborildi)")
+        return
+
+    import requests as requests_mod
+
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    work_dir = tempfile.mkdtemp(prefix="tls_test_")
+    cert_dir = os.path.join(work_dir, "certs")
+    agent_port, dash_port = 18501, 18801
+    nginx_agent_port, nginx_dash_port = 18444, 18844
+
+    # --- 1) Ichki CA + server sertifikat (haqiqiy generate_ca.sh) ---
+    gen_env = {**os.environ, "TLS_CERT_DIR": cert_dir,
+               "TLS_SERVER_HOSTNAMES": "localhost", "TLS_SERVER_IPS": "127.0.0.1"}
+    r = subprocess.run(["bash", os.path.join(repo_root, "deploy/pki/generate_ca.sh")],
+                        env=gen_env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"generate_ca.sh muvaffaqiyatsiz: {r.stdout}\n{r.stderr}"
+    ca_path = os.path.join(cert_dir, "ca.crt")
+    assert os.path.isfile(ca_path) and os.path.isfile(os.path.join(cert_dir, "server.crt"))
+
+    # --- 2) Client (mTLS) sertifikat - haqiqiy issue_agent_cert.sh ---
+    r2 = subprocess.run(["bash", os.path.join(repo_root, "deploy/pki/issue_agent_cert.sh"), "CI-TEST-PC"],
+                         env=gen_env, capture_output=True, text=True, timeout=30)
+    assert r2.returncode == 0, f"issue_agent_cert.sh muvaffaqiyatsiz: {r2.stdout}\n{r2.stderr}"
+    client_crt = os.path.join(cert_dir, "agents", "CI-TEST-PC.crt")
+    client_key = os.path.join(cert_dir, "agents", "CI-TEST-PC.key")
+    assert os.path.isfile(client_crt) and os.path.isfile(client_key)
+
+    # --- 3) Haqiqiy backend jarayonlar ---
+    api_env = {**os.environ, "API_PORT": str(agent_port), "AGENT_API_KEY": "ci-tls-test-key"}
+    dash_env = {**os.environ, "DASHBOARD_PORT": str(dash_port)}
+    api_proc = subprocess.Popen(["python3", "-m", "api.server"], env=api_env,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    dash_proc = subprocess.Popen(["python3", "-m", "dashboard.app"], env=dash_env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _start_nginx(mtls_required: str, out_name: str):
+        nginx_env = {
+            **os.environ,
+            "NGINX_AGENT_API_PORT": str(nginx_agent_port),
+            "NGINX_DASHBOARD_PORT": str(nginx_dash_port),
+            "NGINX_TLS_CERT_FILE": os.path.join(cert_dir, "server.crt"),
+            "NGINX_TLS_KEY_FILE": os.path.join(cert_dir, "server.key"),
+            "NGINX_TLS_CA_FILE": ca_path,
+            "NGINX_AGENT_API_UPSTREAM": f"127.0.0.1:{agent_port}",
+            "NGINX_DASHBOARD_UPSTREAM": f"127.0.0.1:{dash_port}",
+            "NGINX_TEMPLATE_FILE": os.path.join(repo_root, "deploy/nginx/nginx.conf.template"),
+            "NGINX_OUT_FILE": os.path.join(work_dir, out_name),
+            "NGINX_ERROR_LOG": os.path.join(work_dir, f"{out_name}.error.log"),
+            "NGINX_ACCESS_LOG": os.path.join(work_dir, f"{out_name}.access.log"),
+            "NGINX_PID_FILE": os.path.join(work_dir, f"{out_name}.pid"),
+            "AGENT_MTLS_REQUIRED": mtls_required,
+        }
+        proc = subprocess.Popen(["sh", os.path.join(repo_root, "deploy/nginx/entrypoint.sh")],
+                                 env=nginx_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        _time.sleep(2)
+        if proc.poll() is not None:
+            raise AssertionError(f"nginx ({out_name}) ishga tushmadi: {proc.stdout.read() if proc.stdout else ''}")
+        return proc
+
+    def _stop_nginx(proc, out_name: str):
+        pid_file = os.path.join(work_dir, f"{out_name}.pid")
+        try:
+            with open(pid_file) as f:
+                os.kill(int(f.read().strip()), 15)
+        except (OSError, ValueError, FileNotFoundError):
+            pass
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    nginx_proc = None
+    try:
+        _time.sleep(2)  # backend'lar ko'tarilishi uchun
+
+        # ===== A) Server-tomon TLS (mTLS o'chiq, standart holat) =====
+        nginx_proc = _start_nginx("false", "nginx_a.conf")
+
+        resp = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health", verify=ca_path, timeout=5)
+        assert resp.status_code == 200, f"Agent API TLS orqali ishlamadi: {resp.status_code}"
+
+        resp2 = requests_mod.get(f"https://localhost:{nginx_dash_port}/login", verify=ca_path, timeout=5)
+        assert resp2.status_code == 200, f"Dashboard TLS orqali ishlamadi: {resp2.status_code}"
+
+        # Ichki CA'ga ISHONMAGAN (standart tizim do'koni) so'rov RAD
+        # ETILISHI kerak - bu haqiqatan tekshirilayotganini isbotlaydi
+        try:
+            requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health", timeout=5)
+            assert False, "CA tasdiqlanmasdan TLS ulanish MUVAFFAQIYATLI bo'ldi - haqiqiy tekshiruv yo'q"
+        except requests_mod.exceptions.SSLError:
+            pass  # kutilgan
+
+        # Agentning haqiqiy ishlaydigan yo'li (check_hash) TLS orqali
+        resp3 = requests_mod.post(
+            f"https://localhost:{nginx_agent_port}/api/v1/check_hash",
+            json={"sha256": "0" * 64, "filename": "test.txt"},
+            headers={"X-API-Key": "ci-tls-test-key"}, verify=ca_path, timeout=5,
+        )
+        assert resp3.status_code == 200, f"check_hash TLS orqali ishlamadi: {resp3.status_code}"
+
+        _stop_nginx(nginx_proc, "nginx_a.conf")
+        nginx_proc = None
+
+        # ===== B) mTLS MAJBURIY (AGENT_MTLS_REQUIRED=true) =====
+        nginx_proc = _start_nginx("true", "nginx_b.conf")
+
+        # Client sertifikatSIZ - RAD ETILISHI kerak
+        resp_no_cert = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                         verify=ca_path, timeout=5)
+        assert resp_no_cert.status_code == 400, (
+            f"mTLS talab qilinganda client sertifikatsiz so'rov RAD ETILISHI kerak edi, "
+            f"lekin http_code={resp_no_cert.status_code} qaytdi"
+        )
+
+        # Boshqa (ishonchsiz, o'z-o'zidan imzolangan) sertifikat bilan - RAD ETILISHI kerak
+        rogue_key = os.path.join(work_dir, "rogue.key")
+        rogue_crt = os.path.join(work_dir, "rogue.crt")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                         "-keyout", rogue_key, "-out", rogue_crt, "-days", "1",
+                         "-subj", "/CN=rogue-attacker"], capture_output=True, timeout=15)
+        resp_rogue = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                       verify=ca_path, cert=(rogue_crt, rogue_key), timeout=5)
+        assert resp_rogue.status_code == 400, (
+            f"mTLS: ishonchsiz (CA imzolamagan) client sertifikat RAD ETILISHI kerak edi, "
+            f"http_code={resp_rogue.status_code} qaytdi"
+        )
+
+        # Haqiqiy, CA tomonidan imzolangan client sertifikat bilan - MUVAFFAQIYATLI
+        resp_valid_cert = requests_mod.get(f"https://localhost:{nginx_agent_port}/api/v1/health",
+                                            verify=ca_path, cert=(client_crt, client_key), timeout=5)
+        assert resp_valid_cert.status_code == 200, (
+            f"mTLS: CA tomonidan imzolangan haqiqiy client sertifikat bilan ham MUVAFFAQIYATSIZ: "
+            f"{resp_valid_cert.status_code}"
+        )
+
+        # Dashboard'da mTLS talab qilinmaydi (foydalanuvchilar brauzer
+        # orqali kiradi, client sertifikatga ega emas) - server-tomon
+        # TLS bilan hamon ishlashi kerak
+        resp_dash_b = requests_mod.get(f"https://localhost:{nginx_dash_port}/login", verify=ca_path, timeout=5)
+        assert resp_dash_b.status_code == 200, "mTLS yoqilganda ham Dashboard oddiy TLS bilan ishlashi kerak edi"
+
+    finally:
+        if nginx_proc:
+            _stop_nginx(nginx_proc, "nginx_b.conf")
+        for p in (api_proc, dash_proc):
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+
+
+check("XAVFSIZLIK: TLS reverse proxy (nginx) + Ichki CA - server-tomon TLS VA ixtiyoriy mTLS (real jarayonlar bilan)", _test_tls_reverse_proxy)
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+print("\n=== 70) Ruijie Cloud integratsiyasi (foydalanuvchining production so'rovi) ===")
 
 
 def _test_ruijie_discovery():
@@ -4811,7 +5039,7 @@ if __name__ == "__main__":
         from dashboard.create_user import create_user
         create_user("ruijie_ci_admin", "ruijiecitest123", "admin")
         dash_app.app.secret_key = "test-secret-ruijie"
-        dclient = dash_app.app.test_client()
+        dclient = _dash_client(dash_app.app)
         dclient.post("/login", data={"username": "ruijie_ci_admin", "password": "ruijiecitest123"})
         r = dclient.get("/asset-inventory")
         assert r.status_code == 200

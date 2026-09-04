@@ -25,6 +25,9 @@ ESXI_PASSWORD = os.getenv("ESXI_PASSWORD", "")
 HYPERV_HOST = os.getenv("HYPERV_HOST", "")
 HYPERV_USERNAME = os.getenv("HYPERV_USERNAME", "")
 HYPERV_PASSWORD = os.getenv("HYPERV_PASSWORD", "")
+# Production'da ESXi/vCenter sertifikat zanjiri albatta tekshiriladi.
+# Ichki CA ishlatilsa, uning PEM fayli yo'li ESXI_CA_BUNDLE orqali beriladi.
+ESXI_CA_BUNDLE = os.getenv("ESXI_CA_BUNDLE", "")
 
 
 @dataclass
@@ -53,13 +56,17 @@ def discover_esxi_vms(timeout: int = 15) -> List[VirtualMachine]:
         auth_resp = session.post(
             f"https://{ESXI_HOST}/rest/com/vmware/cis/session",
             auth=(ESXI_USERNAME, ESXI_PASSWORD),
-            verify=False, timeout=timeout,
+            verify=ESXI_CA_BUNDLE or True, timeout=timeout,
         )
         if auth_resp.status_code != 200:
             logger.error(f"ESXi autentifikatsiya muvaffaqiyatsiz: HTTP {auth_resp.status_code}")
             return []
 
-        vm_resp = session.get(f"https://{ESXI_HOST}/rest/vcenter/vm", verify=False, timeout=timeout)
+        vm_resp = session.get(
+            f"https://{ESXI_HOST}/rest/vcenter/vm",
+            verify=ESXI_CA_BUNDLE or True,
+            timeout=timeout,
+        )
         if vm_resp.status_code != 200:
             logger.error(f"ESXi VM ro'yxatini olib bo'lmadi: HTTP {vm_resp.status_code}")
             return []

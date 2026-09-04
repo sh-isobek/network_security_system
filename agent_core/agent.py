@@ -85,8 +85,31 @@ logging.basicConfig(
 logger = logging.getLogger("endpoint_agent")
 
 # --- Sozlamalar ---
-API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "change-me-in-production")
+API_SERVER_URL = os.getenv("API_SERVER_URL", "https://172.16.0.5:8443")
+# XAVFSIZLIK: bu yerda hech qanday standart (fallback) qiymat YO'Q ataylab -
+# agar server ham xuddi shunday standart bilan ishga tushirilsa (masalan
+# admin AGENT_API_KEY'ni sozlashni unutsa), ikkalasi HAM bir xil ma'lum
+# qatorga "kelishib qolib", tashqi hujumchi ochiq manbadan o'sha qiymatni
+# o'qib API'ga kira olishi mumkin edi. AGENT_API_KEY bo'sh bo'lsa, server
+# tomon eski umumiy-kalit autentifikatsiyasini butunlay o'chiradi (faqat
+# per-agent token'lar orqali kirish qoladi) - shuning uchun bu yerda ham
+# bo'sh qoldirish xavfsiz: so'rov shunchaki 401 bilan rad etiladi.
+AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
+# --- TLS: ichki CA (deploy/pki/generate_ca.sh) va ixtiyoriy mTLS ---
+# XAVFSIZLIK (audit topilmasi): server endi nginx orqali HTTPS bilan
+# ishlaydi (docs_TLS_SETUP.md). Bizning CA tashqi (jamoat) sertifikat
+# do'konlarida yo'q - shuning uchun standart `requests` tekshiruvi
+# (`verify=True`) rad etadi. AGENT_CA_BUNDLE_FILE orqali shu ichki
+# `ca.crt`ni ko'rsatish kerak. HECH QACHON `verify=False` ishlatilmaydi
+# (bu MITM hujumiga ochiq bo'lardi) - agar CA fayli topilmasa, standart
+# tizim ishonch do'koniga tayaniladi (masalan CA GPO orqali Windows
+# Trusted Root'ga o'rnatilgan bo'lsa).
+AGENT_CA_BUNDLE_FILE = os.getenv("AGENT_CA_BUNDLE_FILE", "")
+# mTLS (ixtiyoriy, AGENT_MTLS_REQUIRED=true bo'lganda server tomon
+# talab qiladi) - deploy/pki/issue_agent_cert.sh orqali chiqarilgan
+# shu kompyuterga tegishli client sertifikat.
+AGENT_TLS_CLIENT_CERT_FILE = os.getenv("AGENT_TLS_CLIENT_CERT_FILE", "")
+AGENT_TLS_CLIENT_KEY_FILE = os.getenv("AGENT_TLS_CLIENT_KEY_FILE", "")
 AGENT_VERSION = os.getenv("AGENT_VERSION", "1.0.0")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "300"))  # 5 daqiqa
 LOCAL_CACHE_FILE = os.getenv(
@@ -132,6 +155,22 @@ def _save_cache(cache: dict):
             json.dump(cache, f)
     except OSError as exc:
         logger.error(f"Keshni saqlab bo'lmadi: {exc}")
+
+
+def _tls_request_kwargs() -> dict:
+    """
+    `requests.post()`ga qo'shiladigan TLS parametrlarini bir joyda
+    markazlashtiradi (3 xil chaqiruv joyida takrorlanmasligi uchun).
+    `verify`: ichki CA fayli sozlangan bo'lsa o'shani, aks holda
+    standart tizim ishonch do'konini ishlatadi (HECH QACHON False emas).
+    `cert`: faqat ikkala mTLS fayl (sertifikat+kalit) ham sozlangan
+    bo'lsagina qo'shiladi - aks holda oddiy server-tomon TLS bilan
+    davom etiladi.
+    """
+    kwargs = {"verify": AGENT_CA_BUNDLE_FILE if AGENT_CA_BUNDLE_FILE else True}
+    if AGENT_TLS_CLIENT_CERT_FILE and AGENT_TLS_CLIENT_KEY_FILE:
+        kwargs["cert"] = (AGENT_TLS_CLIENT_CERT_FILE, AGENT_TLS_CLIENT_KEY_FILE)
+    return kwargs
 
 
 def compute_sha256(filepath: str) -> str:
@@ -185,6 +224,7 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
             # server manzilimiz uchun proksi HECH QACHON kerak emas -
             # shuning uchun uni aniq o'chirib qo'yamiz.
             proxies={"http": None, "https": None},
+            **_tls_request_kwargs(),
         )
         if resp.status_code == 200:
             result = resp.json()
@@ -221,6 +261,7 @@ def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
             proxies={"http": None, "https": None},
+            **_tls_request_kwargs(),
         )
         if resp.status_code == 200:
             logger.info(f"Markazga xabar berildi: {resp.json()}")
@@ -253,6 +294,7 @@ def send_heartbeat(hostname: str, ip_address: str) -> bool:
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
             proxies={"http": None, "https": None},
+            **_tls_request_kwargs(),
         )
         return resp.status_code == 200
     except requests.RequestException as exc:
@@ -279,6 +321,12 @@ class EndpointAgent:
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
+        if not AGENT_API_KEY:
+            logger.warning(
+                "AGENT_API_KEY sozlanmagan - serverga barcha so'rovlar (check_hash/"
+                "report_incident/heartbeat) 401 bilan rad etiladi. SYSVOL'dagi "
+                "api_key.secret faylini yoki AGENT_API_KEY muhit o'zgaruvchisini tekshiring."
+            )
         logger.info(f"Agent ishga tushmoqda: host={self.hostname}, ip={self.ip_address}")
 
     def _on_new_file(self, filepath: str):

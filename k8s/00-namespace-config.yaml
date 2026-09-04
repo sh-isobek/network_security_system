@@ -16,14 +16,12 @@ data:
   LOG_LEVEL: "INFO"
   POSTGRES_DB: "security_system"
   POSTGRES_USER: "security_admin"
-  DATABASE_URL: "postgresql://security_admin:$(POSTGRES_PASSWORD)@postgres:5432/security_system"
   NOTIFY_CHANNELS: "email,telegram"
   SMTP_PORT: "587"
   SMTP_USE_TLS: "true"
   CLAMAV_DB_DIR: "/var/lib/clamav"
   DASHBOARD_PORT: "8080"
   API_PORT: "8443"
-  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/%2F"
 ---
 # MUHIM: bu FAQAT shablon - haqiqiy qiymatlar bilan hech qachon Git'ga
 # commit qilinmasin. Production'da:
@@ -45,3 +43,8 @@ stringData:
   POSTGRES_PASSWORD: "CHANGE_ME_STRONG_PASSWORD"
   AGENT_API_KEY: "CHANGE_ME_STRONG_RANDOM_KEY"
   DASHBOARD_SECRET_KEY: "CHANGE_ME_RANDOM_SECRET"
+  # To'liq URL secret bo'lishi kerak: ConfigMap ichidagi $(VAR) kengaymaydi.
+  DATABASE_URL: "postgresql://security_admin:CHANGE_ME_STRONG_PASSWORD@postgres:5432/security_system"
+  RABBITMQ_DEFAULT_USER: "network_security"
+  RABBITMQ_DEFAULT_PASS: "CHANGE_ME_STRONG_RABBITMQ_PASSWORD"
+  RABBITMQ_URL: "amqp://network_security:CHANGE_ME_STRONG_RABBITMQ_PASSWORD@rabbitmq:5672/%2F"

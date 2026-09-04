@@ -80,7 +80,7 @@ spec:
   ports:
     - port: 8443
       targetPort: 8443
-  type: LoadBalancer   # tashqi tarmoqdagi agentlar to'g'ridan-to'g'ri ulanishi uchun
+  type: ClusterIP   # TLS bilan faqat Ingress orqali e'lon qilinadi
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

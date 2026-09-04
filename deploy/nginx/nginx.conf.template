@@ -1,0 +1,86 @@
+# TLS reverse proxy - Agent API (8443) va Dashboard (8843).
+#
+# Backend xizmatlar (agent_api, dashboard) o'zlari HECH QANDAY TLS
+# bilmaydi (docker-compose.yml'da oddiy HTTP, faqat Docker'ning ichki
+# tarmog'ida - tashqariga OCHIQ EMAS). TLS termination FAQAT shu yerda,
+# nginx'da bajariladi - bu standart, sinovdan o'tgan arxitektura (Flask/
+# gunicorn'ning o'z TLS implementatsiyasiga ishonish o'rniga).
+#
+# Sertifikatlar: deploy/pki/generate_ca.sh orqali yaratiladigan ichki CA
+# tomonidan imzolangan (docs_TLS_SETUP.md'ga qarang). $NGINX_* muhit
+# o'zgaruvchilari docker-compose.yml'dagi entrypoint orqali (envsubst)
+# shu shablonga joylashtiriladi - haqiqiy fayl nomlari/portlar hech
+# qachon qattiq yozilmaydi.
+
+worker_processes auto;
+error_log ${NGINX_ERROR_LOG} warn;
+pid ${NGINX_PID_FILE};
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log ${NGINX_ACCESS_LOG};
+
+    # Zaif protokol/shifrlarni rad etish - faqat TLS 1.2+ va zamonaviy shifrlar
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5:!3DES;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # ---------------------------------------------------------------
+    # Agent API (Windows/Linux/Mac Agent'lar shu yerga ulanadi)
+    # ---------------------------------------------------------------
+    server {
+        listen ${NGINX_AGENT_API_PORT} ssl;
+        server_name _;
+
+        ssl_certificate     ${NGINX_TLS_CERT_FILE};
+        ssl_certificate_key ${NGINX_TLS_KEY_FILE};
+
+        # mTLS (ixtiyoriy, standart holatda O'CHIQ - docs_TLS_SETUP.md'ga
+        # qarang): agar AGENT_MTLS_REQUIRED=true bo'lsa, entrypoint.sh
+        # ushbu bloklarni faollashtiradi (client sertifikat MAJBURIY
+        # bo'ladi). Standart holatda faqat server-tomon TLS + mavjud
+        # per-agent API token autentifikatsiyasi ishlaydi.
+        #__MTLS_BLOCK__
+
+        client_max_body_size 25m;  # fayl hash/metadata yuklash uchun
+
+        location / {
+            proxy_pass http://${NGINX_AGENT_API_UPSTREAM};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            #__MTLS_HEADER__
+        }
+    }
+
+    # ---------------------------------------------------------------
+    # Web Dashboard (RBAC login)
+    # ---------------------------------------------------------------
+    server {
+        listen ${NGINX_DASHBOARD_PORT} ssl;
+        server_name _;
+
+        ssl_certificate     ${NGINX_TLS_CERT_FILE};
+        ssl_certificate_key ${NGINX_TLS_KEY_FILE};
+
+        location / {
+            proxy_pass http://${NGINX_DASHBOARD_UPSTREAM};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            # MUHIM: dashboard/app.py SESSION_COOKIE_SECURE=true bo'lsa,
+            # Flask cookie'ni faqat "xavfsiz" (HTTPS) so'rovlarda o'rnatadi -
+            # bu sarlavha bo'lmasa, proxy ortidagi Flask HTTP so'rov deb
+            # o'ylab, login sessiyasi ishlamay qoladi.
+            proxy_set_header X-Forwarded-Proto https;
+        }
+    }
+}

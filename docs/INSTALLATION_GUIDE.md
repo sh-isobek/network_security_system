@@ -22,6 +22,11 @@ cd network_security_system
 cp .env.example .env
 # .env faylini oching, kamida quyidagilarni to'ldiring:
 #   POSTGRES_PASSWORD, AGENT_API_KEY, DASHBOARD_SECRET_KEY
+
+# TLS reverse proxy (nginx) uchun ichki CA/sertifikat - `docker compose
+# up`dan OLDIN, bir marta (docs_TLS_SETUP.md'ga qarang):
+TLS_SERVER_IPS="<server-ip>" bash deploy/pki/generate_ca.sh
+
 docker compose up -d
 ```
 
@@ -37,7 +42,7 @@ docker compose exec dashboard python -m dashboard.create_user \
     --username admin --password 'KuchliParol123!' --role admin
 ```
 
-Dashboard'ga kiring: http://localhost:8080
+Dashboard'ga kiring: https://localhost:8843 (ichki CA - `docs_TLS_SETUP.md`ga qarang, `--cacert deploy/pki/certs/ca.crt`)
 
 ### 3-bosqich: Tarmoq log manbalarini ulash
 

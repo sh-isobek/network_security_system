@@ -13,7 +13,9 @@ Tarmoq Xavfsizligi Monitoring Tizimida ikki xil API mavjud:
 ## 1. Agent API (`api/server.py`)
 
 **Manzil (production)**: `https://<server>:8443` (Docker Compose'da
-`agent_api` xizmati, port 8443)
+`nginx` xizmati TLS termination qiladi, port 8443 - `agent_api`ning
+o'zi ichkarida oddiy HTTP, faqat `127.0.0.1`ga bog'langan. Ichki CA -
+`docs_TLS_SETUP.md`ga qarang)
 
 **Autentifikatsiya**: `X-API-Key` sarlavhasi orqali (`.env`dagi
 `AGENT_API_KEY` bilan bir xil bo'lishi kerak). Kalit noto'g'ri bo'lsa

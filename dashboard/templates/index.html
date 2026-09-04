@@ -3,10 +3,18 @@
 {% block content %}
 <h1>Umumiy holat</h1>
 
-<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px;">
+<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 14px;">
     <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <a href="/devices" style="text-decoration: none; color: inherit;">
         <div style="font-size: 26px; font-weight: 700;">{{ stats.device_count }}</div>
         <div style="font-size: 12px; color: #95a5a6;">Qurilmalar</div>
+        </a>
+    </div>
+    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <a href="/devices?status=online" style="text-decoration: none; color: inherit;">
+        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ stats.online_device_count }}</div>
+        <div style="font-size: 12px; color: #95a5a6;">Tarmoqqa ulangan / {{ stats.offline_device_count }} uzilgan</div>
+        </a>
     </div>
     <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.critical_count }}</div>

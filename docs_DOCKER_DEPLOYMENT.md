@@ -47,6 +47,14 @@ cp .env.example .env
 # .env faylini oching, kamida quyidagilarni to'ldiring:
 #   POSTGRES_PASSWORD, AGENT_API_KEY, DASHBOARD_PASSWORD
 
+# XAVFSIZLIK (MUHIM, CRITICAL): `docker compose up`dan OLDIN ichki CA
+# va server sertifikatini yarating - `nginx` xizmati (TLS reverse
+# proxy) bu fayllar mavjudligini kutadi, o'zi yaratmaydi.
+# docs_TLS_SETUP.md'ga to'liq qarang.
+TLS_SERVER_HOSTNAMES="security-agent-api.company.local" \
+TLS_SERVER_IPS="<server-ip>" \
+bash deploy/pki/generate_ca.sh
+
 docker compose up -d --build
 ```
 
@@ -66,8 +74,15 @@ docker compose exec dashboard python -m dashboard.create_user \
 docker compose ps
 ```
 
-Dashboard: http://<server-ip>:8080 (login: `.env`dagi DASHBOARD_USERNAME/PASSWORD)
-Agent API: http://<server-ip>:8443/api/v1/health
+Dashboard: **https://**<server-ip>:8843 (login: `.env`dagi DASHBOARD_USERNAME/PASSWORD)
+Agent API: **https://**<server-ip>:8443/api/v1/health
+
+(TLS reverse proxy - `nginx` xizmati - orqali, ichki CA bilan
+imzolangan sertifikat. Brauzer/`curl`'ga ishonish uchun
+`--cacert deploy/pki/certs/ca.crt` ishlating yoki CA'ni tizim
+ishonch do'koniga qo'shing - `docs_TLS_SETUP.md`ga qarang. Eski
+`agent_api`/`dashboard`ning o'z portlari, 8443/8080, endi faqat
+`127.0.0.1`da - LAN'dan to'g'ridan-to'g'ri erishib bo'lmaydi.)
 
 ## Suricata file-store'ni ulash
 

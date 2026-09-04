@@ -52,12 +52,24 @@ QUARANTINE_BACKEND = os.getenv("QUARANTINE_BACKEND", "unifi")
 # variantlar: "mikrotik" | "opnsense" | "linux_nftables"
 FIREWALL_BACKEND = os.getenv("FIREWALL_BACKEND", "mikrotik")
 
+# ---- Dashboard: qurilma "tarmoqqa ulangan/ulanmagan" holati ----
+# `Device.last_seen` (DHCP/DNS/Suricata trafigi, ARP/ICMP skanerlash yoki
+# UniFi sinxronizatsiyasidan yangilanadi) shu vaqtdan ko'proq eski bo'lsa,
+# qurilma Dashboard'da "Offlayn/Uzilgan" deb ko'rsatiladi. Standart 60
+# daqiqa - bu network_discovery scheduler'ning standart 1 soatlik
+# skanerlash intervaliga (`--interval 3600`) mos keladi.
+DEVICE_OFFLINE_THRESHOLD_MINUTES = int(os.getenv("DEVICE_OFFLINE_THRESHOLD_MINUTES", "60"))
+
 # ---- Endpoint Agent "online/offline" holati (Dashboard) ----
-# Agent har HEARTBEAT_INTERVAL_SECONDS (standart 5 daqiqa) da bir marta
-# "tirikman" xabarini yuboradi. Agar oxirgi heartbeat shu chegaradan
-# ko'proq vaqt oldin bo'lsa - Dashboard'da "offline" deb ko'rsatiladi.
-# Standart 15 daqiqa = ~3 heartbeat davri (bitta/ikkita ketma-ket
-# heartbeat yo'qolishi - masalan vaqtinchalik tarmoq uzilishi - jim
-# ravishda "offline" deb belgilab qo'ymasligi uchun bir oz zaxira bilan).
+# Bu YUQORIDAGI DEVICE_OFFLINE_THRESHOLD_MINUTES'dan FARQLI - o'sha
+# BARCHA qurilmalar (DHCP/DNS/Suricata/ARP/UniFi orqali ko'rilgan) uchun
+# "tarmoqqa ulanganmi" degan savolga javob beradi, bu esa FAQAT agent
+# o'rnatilgan qurilmalar uchun "Endpoint Agent hali ham xabar
+# yuboryaptimi" degan alohida, ko'proq real-vaqtli savolga javob
+# beradi (agent HEARTBEAT_INTERVAL_SECONDS, standart 5 daqiqada bir
+# marta "tirikman" xabarini yuboradi). Standart 15 daqiqa = ~3
+# heartbeat davri (bitta/ikkita ketma-ket heartbeat yo'qolishi -
+# masalan vaqtinchalik tarmoq uzilishi - jim ravishda "offline" deb
+# belgilab qo'ymasligi uchun bir oz zaxira bilan).
 AGENT_ONLINE_THRESHOLD_MINUTES = int(os.getenv("AGENT_ONLINE_THRESHOLD_MINUTES", "15"))
 

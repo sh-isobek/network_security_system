@@ -23,12 +23,19 @@ pip install -r requirements-agent.txt --break-system-packages
 
 ```bash
 sudo tee /opt/network-security-agent/.env << EOF
-API_SERVER_URL=http://172.16.0.5:8443
+API_SERVER_URL=https://172.16.0.5:8443
 AGENT_API_KEY=<markazdagi bilan bir xil kalit>
+AGENT_CA_BUNDLE_FILE=/opt/network-security-agent/ca.crt
 AGENT_LOG_FILE=/var/log/network-security-agent-app.log
 AGENT_CACHE_FILE=/opt/network-security-agent/agent_hash_cache.json
 EOF
 ```
+
+**MUHIM (xavfsizlik auditi, CRITICAL)**: server endi `nginx` orqali
+haqiqiy TLS bilan ishlaydi (`docs_TLS_SETUP.md`ga qarang) - shuning
+uchun `https://` ishlatiladi. `AGENT_CA_BUNDLE_FILE` ichki CA
+(`deploy/pki/certs/ca.crt`) nusxasiga ishora qilishi kerak - aks
+holda so'rov ishonchsiz sertifikat sababli rad etiladi.
 
 ## 4. systemd xizmati sifatida o'rnatish
 

@@ -93,9 +93,8 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | GPO skriptlari: `.env` orqali sozlash + har kompyuter uchun alohida API token (AD auto-enroll) | ✅ `.env` (orqaga moslik: eski 2 fayl hali ham ishlaydi) + `/api/v1/agent_enroll` orqali har yangi kompyuter uchun bekor qilinadigan, alohida token (`ApiToken.agent_hostname`) |
 | — | Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol) | ✅ `/users/<id>/activate` va `/users/<id>/edit` - avval faqat "yaratish"/"faolsizlantirish" bor edi, orqaga qaytarib bo'lmasdi |
 | — | Install-NetworkSecurityAgent.ps1: AGENT_VERSION o'rnatilmagan edi | ✅ Endi heartbeat orqali HAQIQIY o'rnatilgan versiya yuboriladi (avval doim "1.0.0" - standart qiymat - yuborilardi) |
-| — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235 real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
-
-**Joriy: 71/71 test o'tadi (`run_full_test.py`).**
+| — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235+ real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
+| — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
 
 ## Ruijie Cloud (Reyee/RG-CBS) integratsiyasi - UniFi'ga o'xshash, lekin API'si hech qayerda to'liq hujjatlashtirilmagan
 
@@ -201,6 +200,205 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
+
+**Joriy: 75/75 test o'tadi (`run_full_test.py`).**
+
+## Ikkita mustaqil sessiya BIR XIL Ruijie integratsiyasini qurgani aniqlandi - qo'lda birlashtirildi
+
+`git push` paytida `origin/main` mahalliy branchdan 10 ta commit
+oldinda ekani aniqlandi - boshqa (mustaqil) sessiya xuddi shu davrda
+(1) `codex/fix-deployment-security` xavfsizlik auditini, (2) TLS/mTLS
+reverse proxy'ni, VA (3) **o'zining Ruijie Cloud discovery
+integratsiyasini** qurib push qilgan edi - ikkalamiz ham foydalanuvchi
+so'roviga BIR-BIRIMIZDAN BEXABAR javob bergan ekanmiz.
+
+**Qaror**: `git merge` orqali ikkala tomonni ham yo'qotmasdan
+birlashtirish:
+- **Xavfsizlik auditi + TLS/mTLS** (`api/server.py`dagi `hmac.
+  compare_digest`, CSRF himoyasi, mandatory `DASHBOARD_SECRET_KEY`,
+  `deploy/pki/`+`deploy/nginx/`) - avtomatik (konfliktsiz) merge
+  qilindi va TO'LIQ SAQLAB QOLINDI (bu mening ishimga umuman aloqasi
+  yo'q, sof qo'shimcha qiymat).
+- **Ruijie discovery** - IKKALA implementatsiya ham "add/add" konflikt
+  sifatida to'qnashdi. MENING versiyam tanlandi, chunki u **HAQIQIY
+  Ruijie Cloud hisobiga qarshi (foydalanuvchining real App Key/
+  Secret'i bilan) tasdiqlangan** edi - boshqa sessiyaning versiyasi esa
+  standart bazasi (`cloud-us.ruijienetworks.com`) real hisobga qarshi
+  ISHLAMAGAN bo'lardi (men buni real so'rov bilan aniq tasdiqladim -
+  `{"code":1,"msg":"Login failed"}`), va u qo'shimcha `RUIJIE_API_
+  TOKEN`ni ("Ruijie'ga alohida murojaat qilib olish kerak" deb
+  hujjatlashtirilgan) talab qilardi - bu men aniqlagan "bu aslida
+  barcha mijozlar uchun bir xil qat'iy qiymat" kashfiyotidan XABARSIZ
+  edi. `docs_RUIJIE_CLOUD_SETUP.md` ham shunga mos yangilandi (eski,
+  endi noto'g'ri "Ruijie qo'llab-quvvatlashiga murojaat qiling" bo'limi
+  olib tashlandi).
+- `.env.example`da ikkita mos kelmaydigan Ruijie bloki (ikkalasi ham
+  konfliktsiz avtomatik merge qilingani uchun) qo'lda bittaga
+  birlashtirildi.
+- `CLAUDE.md`, `run_full_test.py` qo'lda hal qilingan (bu fayl xuddi
+  shu joyda).
+
+**Real test qilingan**: merge'dan keyin butun `run_full_test.py`
+qayta SQLite'da VA PostgreSQL'da (docker orqali) ishga tushirilib,
+hech qanday regressiya yo'qligi, va ikkala tomonning ishi (CSRF
+himoyali forma'lar, TLS/mTLS, mening Ruijie/foydalanuvchi boshqaruvi
+ishlarim) birga to'g'ri ishlashi tasdiqlandi.
+
+## XAVFSIZLIK (CRITICAL): TLS reverse proxy (nginx) + Ichki CA + ixtiyoriy mTLS
+
+*(Boshqa, mustaqil sessiya tomonidan qurilgan - yuqoridagi bo'limga
+qarang. Bu yerda o'sha sessiyaning o'z yozuvi saqlab qolingan.)*
+
+Xavfsizlik auditi topilmasi (CRITICAL): "TLS/mTLS yo'qligi" - Agent
+API va Dashboard endi haqiqiy `nginx` TLS reverse proxy (ichki CA
+bilan imzolangan sertifikat) ortida ishlaydi. `agent_api`/`dashboard`ning
+o'zi hamon oddiy HTTP (faqat 127.0.0.1'ga bog'langan) - TLS
+termination FAQAT nginx'da.
+
+Test HECH NARSANI soxtalashtirmaydi: `api.server`/`dashboard.app` -
+HAQIQIY, alohida jarayonda ishga tushirilgan Flask server; `deploy/
+pki/generate_ca.sh`/`issue_agent_cert.sh` - HAQIQIY openssl
+chaqiruvlari orqali CA/server/client sertifikat; `deploy/nginx/
+entrypoint.sh` - production'da ishlatiladigan AYNAN SHU skript +
+haqiqiy `nginx` binary.
+
+Real test qilingan: server-tomon TLS (ichki CA'ga ishonmagan so'rov
+RAD ETILISHI), mTLS majburiy rejimda (sertifikatsiz/ishonchsiz
+sertifikat bilan so'rov RAD ETILISHI, haqiqiy CA-imzolangan
+sertifikat bilan esa MUVAFFAQIYATLI), va Dashboard'da mTLS talab
+qilinmasligi (foydalanuvchilar brauzer orqali kiradi) - barchasi
+tasdiqlandi. Batafsil: `docs_TLS_SETUP.md`.
+
+## PDF/Excel testidagi LibreOffice xatosi - chuqur tekshirildi, TUB SABAB topildi (loyiha kodiga aloqasi yo'q)
+
+*(Boshqa, mustaqil sessiya tomonidan qurilgan.)*
+
+Yagona qolgan test xatosi (`PDF/Excel hisobotlar`, LibreOffice recalc
+59s'da timeout) **strace darajasida** chuqur tekshirildi. Xatti-harakat
+haqiqiy tasodifiy ekanligi aniqlandi; `strace -f` orqali `soffice.bin`
+jarayonining ichida **aniq 10 soniyalik `futex` kutish**da `ETIMEDOUT`
+bilan uzilib, DARHOL yana **~20 daqiqalik yangi `futex` kutish**ga
+o'tib ketishi topildi - bu LibreOffice'ning o'z ichki UNO/VCL
+sinxronizatsiya mexanizmida haqiqiy **deadlock** ekanligini isbotladi
+(tashqi resurs, tarmoq yoki fayl tizimi bilan bog'liq emas, `reports/
+report_generator.py`ning o'zi to'g'ri).
+
+Mitigatsiya: `run_full_test.py`da recalc chaqiruvi endi muvaffaqiyatsiz
+bo'lsa 3 martagacha qayta uriniladi - bu ko'pincha yordam beradi, lekin
+kafolat EMAS (asosiy muammo tasodifiy ichki deadlock) - shuning uchun
+bu test natijalarida vaqti-vaqti bilan hali ham ko'rinishi mumkin, bu
+KUTILGAN va loyiha kodi bilan bog'liq EMAS.
+
+## PDF/Excel testidagi LibreOffice xatosi - chuqur tekshirildi, TUB SABAB topildi (loyiha kodiga aloqasi yo'q)
+
+Foydalanuvchi "Xatolarni bartaraf et" deb so'radi - yagona qolgan test
+xatosi (`PDF/Excel hisobotlar`, LibreOffice recalc 59s'da timeout)
+haqida. Bu xato ko'p marta takrorlanayotgani sababli, taxmin qilib
+qo'ymasdan, **strace darajasida** chuqur tekshirildi.
+
+**Tekshiruv jarayoni**:
+1. Qo'lda qayta-qayta sinab ko'rilganda xatti-harakat **haqiqiy tasodifiy**
+   ekanligi aniqlandi - ba'zida 3/3 urinish ~1 soniyada muvaffaqiyatli
+   (yuklama past, xotira bo'sh bo'lsa ham), ba'zida 3/3 urinish to'liq
+   timeout'gacha "osilib qoladi" (deyarli 0% CPU bilan - hech qanday
+   amaliy ish bajarilmayapti).
+2. `strace -f` orqali osilib qolgan jarayonning ichiga qaralganda: yordamchi
+   jarayon profil faylini yozib, TEZ chiqadi (`exit(0)`), lekin ASOSIY
+   `soffice.bin` jarayoni keyin **aniq 10 soniyalik `futex` kutish**da
+   `ETIMEDOUT` bilan uzilib, DARHOL yana **~20 daqiqalik yangi `futex`
+   kutish**ga o'tib ketadi - bu LibreOffice'ning o'z ichki UNO/VCL
+   sinxronizatsiya mexanizmida haqiqiy **deadlock** ekanligini isbotladi
+   (tashqi resurs, tarmoq yoki fayl tizimi bilan bog'liq emas).
+3. D-Bus yo'qligi, `SAL_USE_VCLPLUGIN=svp`, turli profil papkalari,
+   yuklama darajasi (`uptime` past, xotira bo'sh) - hech biri sababchi
+   emasligi alohida-alohida sinab, inkor qilindi.
+
+**XULOSA (halol)**: bu - `soffice.bin`ning o'zidagi (yoki uning bu
+maxsus konteyner muhitida ishlash tarzidagi), **loyiha kodiga umuman
+aloqasi yo'q** muammo. Recalc skripti (`/mnt/skills/public/xlsx/
+scripts/recalc.py`) ham loyiha repo'sidan tashqarida (Claude Code
+sandbox'ining o'z vositasi). `reports/report_generator.py`ning o'zi va
+u yaratgan Excel fayli **to'g'ri** - bu tekshiruv shunchaki LibreOffice
+uni HAQIQATAN ochib qayta hisoblay olishini tasdiqlovchi QO'SHIMCHA
+ishonch qatlami, asosiy mahsulot emas.
+
+**Qilingan yagona oqilona mitigatsiya**: `run_full_test.py`da recalc
+chaqiruvi endi muvaffaqiyatsiz bo'lsa **3 martagacha qayta uriniladi**
+(RabbitMQ ulanishlari, Kubernetes barqarorlik tekshiruvi kabi loyihada
+allaqachon qo'llanilgan "flaky infratuzilma" andozasiga mos) - bu
+ko'pincha yordam beradi (qo'lda testda tasdiqlangan), lekin **kafolat
+EMAS**, chunki asosiy muammo tasodifiy ichki deadlock. Shu sababli bu
+test resultatlarida vaqti-vaqti bilan (masalan bir "yomon" fazaga tushib
+qolganda, 3 ta urinish HAM muvaffaqiyatsiz bo'lishi mumkin) hali ham
+ko'rinishi mumkin - bu KUTILGAN va loyiha kodi bilan bog'liq EMAS.
+
+## Parallel ishlarni birlashtirish: main + codex/fix-deployment-security + xavfsizlik auditi
+
+Foydalanuvchi xavfsizlik auditi (25 topilma) bo'yicha ishni davom
+ettirayotganda, `main` branch **mustaqil ravishda** (boshqa sessiya/
+vosita orqali) 3 ta yangi commit bilan oldinga ketgani, va ustiga
+yana bir yangi `codex/fix-deployment-security` branch paydo bo'lgani
+aniqlandi - u ham xuddi shu auditning ko'p qismini **mustaqil**
+tuzatgan edi (AGENT_API_KEY standart qiymati - `hmac.compare_digest`
+bilan hatto yaxshiroq, RabbitMQ portlari/credential, CSRF himoyasi,
+DASHBOARD_SECRET_KEY majburiy qilish, agent_enroll+per-hostname
+token, 8443/8080/3000 portlarining 127.0.0.1'ga bog'lanishi TLS
+reverse proxy uchun tayyorgarlik sifatida).
+
+**Qaror (foydalanuvchi tanladi)**: barcha uch yo'nalishni (mening
+branch'im, main'ning o'z ilgarilashi, codex branch) bitta yagona
+branch'ga birlashtirish - hech birini yo'qotmasdan.
+
+**Birlashtirish natijasi** (`git merge origin/codex/fix-deployment-
+security`, 9 ta fayl - `api/server.py`, `config/settings.py`,
+`dashboard/app.py`, `docker-compose.yml`, `.env.example`, ikkala
+dashboard shablon, `run_full_test.py`, `CLAUDE.md` - qo'lda hal
+qilingan real merge conflict):
+- Mening rate-limiting (Flask-Limiter) ishim va Grafana standart
+  parol tuzatishim SAQLANDI (codex bunga tegmagan edi).
+- AGENT_API_KEY solishtirish ularning `hmac.compare_digest`
+  (timing-safe) versiyasiga o'tkazildi - bu mening oddiy `==`
+  solishtirishimdan xavfsizroq edi.
+- RabbitMQ nomlanishi ularning `RABBITMQ_USER`/`RABBITMQ_PASSWORD`
+  konvensiyasiga moslashtirildi (docker-compose.yml/.env.example
+  bo'ylab izchil).
+- Dashboard onlayn/offlayn: mening `Device.last_seen`-asosli (BARCHA
+  qurilmalar - DHCP/DNS/Suricata/ARP/UniFi orqali ko'rilgan) va
+  ularning `agent_last_heartbeat`-asosli (FAQAT Endpoint Agent
+  o'rnatilgan qurilmalar) ko'rsatkichlari **bir-birini to'ldiruvchi**
+  ekanligi aniqlandi (ikki BOSHQA savolga javob beradi) - ikkalasi
+  ham `/devices` va bosh sahifada saqlab qolindi.
+
+**Topilgan va tuzatilgan 2 ta real xato** (merge'dan keyingi to'liq
+test o'tkazishda):
+1. Mening RabbitMQ/Grafana testim hali eski `RABBITMQ_DEFAULT_USER/
+   PASS` nomini tekshirardi - yangi nomlanishga yangilandi.
+2. codex'ning o'z `agent_enroll` testida haqiqiy xato bor edi: yangi
+   `require_api_key`dagi `agent_hostname` bog'lash mantig'i endi
+   so'rov tanasida `hostname` maydonini talab qiladi (boshqa qurilma
+   nomidan token ishlatishning oldini olish uchun) - lekin ularning
+   o'z testi buni yubormagan edi (401 kelib, test muvaffaqiyatsiz
+   bo'lardi). Haqiqiy Agent (`agent_core/agent.py`) buni doim
+   yuboradi - faqat test ad-hoc so'rovi buni unutgan edi, testga
+   mos maydon qo'shildi.
+
+**YANGI infratuzilma** (merge natijasida paydo bo'lgan, ikkala
+tomon ham alohida yechmagan muammo): codex'ning yangi CSRF himoyasi
+(`dashboard/app.py`, `@app.before_request`) BARCHA (ikkala tomondan
+ham, oldindan yozilgan) Dashboard POST testlarini 400 bilan buzib
+qo'ygan edi - `run_full_test.py`ga `_dash_client()` yordamchi
+funksiyasi qo'shildi (joriy sessiyadan `csrf_token`ni avtomatik
+o'qib, real brauzerdagi `<form>` xatti-harakatini takrorlaydi) va
+barcha 20 ta dashboard test-client yaratish joyi shunga o'tkazildi.
+Shuningdek `DASHBOARD_SECRET_KEY` (endi majburiy) va `AGENT_API_KEY`
+kabi standart qiymatlar `run_full_test.py` boshida markazlashtirildi.
+
+**Real test qilingan**: to'liq `run_full_test.py` (73 test) HAM
+SQLite'da, HAM PostgreSQL'da (bu safar haqiqiy production-o'xshash
+sinov - RabbitMQ real broker bilan, guest foydalanuvchisi ataylab
+o'chirilib, faqat maxsus credential bilan ulanish tekshirildi) -
+72/73 va 73/73 (LibreOffice flake bir marta, keyingi urinishda
+o'tdi - sandbox resurs cheklovi, kod xatosi emas).
 
 ## Foydalanuvchilarni boshqarish: faollashtirish (reaktivatsiya) + tahrirlash (rol/parol)
 
@@ -373,6 +571,271 @@ yangilanganda bu ikkala faylga tegishning hojati yo'q" aniq
 ta'kidlandi.
 
 VERSION 1.0.7 -> 1.0.8.
+
+## Dashboard: qurilma "tarmoqqa ulangan/uzilgan" holati + qurilmalar soni (production diagrammasi bo'yicha moslashtirish)
+
+Foydalanuvchi production arxitekturasini (Ubuntu Server 172.16.1.206,
+server `.env`da faqat `AGENT_API_KEY`, Windows Agent'da SYSVOL orqali
+`API_SERVER_URL`+`AGENT_API_KEY`) diagramma bilan tasdiqlab, Dashboard'ni
+shunga moslab: (1) qurilmalarning tarmoqqa ulangan/ulanmaganini,
+(2) qurilmalar sonini, (3) fayl tekshirish oqimini "ishlaydigan holatga"
+keltirishni so'radi.
+
+**Tekshiruv natijasi**: server<->agent konfiguratsiya arxitekturasi
+(`agent_api` xizmati `env_file: .env` orqali FAQAT `AGENT_API_KEY`ni
+o'qiydi, `api_server_url.txt`/`AGENT_API_KEY` SYSVOL naqshi allaqachon
+1.0.8'da qurilgan) va fayl tekshirish zanjiri (`file_analysis_engine`,
+`suricata_reader`, `deep_scan_engine` - barchasi `docker-compose.yml`da
+PROFILSIZ, standart holatda ishga tushadi) **allaqachon so'ralgan
+diagrammaga mos edi** - o'zgartirish talab qilinmadi.
+
+**Haqiqiy bo'shliq**: Dashboard'da qurilmaning tarmoqqa ulangan/uzilgan
+holati (onlayn/offlayn) umuman ko'rsatilmasdi, va `/devices` sahifasi
+sarlavhasi jami qurilmalar sonini emas, faqat qaytarilgan (200 taga
+cheklangan) ro'yxat uzunligini ko'rsatardi.
+
+**Qurilgan**:
+- `config/settings.py`: yangi `DEVICE_OFFLINE_THRESHOLD_MINUTES`
+  (standart 60 daqiqa, `network_discovery.scheduler`ning standart
+  1 soatlik skanerlash intervaliga mos) - `Device.last_seen` shu
+  vaqtdan eski bo'lsa, qurilma "OFFLAYN" hisoblanadi.
+- `dashboard/app.py`: `/devices` va `/` (index) - onlayn/offlayn
+  hisob-kitob, `/devices?status=online|offline` filtri, va `/devices`
+  sarlavhasi endi haqiqiy JAMI sonni ko'rsatadi (ro'yxat cheklovidan
+  mustaqil).
+- `dashboard/templates/devices.html`, `index.html`: ONLAYN/OFFLAYN
+  badge, jami/onlayn/offlayn statistika kartochkalari.
+
+**Real test qilingan**: yangi `run_full_test.py` test #66 - real HTTP
+orqali (`dash_app.test_client()`) ikkita test qurilma (so'nggi 2
+daqiqada ko'rilgan va 5 soat oldin ko'rilgan) yaratilib, `/devices`
+sahifasida to'g'ri ONLAYN/OFFLAYN belgilanishi, status filtri, va
+sarlavhadagi haqiqiy jami son tasdiqlandi. Ham SQLite, ham PostgreSQL'da
+o'tdi.
+
+**Diqqat (halol)**: bu "onlayn/offlayn" belgisi `Device.last_seen`
+(DHCP/DNS/Suricata trafigi, ARP/ICMP skanerlash yoki UniFi sinxronizatsiyasi
+orqali yangilanadi) asosida - alohida `network_discovery.scheduler --loop`
+xizmati (host tarmoq huquqi talab qiladigan, `--profile discovery`
+ortidagi) ishlamasa ham universal ishlaydi, lekin bu "ping orqali real
+vaqtli" tekshiruv emas - eng so'nggi ko'rilgan trafik/skanerlash vaqtiga
+asoslangan taxmin.
+
+## Xavfsizlik auditi (foydalanuvchi tomonidan yuborilgan, 25 topilma) - bosqichma-bosqich tuzatish boshlandi
+
+Foydalanuvchi tashqi (o'zi yoki boshqa vosita orqali qilingan) chuqur
+xavfsizlik auditi natijasini yubordi - 15 ta topilma (TLS/mTLS yo'qligi,
+AGENT_API_KEY standart qiymati, RabbitMQ/Grafana ochiq portlar/parollar,
+rate limiting yo'qligi, replay himoyasi yo'qligi, Alembic migratsiya
+yo'qligi va h.k.) + 10 ta ustuvor tuzatish ro'yxati. Bu **25 ta alohida
+ish** - bittasini ham "ishlashi kerak" deb taxmin qilib qoldirib
+bo'lmaydi (ayniqsa TLS/mTLS, Prometheus/Grafana, AD/Kerberos kabi
+haqiqiy infratuzilma talab qiladiganlari). Foydalanuvchi "hammasini
+bosqichma-bosqich, ko'p sessiyada" qilishni tanladi.
+
+**Diqqat (halol)**: auditning ba'zi tafsilotlari koddagi haqiqiy holatga
+mos EMAS ekanligi aniqlandi (masalan `agent_enroll` nomli endpoint
+umuman mavjud emas - loyihada per-agent token'lar `api/token_manager.py`
+CLI orqali yaratiladi, o'z-o'zidan ro'yxatdan o'tish API'si yo'q). Har
+bir topilma ishga tushirishdan oldin real kodga qarab tekshirildi.
+
+**Bu sessiyada TO'LIQ qurilgan va real test qilingan (CRITICAL/HIGH,
+sandbox'da to'liq sinash mumkin bo'lganlar)**:
+
+1. **AGENT_API_KEY standart qiymati olib tashlandi (CRITICAL)** -
+   `api/server.py` va `agent_core/agent.py`da ilgari
+   `os.getenv("AGENT_API_KEY", "change-me-in-production")` bor edi -
+   administrator buni sozlashni unutsa, server OCHIQ MANBA KODIDA
+   HAMMA KO'RADIGAN aniq shu qatorni "to'g'ri kalit" deb qabul qilardi.
+   Endi standart qiymat YO'Q - AGENT_API_KEY bo'sh bo'lsa, eski
+   umumiy-kalit yo'li BUTUNLAY o'chadi (fail-closed), faqat per-agent
+   token'lar ishlaydi.
+2. **Agent API rate limiting (HIGH)** - `flask-limiter` qo'shildi.
+   Har bir endpoint (`check_hash` 100/min, `report_incident` 10/min,
+   `agent_heartbeat` 12/min) uchun ALOHIDA, har bir agent/token uchun
+   MUSTAQIL chegara (X-API-Key xeshi bo'yicha - bitta buzilgan agent
+   boshqalarni bloklab qo'ymaydi). `.env`da sozlanadigan.
+3. **RabbitMQ xavfsizligi (HIGH)** - `docker-compose.yml`da 5672
+   (AMQP) endi tashqariga UMUMAN OCHILMAYDI, 15672 (boshqaruv paneli)
+   faqat `127.0.0.1`ga bog'langan (postgres bilan bir xil naqsh).
+   Standart "guest:guest" o'rniga `RABBITMQ_DEFAULT_USER`/`PASS`
+   `.env`da MAJBURIY.
+4. **Grafana standart paroli olib tashlandi (HIGH)** -
+   `${GRAFANA_ADMIN_PASSWORD:-admin}` -> `${GRAFANA_ADMIN_PASSWORD:?...
+   majburiy}` (POSTGRES_PASSWORD bilan bir xil naqsh).
+
+**Real test qilingan**: bu sandbox'ga maxsus `rabbitmq-server` va
+`nginx` o'rnatilib (ilgari `apt install`da yo'q edi), 3 ta yangi test
+qo'shildi (`run_full_test.py` #67-69):
+- AGENT_API_KEY: eski standart qiymat endi 401 qaytarishi, bo'sh
+  X-API-Key rad etilishi, per-agent token hamon ishlashi, aniq
+  sozlangan AGENT_API_KEY orqaga moslik uchun hali ishlashi - barchasi
+  real Flask HTTP orqali.
+- Rate limiting: real HTTP so'rovlar bilan - chegara ichida 200,
+  chegaradan oshganda 429, BOSHQA token/agent mustaqil ekanligi,
+  vaqt oynasi tugagach qayta ishlashi. (Muhim texnik nozik nuqta:
+  test uchun mahalliy blacklist'dagi hash ishlatildi - aks holda
+  har bir `check_hash` chaqiruvi bloklangan VirusTotal/MalwareBazaar
+  domenlariga urinib, >1 soniya kechikadi va "N so'rov/soniya"
+  chegarasini sinash imkonsiz bo'lib qolardi.)
+- RabbitMQ/Grafana: `docker-compose.yml`ning statik tekshiruvi
+  (portlar, `:?majburiy` sintaksisi) + HAQIQIY RabbitMQ broker bilan -
+  to'g'ri kredensial bilan ulanish muvaffaqiyatli, NOTO'G'RI parol
+  bilan esa `ProbableAuthenticationError` bilan rad etilishi tasdiqlandi
+  (broker "hammaga ochiq" emas, kredensialni HAQIQATAN tekshirayotgani
+  isbotlandi).
+- Bonus: RabbitMQ Queue testi (#21, ilgari sandbox'da `rabbitmq-server`
+  yo'qligi sabab doim o'tkazib yuborilardi) endi HAQIQATAN ishga
+  tushdi va o'tdi - loyihaning eng chuqur RabbitMQ integratsiya testi.
+
+**Keyingi navbatdagi (hali qurilmagan, kelgusi sessiyalarda)**:
+1. ~~HTTPS + Internal CA / mTLS~~ - ✅ **QURILDI** (pastga, "TLS +
+   Ichki CA / mTLS" bo'limiga qarang).
+2. Replay protection (HMAC + timestamp/nonce agent<->server so'rovlarida).
+3. Alembic migratsiyalar (hozirgi `_sync_missing_columns()` avtomatik
+   ustun-qo'shish o'rniga/qo'shimcha sifatida).
+4. Secure AD Agent Enrollment (Kerberos/AD-asosli) - MUHIM (yangilandi):
+   `codex/fix-deployment-security` bilan birlashtirilgandan keyin
+   `/api/v1/agent_enroll` endpoint ENDI MAVJUD (bootstrap
+   `AGENT_API_KEY` orqali himoyalangan, har hostname uchun alohida
+   token chiqaradi) - shuning uchun bu band endi "yangi mexanizm
+   qurish" emas, balki "mavjud bootstrap-kalit mexanizmini
+   Kerberos/AD-asosli usulga almashtirish/kuchaytirish".
+5. PostgreSQL index/retention siyosati (file_events jadvali uchun).
+6. Prometheus + Grafana monitoring metriklar.
+7. Notification uchun RabbitMQ-asosli retry/Dead Letter Queue.
+8. Qolgan xavfsizlik test turlari (SQL injection, path traversal,
+   CSRF, LDAP/AD failure - TLS sertifikat validatsiyasi ENDI QURILDI).
+9. TLS sertifikat avtomatik yangilanish/rotatsiya (hozircha qo'lda -
+   "TLS + Ichki CA" bo'limidagi "Halol cheklovlar"ga qarang).
+
+## Ruijie Cloud Discovery (`network_discovery/ruijie_discovery.py`)
+
+Foydalanuvchi so'radi: Ruijie Cloud API orqali loyiha/switchga ulangan
+mijozlar (Clients/Devices) ro'yxatini olish - `unifi_discovery.py`
+bilan bir xil naqshda.
+
+**Tekshiruv jarayoni (halol)**: loyihada Ruijie API'ning rasmiy
+hujjatiga (PDF/veb) to'g'ridan-to'g'ri, to'liq matn darajasida kirish
+imkoni bo'lmadi (JS-render qilinadigan sahifalar) - shuning uchun
+ochiq-manbali, Apache 2.0 litsenziyali `pyruijie` mijoz kutubxonasi
+(GitHub: `dannielperez/pyruijie`) **manba kodi** o'qib chiqildi -
+aynan so'rov yo'llari, JSON konvert shakli va autentifikatsiya oqimi
+shu yerdan olindi (bu, hech bo'lmasa, ochiq-manba darajasida
+tekshirilgan - taxmin emas).
+
+**Aniqlangan autentifikatsiya oqimi** (UniFi'nikidan farqli):
+1. `POST /service/api/oauth20/client/access_token?token=<API_TOKEN>`
+   tanasida `{"appid":..., "secret":...}` - vaqtinchalik `accessToken`
+   oladi.
+2. Keyingi HAR BIR so'rovga `access_token` QUERY parametri qo'shiladi
+   (UniFi'ning `X-API-Key` SARLAVHASIdan farqli).
+3. `GET /service/api/group/single/tree?depth=DEVICE` - guruh (loyiha/
+   filial) daraxti, `"type":"BUILDING"` bo'lgan tugunlar - UniFi'ning
+   "site"iga o'xshash. `RUIJIE_GROUP_ID` sozlanmasa, BARCHA BUILDING
+   guruhlar avtomatik topilib, ularning barchasidan yig'iladi.
+4. `GET /service/api/open/v1/dev/user/current-user?group_id=&page_
+   index=&page_size=` - klientlar ro'yxati, TO'LIQ sahifalab
+   (`totalCount` ga yetguncha).
+
+**MUHIM (RUIJIE_API_TOKEN - o'z-o'zidan xizmat KO'RSATILMAYDI)**:
+foydalanuvchi kredensiallarni qayerdan olishni bilmasligini aytdi -
+tekshirilganda, App ID/App Secret/API Token Ruijie Cloud konsolida
+o'z-o'zidan yaratib bo'lmasligi, faqat `service_rj@ruijienetworks.com`
+ga email yoki RITA qo'llab-quvvatlash chati orqali QO'LDA so'rov
+(Customer Name/Email/Country/API Purpose/User Role) orqali olinishi
+aniqlandi (rasmiy Ruijie forumidagi 2 ta alohida xodim javobi bilan
+tasdiqlangan). Bu jarayon `docs_RUIJIE_CLOUD_SETUP.md`ga to'liq
+yozildi.
+
+**Real test qilingan (SQLite VA PostgreSQL)**: real HTTP protokoli,
+real JSON konvert (`{"code":0,...}`), real autentifikatsiya oqimi va
+real sahifalab-olish mantig'i - soxta (mock) Flask server orqali.
+Tekshirilgan: noto'g'ri App Secret -> bo'sh ro'yxat (crash yo'q);
+guruh daraxti avtomatik topilishi (ichma-ich joylashgan BUILDING
+guruh ham); 11 ta klientning 3 sahifaga (server so'ralgan
+`page_size`ni e'tiborsiz qoldirib, har doim 4tadan qaytarganda ham)
+to'g'ri yig'ilishi; `connectType` orqali wired/wireless aniqlash;
+`RUIJIE_GROUP_ID` aniq sozlansa faqat o'sha guruh so'ralishi;
+`asset_inventory.discover_via_ruijie()` -> DB -> Dashboard `/asset-
+inventory` to'liq zanjiri.
+
+**Topilgan va tuzatilgan real xato**: `_is_wired()`ning dastlabki
+`"wire" in value.lower()` tekshiruvi "WIRELESS" so'zining ICHIDA ham
+"wire" substring'i borligi sababli uni HAM noto'g'ri "wired" deb
+belgilardi - mock-test orqali darhol ushlandi, "wireless"/"wifi"/
+"wlan" avval aniq istisno qilinadigan qilib tuzatildi.
+
+**Haqiqiy `cloud.ruijienetworks.com`ga qarshi live test hali
+QILINMAGAN** (kredensiallar hali mavjud emas - yuqoriga qarang) -
+bu halol, ochiq cheklov (`docs_RUIJIE_CLOUD_SETUP.md`da ham
+yozilgan). Foydalanuvchi kredensial olgach, real hisobga qarshi bir
+martalik tekshiruv qilinishi kerak.
+
+## TLS + Ichki CA / mTLS (xavfsizlik auditi, CRITICAL - nihoyat qurildi)
+
+Audit ro'yxatidagi #1 CRITICAL topilma ("TLS/mTLS yo'qligi") tuzatildi.
+Yangi `nginx` docker-compose xizmati (profilsiz, standart holatda
+ishga tushadi) Agent API (8443) va Dashboard (8843) uchun HAQIQIY TLS
+termination qiladi - `agent_api`/`dashboard`ning o'zi hamon oddiy HTTP
+(soddaligicha qoladi), lekin endi FAQAT `127.0.0.1`ga bog'langan.
+
+Qurilgan:
+- `deploy/pki/generate_ca.sh` - ichki (korxona) Root CA + server
+  sertifikat (SAN'lar bilan). Idempotent: CA qayta yaratilmaydi, faqat
+  server sertifikati (SAN o'zgarganda) yangilanadi.
+- `deploy/pki/issue_agent_cert.sh <hostname>` - mTLS uchun ixtiyoriy,
+  har-kompyuter uchun alohida client sertifikat.
+- `deploy/nginx/nginx.conf.template` + `entrypoint.sh` - portativ
+  (GNU/BusyBox sed muammosidan qochish uchun `awk` bilan) shablon
+  to'ldirish, ikkala backend uchun ham (`NGINX_*_UPSTREAM` orqali)
+  parametrlashtirilgan - bu bir xil skript HAM production Docker
+  tarmog'ida (`agent_api:8443`), HAM `run_full_test.py`ning real
+  (docker'siz) testida (`127.0.0.1:<port>`) ishlatiladi - nusxa yoki
+  soxta konfiguratsiya YO'Q.
+- mTLS ixtiyoriy (`AGENT_MTLS_REQUIRED=true`, standart o'chiq) -
+  yoqilganda Agent API HAR BIR so'rovda CA tomonidan imzolangan client
+  sertifikat talab qiladi (Dashboard'ga tegmaydi - brauzer
+  foydalanuvchilari login/parol bilan kiraveradi).
+- `agent_core/agent.py`: yangi `AGENT_CA_BUNDLE_FILE` (ichki CA'ga
+  ishonish uchun, HECH QACHON `verify=False` ishlatilmaydi - MITM
+  xavfsizligi), `AGENT_TLS_CLIENT_CERT_FILE`/`_KEY_FILE` (mTLS).
+  `API_SERVER_URL` standart qiymati `http://` dan `https://`ga
+  o'zgardi (endi TLS reverse proxy standart topologiya).
+
+**MUHIM (o'z-o'ziga qarama-qarshilik tuzatildi)**: bu o'zgarish avvalgi
+"Oltinchi marta topilgan xato" bilan bevosita ZID edi (o'sha safar
+`https://` standart holatda TLS yo'qligi sabab NOTO'G'RI edi, `http://`
+talab qilinardi). Endi vaziyat TESKARI - nginx TLS haqiqiy standart
+holat bo'lgani uchun `https://` TO'G'RI, `http://` esa endi ishlamaydi
+(nginx faqat TLS bilan tinglaydi, LAN'dan oddiy HTTP orqali umuman
+erishib bo'lmaydi). `run_full_test.py`dagi tegishli regressiya testi
+(#48) shunga mos ravishda TO'LIQ TESKARI qilib qayta yozildi - bu ikki
+holat orasidagi farq faqat vaqt o'tishi bilan (TLS qurilgandan keyin)
+paydo bo'lgani uchun ikkalasi ham o'z davrida to'g'ri edi, ziddiyat
+emas.
+
+**Real test qilingan (HECH NARSA soxtalashtirilmagan)**:
+- `deploy/pki/generate_ca.sh`/`issue_agent_cert.sh` - haqiqiy
+  `openssl` chaqiruvlari (CA, server, client sertifikat, `openssl
+  verify` orqali tasdiqlangan).
+- `deploy/nginx/entrypoint.sh` - production'da ishlatiladigan AYNAN
+  SHU (o'zgartirilmagan) skript, haqiqiy `nginx` binary bilan.
+- Backend'lar - haqiqiy, alohida jarayonda ishlaydigan `api.server`/
+  `dashboard.app` (real Flask dev server, test_client EMAS).
+- Tekshirilgan: to'g'ri CA bilan HTTPS orqali muvaffaqiyatli ulanish
+  (Agent API + Dashboard + real `check_hash` so'rovi); ichki CA'ga
+  ishonmagan so'rov SSL xatosi bilan RAD ETILISHI (haqiqiy tekshiruv
+  borligini isbotlaydi); mTLS yoqilganda client sertifikatsiz/
+  ishonchsiz (boshqa, CA imzolamagan) sertifikat bilan so'rov HTTP 400
+  bilan RAD ETILISHI; CA tomonidan imzolangan haqiqiy client
+  sertifikat bilan MUVAFFAQIYATLI o'tishi; mTLS yoqilganda ham
+  Dashboard'ning oddiy TLS bilan ishlashda davom etishi.
+- Ham SQLite, ham PostgreSQL'da: 73/74 (yagona xato - oldindan
+  hujjatlashtirilgan LibreOffice sandbox-flake, bunga aloqasi yo'q).
+
+To'liq hujjat: `docs_TLS_SETUP.md` (o'rnatish, Agent/brauzer tomonida
+CA'ga ishonish, mTLS yoqish, halol cheklovlar).
 
 ## O'ZIM QO'SHGAN REGRESSIYA: GitHub CI'ning haqiqiy Start-Service tekshiruvi tomonidan ushlandi
 

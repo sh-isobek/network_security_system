@@ -42,9 +42,21 @@ services:
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     restart: unless-stopped
+    environment:
+      # XAVFSIZLIK: standart RabbitMQ o'zi bilan keladigan "guest:guest"
+      # foydalanuvchisi FAQAT localhost'dan kirishga ruxsat beradi -
+      # lekin biz pastda 15672'ni tashqariga ochganimiz sabab (admin panel
+      # kerak), "guest" hech qachon yetarli emas edi. Endi .env'da
+      # majburiy, kuchli login/parol talab qilinadi.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER .env faylida majburiy}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD .env faylida majburiy}
     ports:
-      - "5672:5672"    # AMQP protokoli
-      - "15672:15672"  # Web boshqaruv paneli (http://localhost:15672)
+      # XAVFSIZLIK: 5672 (AMQP) endi TASHQARIGA UMUMAN OCHILMAYDI - faqat
+      # Docker'ning ichki tarmog'idagi boshqa xizmatlar (`rabbitmq:5672`
+      # nomi orqali) unga ulanadi, host portiga ehtiyoj yo'q. 15672
+      # (Web boshqaruv paneli) esa faqat 127.0.0.1'ga bog'langan - LAN'ga
+      # OCHIQ EMAS (kerak bo'lsa admin SSH tunnel/VPN orqali kiradi).
+      - "127.0.0.1:15672:15672"  # faqat lokal admin panel
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
       interval: 10s
@@ -60,7 +72,10 @@ services:
     command: python -m collectors.syslog_server_queued
     env_file: .env
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+      # XAVFSIZLIK: standart "guest:guest" o'rniga rabbitmq xizmatiga
+      # sozlangan haqiqiy login/parol ishlatiladi (yuqoridagi RABBITMQ_
+      # USER/PASSWORD bilan bir xil).
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?RABBITMQ_USER .env faylida majburiy}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD .env faylida majburiy}@rabbitmq:5672/%2F
     ports:
       - "515:5140/udp"  # standart syslog_collector bilan bir vaqtda sinash uchun boshqa port
     profiles: ["queue"]  # standart holatda ishga tushmaydi: docker compose --profile queue up
@@ -75,7 +90,10 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+      # XAVFSIZLIK: standart "guest:guest" o'rniga rabbitmq xizmatiga
+      # sozlangan haqiqiy login/parol ishlatiladi (yuqoridagi RABBITMQ_
+      # USER/PASSWORD bilan bir xil).
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?RABBITMQ_USER .env faylida majburiy}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD .env faylida majburiy}@rabbitmq:5672/%2F
     profiles: ["queue"]
     depends_on:
       postgres:
@@ -207,7 +225,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"  # TLS reverse proxy orqali e'lon qilinadi
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,10 +269,44 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"  # TLS reverse proxy orqali e'lon qilinadi
     depends_on:
       postgres:
         condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # TLS reverse proxy (xavfsizlik auditi - CRITICAL: HTTPS + Internal CA)
+  # ---------------------------------------------------------------------
+  # agent_api va dashboard o'zlari oddiy HTTP orqali ishlaydi (yuqorida,
+  # faqat 127.0.0.1'ga bog'langan - LAN'ga OCHIQ EMAS). TLS termination
+  # FAQAT shu yerda, nginx'da bajariladi - haqiqiy tarmoq trafigi
+  # (Windows/Linux/Mac Agent'lar, Dashboard brauzerlari) endi HAR DOIM
+  # shifrlangan. Sertifikatlar `deploy/pki/generate_ca.sh` orqali
+  # yaratiladigan ichki CA bilan imzolanadi (docs_TLS_SETUP.md'ga qarang).
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./deploy/nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./deploy/nginx/entrypoint.sh:/entrypoint.sh:ro
+      - ./deploy/pki/certs:/etc/nginx/tls:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      NGINX_AGENT_API_PORT: "8443"
+      NGINX_DASHBOARD_PORT: "8843"
+      NGINX_TLS_CERT_FILE: /etc/nginx/tls/server.crt
+      NGINX_TLS_KEY_FILE: /etc/nginx/tls/server.key
+      NGINX_TLS_CA_FILE: /etc/nginx/tls/ca.crt
+      # XAVFSIZLIK (ixtiyoriy, standart o'chiq): "true" qilinsa, Agent
+      # API endi HAR BIR so'rovda CA tomonidan imzolangan client
+      # sertifikat (mTLS) talab qiladi - docs_TLS_SETUP.md'ga qarang.
+      AGENT_MTLS_REQUIRED: ${AGENT_MTLS_REQUIRED:-false}
+    ports:
+      - "8443:8443"   # Agent API (TLS) - LAN'ga OCHIQ (172.16.0.0/22)
+      - "8843:8843"   # Dashboard (TLS) - LAN'ga OCHIQ
+    depends_on:
+      - agent_api
+      - dashboard
 
   # ---------------------------------------------------------------------
   # Grafana (yangi TZ 12-bo'lim) - ixtiyoriy, --profile grafana orqali
@@ -264,9 +316,12 @@ services:
     restart: unless-stopped
     profiles: ["grafana"]
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # XAVFSIZLIK: standart qiymat ("admin") olib tashlandi - ilgari
+      # GRAFANA_ADMIN_PASSWORD .env'da sozlanmasa, Grafana taniqli
+      # admin/admin login bilan ochiq qolardi. Endi .env'da majburiy.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD .env faylida majburiy}
       GF_INSTALL_PLUGINS: ""
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -340,7 +395,7 @@ services:
       # orqali topilmaydi (Docker DNS ishlamaydi) - shuning uchun
       # PostgreSQL'ning HOST'DAGI ochiq portiga (masalan 127.0.0.1 yoki
       # host'ning haqiqiy IP'siga) to'g'ridan-to'g'ri ulanish kerak.
-      # `postgres` xizmatining `ports:` bo'limida 5432:5432 ochiq
+      # `postgres` xizmatining `ports:` bo'limida 127.0.0.1:5432 ochiq
       # bo'lishini ta'minlang.
     depends_on:
       postgres:

@@ -30,7 +30,10 @@ from pika.exceptions import AMQPConnectionError
 logger = logging.getLogger("rabbitmq_client")
 logging.getLogger("pika").setLevel(logging.WARNING)  # pika juda ko'p so'zli INFO log beradi
 
-RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/%2F")
+# `guest` faqat brokerning localhost'idan ishlaydi va konteynerlararo
+# ulanishda muvaffaqiyatsiz bo'ladi. URL production'da majburiy Secret/.env
+# orqali beriladi.
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 RABBITMQ_RETRY_ATTEMPTS = int(os.getenv("RABBITMQ_RETRY_ATTEMPTS", "5"))
 RABBITMQ_RETRY_DELAY = float(os.getenv("RABBITMQ_RETRY_DELAY", "2"))
 
@@ -42,6 +45,9 @@ def get_connection() -> pika.BlockingConnection:
     bo'lmasligi mumkin - Docker Compose'da `depends_on` health-check
     bilan birga ishlatilishi kerak, lekin bu qo'shimcha himoya qatlami).
     """
+    if not RABBITMQ_URL:
+        raise RuntimeError("RABBITMQ_URL sozlanmagan; queue profili ishga tushirilmadi")
+
     last_exc = None
     for attempt in range(1, RABBITMQ_RETRY_ATTEMPTS + 1):
         try:
