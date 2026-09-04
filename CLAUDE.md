@@ -96,6 +96,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235+ real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
 | — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
 | — | Kerio Control parser - HAQIQIY log formatiga tuzatildi (`parsers/kerio_parser.py`, `network_discovery/dhcp_reader.py`) | ✅✅ Rasmiy Kerio hujjatlari orqali tasdiqlangan format bilan almashtirildi (avvalgi `SRC=...`/`DHCP: Lease granted...` Kerio'da UMUMAN mavjud emas edi) - `docs_KERIO_CONTROL_SETUP.md` |
+| — | `network_discovery` xizmati (ARP/ICMP/SNMP/LLDP) production'da ISHGA TUSHIRILDI | ✅✅ Dockerfile'da `arp-scan`/`nmap` yetishmagani topildi va qo'shildi - HAQIQIY LAN'da (172.16.0.0/22) tasdiqlandi: 261 ARP javob, 266 tirik host, 17 yangi qurilma DB'ga yozildi |
 
 ## Live Map bo'sh edi - TUB SABAB: Kerio Control parser HECH QACHON to'g'ri formatga mos kelmagan
 
@@ -153,6 +154,21 @@ uchun ekran skrinshotlarisiz, faqat matn ko'rsatmalari bilan).
 panelida Connection va Host loglari uchun syslog forwarding'ni yuqoridagi
 qo'llanmaga muvofiq yoqish - bu tashqi qurilma konfiguratsiyasi, bu
 yerdan bajarib bo'lmaydi.
+
+**Bonus - switch topologiyasi uchun `network_discovery` xizmati
+ishga tushirildi**: foydalanuvchi bilan kelishilib (`network_mode:
+host` + `NET_ADMIN`/`NET_RAW` - real LAN'ga faol ARP so'rov yuborish,
+oddiy servis ishga tushirishdan farqli, tasdiq so'ralishi kerak edi),
+`docker compose --profile discovery up -d network_discovery` bilan
+ishga tushirildi. Birinchi urinishda **yana bir real bo'shliq**
+topildi: Dockerfile'da `arp-scan`/`nmap` binary'lari o'rnatilmagan
+edi (faqat `snmp` bor edi) - `network_discovery/arp_scanner.py`/
+`tcp_scanner.py` bu kod yozilgandan buyon HECH QACHON haqiqiy Docker
+image'da ishlab ko'rilmagan ekan. Qo'shildi, qayta qurildi, HAQIQIY
+LAN'da (172.16.0.0/22) tasdiqlandi: 261 ARP javob, 266 tirik host,
+17 yangi qurilma DB'ga yozildi (har soatda avtomatik takrorlanadi).
+LLDP/CDP orqali switch-port topologiyasi (`topology_links` jadvali)
+hali bo'sh - bu alohida, kelajakdagi tekshiruv talab qiladi.
 
 ## Merge'dan keyingi ikki real production xatosi: LAN'dan Dashboard ochilmay qoldi, keyin login "ishlamay qoldi"
 
