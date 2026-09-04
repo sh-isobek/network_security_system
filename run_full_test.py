@@ -5225,6 +5225,72 @@ def _test_kerio_parser_real_format():
 check("Kerio Control parser - HAQIQIY (rasmiy hujjatlashtirilgan) log formatiga mos (real production xatosi tuzatilgan)", _test_kerio_parser_real_format)
 
 # ---------------------------------------------------------------------------
+print("\n=== 75) Kerio Control parser - HAQIQIY production log formatiga qarshi (rasmiy hujjat formatidan FARQLI, ikkinchi marta tuzatilgan) ===")
+
+
+def _test_kerio_parser_real_production_capture():
+    """
+    Foydalanuvchi Kerio Control'da "Log connections"ni yoqqandan keyin
+    ("tog'irladim"), Live Map hamon bo'sh qoldi. Production `raw_logs`
+    jadvalini to'g'ridan-to'g'ri tekshirganimda: Kerio HAQIQATAN
+    Connection loglarini yubormoqda edi (2822 ta yozuv!), lekin
+    `events` jadvali hali ham 0 edi.
+
+    IKKINCHI MARTA topilgan xato: oldingi tuzatish RASMIY Kerio
+    hujjatidagi 2013-yilgi namunaga (`TCP ip:port > hostname:port`)
+    asoslangan edi - lekin HAQIQIY, joriy production Kerio Control
+    BUTUNLAY BOSHQA formatda yozar ekan: manzil har doim
+    `hostname (ip):port` ko'rinishida (agar teskari DNS mavjud bo'lsa),
+    ajratuvchi esa `>` emas, `->` (chiziqcha bilan). Bu test aynan
+    production'dan olingan (o'zgartirilmagan) qatorlarga qarshi sinaydi.
+    """
+    from parsers.kerio_parser import KerioConnectionParser, KerioHostParser
+
+    conn = KerioConnectionParser()
+    host = KerioHostParser()
+
+    # --- Production'dan olingan HAQIQIY Connection log qatorlari ---
+    real_conn_lines = [
+        (
+            "[ID] 1831242 [Rule] Internet access (NAT) [Service] TCP 443 "
+            "[Connection] TCP sph-262.synergypharm.org (172.16.1.35):63579 -> "
+            "lr-in-f95.1e100.net (209.85.233.95):443 [Iface] WAN0_Uztelecom "
+            "[Duration] 31 sec [Bytes] 1458/9404/10862 [Packets] 8/10/18",
+            "172.16.1.35", "209.85.233.95", None, 443,
+        ),
+        (
+            # Destinationda teskari DNS nomi YO'Q (faqat IP) - shu holat ham to'g'ri ishlashi kerak
+            "[ID] 1826702 [Rule] Internet access (NAT) [Service] TCP 443 "
+            "[Connection] TCP a71-pol-zovatela-shirin.synergypharm.org (172.16.1.85):54514 -> "
+            "149.154.167.41:443 [Iface] WAN0_Uztelecom [Duration] 215 sec "
+            "[Bytes] 1098/906/2004 [Packets] 9/7/16",
+            "172.16.1.85", "149.154.167.41", None, 443,
+        ),
+    ]
+    for raw, exp_src, exp_dst_ip, exp_dst_domain, exp_port in real_conn_lines:
+        assert conn.can_parse(raw)
+        parsed = conn.parse(raw)
+        assert parsed is not None, f"HAQIQIY production Connection qatori parslanmadi: {raw}"
+        assert parsed["source_ip"] == exp_src
+        assert parsed["dest_ip"] == exp_dst_ip
+        assert parsed["dest_domain"] == exp_dst_domain
+        assert parsed["dest_port"] == exp_port
+        assert parsed["protocol"] == "TCP"
+
+    # --- Production'dan olingan HAQIQIY Host log qatori: [Hostname] YO'Q ---
+    # (faqat "IP address leased from DHCP" - MAC bor, Hostname yo'q)
+    real_host_no_hostname = "[IPv4] 172.16.1.132 [MAC] 02-59-62-cf-8d-7f - IP address leased from DHCP"
+    assert host.can_parse(real_host_no_hostname), "[Hostname]siz Host qatori ENDI ham tanilishi kerak"
+    parsed_h = host.parse(real_host_no_hostname)
+    assert parsed_h is not None
+    assert parsed_h["source_ip"] == "172.16.1.132"
+    assert parsed_h["mac_address"] == "02:59:62:CF:8D:7F"
+    assert parsed_h["hostname"] is None
+
+
+check("Kerio Control parser - HAQIQIY production log formatiga qarshi (ikkinchi marta tuzatilgan, real qatorlar bilan)", _test_kerio_parser_real_production_capture)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
