@@ -95,6 +95,64 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Install-NetworkSecurityAgent.ps1: AGENT_VERSION o'rnatilmagan edi | ✅ Endi heartbeat orqali HAQIQIY o'rnatilgan versiya yuboriladi (avval doim "1.0.0" - standart qiymat - yuborilardi) |
 | — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235+ real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
 | — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
+| — | Kerio Control parser - HAQIQIY log formatiga tuzatildi (`parsers/kerio_parser.py`, `network_discovery/dhcp_reader.py`) | ✅✅ Rasmiy Kerio hujjatlari orqali tasdiqlangan format bilan almashtirildi (avvalgi `SRC=...`/`DHCP: Lease granted...` Kerio'da UMUMAN mavjud emas edi) - `docs_KERIO_CONTROL_SETUP.md` |
+
+## Live Map bo'sh edi - TUB SABAB: Kerio Control parser HECH QACHON to'g'ri formatga mos kelmagan
+
+Foydalanuvchi "Live Network Map" funksiyasini "ishga tushirish" va
+switch/Kerio Control loglarini yig'ishni so'radi. Tekshirganda:
+`syslog_collector` konteyneri SOG'LOM ishlamoqda va Kerio Control
+(172.16.0.253, real production qurilma) HAQIQATAN log yuborayotgan
+edi - lekin `events`/`devices` jadvallari deyarli bo'sh (bor-yo'g'i
+4 ta `raw_logs` yozuvi, hammasi vaqti-vaqti bilan kelgan "DNS cache
+flushed" kabi administrativ xabarlar).
+
+**TUB SABAB (chuqur, ilgari hech qachon aniqlanmagan xato)**:
+`parsers/kerio_parser.py` (va uning aynan nusxasi `network_discovery/
+dhcp_reader.py`da) Kerio Control'ning HAQIQIY log formatiga emas,
+balki umumiy, taxminiy (ehtimol boshqa firewall/iptables uslubidan
+olingan) formatga qarab yozilgan edi:
+  - Noto'g'ri (hech qachon Kerio'da mavjud bo'lmagan): `SRC=172.16.1.45
+    DST=8.8.8.8 DPT=443 PROTO=TCP`, `DHCP: Lease granted to ... MAC=...
+    HOST=...`
+  - HAQIQIY (rasmiy Kerio Control hujjatlari - support.keriocontrol.
+    gfi.com, manuals.gfi.com - orqali tasdiqlangan): `[Connection] TCP
+    192.168.1.140:1193 > hit.google.com:80` (Connection log) va
+    `[IPv4] 10.10.30.81 [MAC] 00-0c-29-1d-cc-bd (Apple) [Hostname]
+    jsmith-cp` (Host log - MAC CHIZIQCHA bilan, ikki nuqta bilan EMAS).
+
+Bu shuni anglatadi: **hatto Kerio Control to'g'ri log kategoriyalarini
+(Connection, Host) syslog'ga yuborsa ham**, bu parser ularni HECH
+QACHON tanimasdi (`can_parse()` doim `False` qaytarardi) - bu xato
+loyihaning eng boshidan buyon, hech qachon haqiqiy Kerio Control
+qurilmasiga qarshi tasdiqlanmagan holda yashiringan edi.
+
+**Tuzatildi**: ikkala parser (`KerioConnectionParser`/`KerioHostParser`
+- eski `KerioDHCPParser` nomi orqaga moslik uchun alias sifatida
+saqlangan) rasmiy hujjatlardagi HAQIQIY formatga qayta yozildi.
+Destination manzil endi IP HAM, DNS nomi HAM bo'lishi mumkinligi
+(Kerio DNS keshida bo'lsa, IP o'rniga nom ko'rsatadi) to'g'ri
+ishlanadi (`dest_ip`/`dest_domain` orasida to'g'ri taqsimlanadi).
+
+**Real test qilingan**: rasmiy Kerio hujjatlaridan olingan, so'zma-
+so'z (o'zgartirilmagan) namuna qatorlarga qarshi (Connection - IP VA
+DNS-nomli destination bilan, Host - oddiy va IPv6-registratsiya
+variantlari bilan), HAM syslog-based parser (`parsers/kerio_parser.
+py`), HAM fayl-asosli reader (`network_discovery/dhcp_reader.py`)
+uchun. Eski (noto'g'ri) format endi ATAYLAB tanilmasligi ham
+tasdiqlandi (regressiya himoyasi).
+
+`docs_KERIO_CONTROL_SETUP.md` yaratildi - Kerio Control
+Administration'da Connection va Host loglarini syslog'ga yuborishni
+qanday yoqish kerakligi bosqichma-bosqich yozilgan (halol izoh: bu
+qo'llanma rasmiy Kerio hujjatlariga asoslangan, lekin haqiqiy Kerio
+Control admin paneliga kirish imkoni bu loyihada yo'q edi - shuning
+uchun ekran skrinshotlarisiz, faqat matn ko'rsatmalari bilan).
+
+**Hali kutilmoqda (foydalanuvchidan)**: Kerio Control Administration
+panelida Connection va Host loglari uchun syslog forwarding'ni yuqoridagi
+qo'llanmaga muvofiq yoqish - bu tashqi qurilma konfiguratsiyasi, bu
+yerdan bajarib bo'lmaydi.
 
 ## Merge'dan keyingi ikki real production xatosi: LAN'dan Dashboard ochilmay qoldi, keyin login "ishlamay qoldi"
 
@@ -248,9 +306,9 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
 
-**Joriy: 73/73 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
+**Joriy: 74/74 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
 Bu ishlab chiqilgan Docker image'da (git/pg_dump o'rnatilmagan, SMTP
-fixture'i boshqa muammoli) 71/73 (SQLite) va 70/73 (PostgreSQL) - ikkala
+fixture'i boshqa muammoli) 72/74 (SQLite) va 71/74 (PostgreSQL) - ikkala
 qolgan xato ham shu image'ga xos, kod xatosi EMAS (avval ham
 hujjatlashtirilgan holat).**
 

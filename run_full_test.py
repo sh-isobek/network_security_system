@@ -120,8 +120,8 @@ def _test_parser_pipeline():
     from db.models import RawLog
     s = get_session()
     logs = [
-        RawLog(source_ip="172.16.0.1", raw_message="DHCP: Lease granted to 172.16.1.45 MAC=AA:BB:CC:DD:EE:FF HOST=ACCOUNTING-PC"),
-        RawLog(source_ip="172.16.0.1", raw_message="<134>Jul 30 KERIO-GW Connection: SRC=172.16.1.45 DST=8.8.8.8 DPT=443 PROTO=TCP ACTION=Permit"),
+        RawLog(source_ip="172.16.0.1", raw_message="[18/Apr/2013 10:22:47] [IPv4] 172.16.1.45 [MAC] AA-BB-CC-DD-EE-FF (Test) [Hostname] ACCOUNTING-PC"),
+        RawLog(source_ip="172.16.0.1", raw_message="[18/Apr/2013 10:22:47] [ID] 613181 [Rule] NAT [Service] HTTPS [Connection] TCP 172.16.1.45:51234 > 8.8.8.8:443 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"),
         RawLog(source_ip="172.16.0.11", raw_message='{"EventID":256,"ClientIP":"172.16.2.5","QueryName":"malicious-test-domain.com","QueryType":"A"}'),
         RawLog(source_ip="172.16.0.11", raw_message='{"EventID":256,"ClientIP":"172.16.2.6","QueryName":"google.com","QueryType":"A"}'),
         RawLog(source_ip="172.16.0.99", raw_message="bu hech qanday parserga mos kelmaydigan xom matn"),
@@ -1370,7 +1370,7 @@ def _test_rabbitmq_queue():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         test_mac = "AA:BB:CC:DD:EE:99"
-        msg = f"DHCP: Lease granted to 172.16.9.199 MAC={test_mac} HOST=RABBITMQ-E2E-TEST"
+        msg = f"[04/Mar/2014 12:07:28] [IPv4] 172.16.9.199 [MAC] {test_mac.replace(':', '-')} (Test) [Hostname] RABBITMQ-E2E-TEST"
         sock.sendto(msg.encode(), ("127.0.0.1", 5140))
         _time.sleep(1)
 
@@ -1929,7 +1929,7 @@ def _test_discovery_offline_parts():
 
     kerio_path = os.path.join(work_dir, "kerio.log")
     with open(kerio_path, "w") as f:
-        f.write("DHCP: Lease granted to 172.16.5.20 MAC=BB:CC:DD:EE:FF:01 HOST=TEST-KERIO-PC\n")
+        f.write("[04/Mar/2014 12:07:28] [IPv4] 172.16.5.20 [MAC] BB-CC-DD-EE-FF-01 (Test) [Hostname] TEST-KERIO-PC\n")
 
     kerio_leases = parse_kerio_dhcp_log(kerio_path)
     assert len(kerio_leases) == 1
@@ -5134,6 +5134,95 @@ def _test_session_cookie_secure_toggle():
 
 
 check("SESSION_COOKIE_SECURE - http://da 'Secure' cookie muammosi (real production xatosi tuzatilgan)", _test_session_cookie_secure_toggle)
+
+# ---------------------------------------------------------------------------
+print("\n=== 74) Kerio Control parser - HAQIQIY log formatiga qarshi (real production xatosi tuzatilgan) ===")
+
+
+def _test_kerio_parser_real_format():
+    """
+    Foydalanuvchi Live Map bo'sh ekanini so'raganda, production
+    `syslog_collector` logini tekshirib chiqdim: Kerio Control HAQIQATAN
+    log yuborayotgan edi, lekin `events`/`devices` jadvallari deyarli
+    bo'sh qoldi. TUB SABAB: `parsers/kerio_parser.py` (va uning
+    nusxasi `network_discovery/dhcp_reader.py`) Kerio Control'ning
+    haqiqiy formatiga emas, balki umumiy taxminiy formatga
+    (`SRC=...DST=...`, `DHCP: Lease granted...`) qarab yozilgan edi -
+    bu format Kerio Control'da UMUMAN mavjud emas (rasmiy Kerio
+    hujjatlari orqali tasdiqlandi - `docs_KERIO_CONTROL_SETUP.md`).
+
+    Bu test parser'ni Kerio'ning RASMIY hujjatlaridan olingan, so'zma-
+    so'z (o'zgartirilmagan) namuna qatorlariga qarshi sinaydi.
+    """
+    from parsers.kerio_parser import KerioConnectionParser, KerioHostParser
+    from network_discovery.dhcp_reader import parse_kerio_dhcp_log
+
+    conn = KerioConnectionParser()
+    host = KerioHostParser()
+
+    # --- Rasmiy Kerio Control hujjatidagi Connection log namunasi ---
+    conn_line = (
+        "[18/Apr/2013 10:22:47] [ID] 613181 [Rule] NAT [Service] HTTP "
+        "[User] winston [Connection] TCP 192.168.1.140:1193 > hit.google.com:80 "
+        "[Duration] 121 sec [Bytes] 1575/1290/2865 [Packets] 5/9/14"
+    )
+    assert conn.can_parse(conn_line), "KerioConnectionParser HAQIQIY Connection log formatini tanimadi"
+    parsed = conn.parse(conn_line)
+    assert parsed is not None
+    assert parsed["source_ip"] == "192.168.1.140"
+    assert parsed["dest_domain"] == "hit.google.com", "DNS nomli manzil dest_domain'ga yozilishi kerak (dest_ip emas)"
+    assert parsed["dest_ip"] is None
+    assert parsed["dest_port"] == 80
+    assert parsed["protocol"] == "TCP"
+
+    # IP-manzilli variant ham to'g'ri ishlashi (dest_ip to'ldirilishi)
+    ip_conn_line = "[18/Apr/2013 10:22:47] [Connection] UDP 172.16.1.45:53210 > 8.8.8.8:53"
+    parsed_ip = conn.parse(ip_conn_line)
+    assert parsed_ip["dest_ip"] == "8.8.8.8"
+    assert parsed_ip["dest_domain"] is None
+
+    # --- Rasmiy Kerio Control hujjatidagi Host log namunasi (DHCP/host bog'lanishi) ---
+    host_line = "[04/Mar/2014 12:07:28] [IPv4] 10.10.30.81 [MAC] 00-0c-29-1d-cc-bd (Apple) [Hostname] jsmith-cp"
+    assert host.can_parse(host_line), "KerioHostParser HAQIQIY Host log formatini tanimadi"
+    parsed_host = host.parse(host_line)
+    assert parsed_host is not None
+    assert parsed_host["source_ip"] == "10.10.30.81"
+    assert parsed_host["mac_address"] == "00:0C:29:1D:CC:BD", "chiziqchali MAC (00-0c-...) to'g'ri o'qilib, ikki nuqtaliga aylantirilishi kerak"
+    assert parsed_host["hostname"] == "jsmith-cp"
+
+    # IPv6 registratsiya variantida ham (oraliqda [IPv6] bo'lsa) to'g'ri ishlashi
+    ipv6_line = (
+        "[04/Mar/2014 16:05:28] [IPv4] 10.10.30.81 "
+        "[IPv6] 2001:718:1803:3513:b4c6:82b3:e0f5:309e "
+        "[MAC] 00-0c-29-1d-cc-bd (Apple) [Hostname] jsmith-cp - "
+        "IPv6 address 2001:718:1803:3513:b4c6:82b3:e0f5:309e registered"
+    )
+    parsed_ipv6 = host.parse(ipv6_line)
+    assert parsed_ipv6["source_ip"] == "10.10.30.81"
+    assert parsed_ipv6["mac_address"] == "00:0C:29:1D:CC:BD"
+
+    # --- network_discovery/dhcp_reader.py'dagi fayl-asosli o'qish ham xuddi shu formatni tushunishi ---
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+        f.write(host_line + "\n")
+        tmp_path = f.name
+    try:
+        leases = parse_kerio_dhcp_log(tmp_path)
+        assert len(leases) == 1
+        assert leases[0].ip == "10.10.30.81"
+        assert leases[0].mac == "00:0C:29:1D:CC:BD"
+        assert leases[0].hostname == "jsmith-cp"
+    finally:
+        os.remove(tmp_path)
+
+    # --- Eski (noto'g'ri, endi mavjud bo'lmasligi kerak) format endi TANILMASLIGI ---
+    old_format_line = "<134>Jul 30 KERIO-GW Connection: SRC=172.16.1.45 DST=8.8.8.8 DPT=443 PROTO=TCP ACTION=Permit"
+    assert not conn.can_parse(old_format_line), (
+        "Eski (haqiqiy Kerio'da mavjud bo'lmagan) format endi ATAYLAB tanilmasligi kerak"
+    )
+
+
+check("Kerio Control parser - HAQIQIY (rasmiy hujjatlashtirilgan) log formatiga mos (real production xatosi tuzatilgan)", _test_kerio_parser_real_format)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

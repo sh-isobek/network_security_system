@@ -49,7 +49,7 @@ Boshqa terminalda test paketi yuboring:
 python3 -c "
 import socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-msg = b'<134>Jul 30 13:01:58 KERIO-GW Connection: SRC=172.16.1.45 DST=8.8.8.8 DPT=443 PROTO=TCP ACTION=Permit'
+msg = b'[30/Jul/2026 13:01:58] [Connection] TCP 172.16.1.45:51234 > 8.8.8.8:443'
 sock.sendto(msg, ('127.0.0.1', 5140))
 "
 ```

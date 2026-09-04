@@ -80,16 +80,23 @@ def _parse_isc_datetime(value: str) -> Optional[datetime]:
         return None
 
 
-# Kerio syslog formatidagi DHCP xabari (parsers/kerio_parser.py bilan bir xil)
+# Kerio Control Host log formatidagi IP/MAC/Hostname bog'lanishi
+# (parsers/kerio_parser.py'dagi bilan bir xil - rasmiy Kerio hujjatlari
+# orqali tasdiqlangan HAQIQIY format, avvalgi "DHCP: Lease granted..."
+# taxminiy format EMAS):
+#   [04/Mar/2014 12:07:28] [IPv4] 10.10.30.81 [MAC] 00-0c-29-1d-cc-bd
+#   (Apple) [Hostname] jsmith-cp
 _KERIO_DHCP_RE = re.compile(
-    r"DHCP:\s*Lease\s+granted\s+to\s+(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\s+"
-    r"MAC=(?P<mac>[0-9A-Fa-f:]{17})"
-    r"(?:\s+HOST=(?P<host>\S+))?"
+    r"\[IPv4\]\s+(?P<ip>\d{1,3}(?:\.\d{1,3}){3})\s+"
+    r"(?:\[IPv6\]\s+\S+\s+)?"
+    r"\[MAC\]\s+(?P<mac>[0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5})"
+    r"(?:\s*\([^)]*\))?"
+    r"\s+\[Hostname\]\s+(?P<host>\S+)"
 )
 
 
 def parse_kerio_dhcp_log(filepath: str) -> List[DhcpLease]:
-    """Kerio Control'dan eksport qilingan/syslog orqali yozilgan DHCP loglarini o'qiydi."""
+    """Kerio Control'dan eksport qilingan/syslog orqali yozilgan Host loglarini o'qiydi."""
     try:
         with open(filepath, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
@@ -103,7 +110,7 @@ def parse_kerio_dhcp_log(filepath: str) -> List[DhcpLease]:
         if m:
             leases_by_ip[m.group("ip")] = DhcpLease(
                 ip=m.group("ip"),
-                mac=m.group("mac").upper(),
+                mac=m.group("mac").upper().replace("-", ":"),
                 hostname=m.group("host"),
                 source="kerio",
             )
