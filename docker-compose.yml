@@ -225,7 +225,12 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
     ports:
-      - "127.0.0.1:8443:8443"  # TLS reverse proxy orqali e'lon qilinadi
+      # Standart: LAN'ga to'g'ridan-to'g'ri ochiq (0.0.0.0) - `nginx` TLS
+      # proxy hali production'da ATAYLAB ishga tushirilmagan (sertifikat
+      # yo'q, mavjud agentlar hamon oddiy HTTP orqali ulanadi). TLS'ga
+      # o'tishga tayyor bo'lganingizda (`docs_TLS_SETUP.md`), `.env`ga
+      # `AGENT_API_HOST_IP=127.0.0.1` qo'shing va `nginx`ni ishga tushiring.
+      - "${AGENT_API_HOST_IP:-0.0.0.0}:8443:8443"
     depends_on:
       postgres:
         condition: service_healthy
@@ -269,7 +274,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
     ports:
-      - "127.0.0.1:8080:8080"  # TLS reverse proxy orqali e'lon qilinadi
+      # Standart: LAN'ga to'g'ridan-to'g'ri ochiq (0.0.0.0) - `nginx` TLS
+      # proxy hali production'da ATAYLAB ishga tushirilmagan. TLS'ga
+      # o'tishga tayyor bo'lganingizda (`docs_TLS_SETUP.md`), `.env`ga
+      # `DASHBOARD_HOST_IP=127.0.0.1` qo'shing va `nginx`ni ishga tushiring.
+      - "${DASHBOARD_HOST_IP:-0.0.0.0}:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

@@ -96,6 +96,53 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Ruijie Cloud (Reyee/RG-CBS) discovery (`network_discovery/ruijie_discovery.py`) | ✅✅ HAQIQIY Ruijie Cloud serveriga qarshi (foydalanuvchining real AppKey/AppSecret'i bilan) tasdiqlangan - 3 filial, 7 qurilma, 235+ real klient. Faqat o'qish - bloklash API'si hali ochiq hujjatlashtirilmagan |
 | — | TLS + Ichki CA / mTLS (`deploy/pki/`, `deploy/nginx/`) | ✅✅ Xavfsizlik auditi CRITICAL topilmasi. Haqiqiy `nginx` + `openssl` + real Flask backend jarayonlar bilan to'liq test qilingan (server-tomon TLS VA ixtiyoriy mTLS, ham SQLite ham PostgreSQL'da) - `docs_TLS_SETUP.md` |
 
+## Merge'dan keyingi ikki real production xatosi: LAN'dan Dashboard ochilmay qoldi, keyin login "ishlamay qoldi"
+
+Xavfsizlik audit/TLS merge'idan keyin production'ga joylashtirilgach,
+foydalanuvchi ketma-ket ikkita real muammoni xabar qildi - ikkalasi
+ham `run_full_test.py`da (Flask `test_client()` - real brauzer emas)
+KO'RINMAYDIGAN, faqat haqiqiy brauzer/tarmoq bilan ochiladigan turdagi
+xato edi.
+
+**1) Dashboard `http://172.16.1.206:8080` orqali umuman ochilmay qoldi**:
+TLS ishi `dashboard`/`agent_api` docker-compose portlarini `127.0.0.1`ga
+(LAN'ga YOPIQ) bog'lab qo'ygan edi - LAN trafigi endi yangi `nginx` TLS
+proxy orqali o'tishi kerak edi. Lekin `nginx` ATAYLAB ishga tushirilmagan
+qoldirilgan edi (sertifikat yo'q, yagona real agent hamon oddiy HTTP
+orqali ulanadi - TLS'ga o'tish alohida, foydalanuvchi bilan kelishilishi
+kerak bo'lgan qaror). Foydalanuvchidan so'ralib, **oddiy http:// LAN'ga
+ochiq holat** tanlandi: `docker-compose.yml`dagi portlar endi
+`${DASHBOARD_HOST_IP:-0.0.0.0}:8080:8080` / `${AGENT_API_HOST_IP:-0.0.0.0}
+:8443:8443` - standart holatda LAN'ga ochiq, TLS'ga o'tishga tayyor
+bo'lganda `.env`ga `DASHBOARD_HOST_IP=127.0.0.1`/`AGENT_API_HOST_IP=
+127.0.0.1` qo'shib, `nginx`ni ishga tushirish kifoya.
+
+**2) Shundan keyin: "admin login va parolim kirmayapdi"** - bazada
+`admin`ning `last_login` maydoni HAQIQATAN yangilangani tasdiqlandi
+(parol to'g'ri qabul qilingan!), lekin foydalanuvchi darhol login
+sahifasiga qaytarilardi. **TUB SABAB**: `dashboard/app.py`dagi
+`SESSION_COOKIE_SECURE` standart qiymati `"true"` edi (xavfsizlik
+auditi tomonidan, `nginx` TLS proxy ortida ishlashni ko'zda tutib) -
+`Secure` bayrog'ili cookie'ni brauzer **FAQAT `https://` orqali**
+saqlaydi/yuboradi. Endi biz oddiy `http://`da bo'lgani uchun, sessiya
+cookie'si HAR SAFAR jim ravishda tashlab yuborilardi - login "ishlamay
+qoladi"dek ko'rinadi, aslida autentifikatsiyaning o'zi muvaffaqiyatli
+edi. Tuzatildi: production `.env`ga `SESSION_COOKIE_SECURE=false`
+qo'shildi (TLS'ga o'tganda `true`ga qaytarilishi kerak - shu maqsadda
+allaqachon `.env.example`da izohlangan edi).
+
+**MUHIM SABOQ**: bu ikkalasi ham `run_full_test.py`ning Flask
+`test_client()`-asosli testlari orqali **hech qachon ochilmaydi** -
+`test_client()` na haqiqiy tarmoq portlarini, na brauzerning `Secure`
+cookie siyosatini simulyatsiya qiladi. Bu klassik "TLS-ga tayyorlangan
+kod, lekin hali TLS ishlatilmayotgan muhitga joylashtirilgan"
+kategoriyasidagi xato - faqat **haqiqiy brauzer + haqiqiy tarmoq**
+orqali sinovdan o'tkazilganda ochilib qoladi.
+
+**Real test qilingan**: `docker exec` orqali `Set-Cookie` sarlavhasida
+`Secure` bayrog'i endi yo'qligi to'g'ridan-to'g'ri tasdiqlandi
+(tuzatishdan oldin/keyin solishtirilib).
+
 ## Ruijie Cloud (Reyee/RG-CBS) integratsiyasi - UniFi'ga o'xshash, lekin API'si hech qayerda to'liq hujjatlashtirilmagan
 
 Foydalanuvchi Ruijie Cloud (`cloud.ruijienetworks.com`) orqali
@@ -201,9 +248,9 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
 
-**Joriy: 72/72 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
+**Joriy: 73/73 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
 Bu ishlab chiqilgan Docker image'da (git/pg_dump o'rnatilmagan, SMTP
-fixture'i boshqa muammoli) 70/72 (SQLite) va 69/72 (PostgreSQL) - ikkala
+fixture'i boshqa muammoli) 71/73 (SQLite) va 70/73 (PostgreSQL) - ikkala
 qolgan xato ham shu image'ga xos, kod xatosi EMAS (avval ham
 hujjatlashtirilgan holat).**
 

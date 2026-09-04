@@ -5090,6 +5090,52 @@ if __name__ == "__main__":
 check("Ruijie Cloud integratsiyasi: discovery + Asset Inventory + Dashboard + Sync Loop (real HTTP -> DB -> UI)", _test_ruijie_discovery)
 
 # ---------------------------------------------------------------------------
+print("\n=== 73) SESSION_COOKIE_SECURE - real production xatosi: http:// orqali login \"ishlamay qolgan\" ===")
+
+
+def _test_session_cookie_secure_toggle():
+    """
+    Real production xatosi: xavfsizlik auditi SESSION_COOKIE_SECURE
+    standart qiymatini "true" qildi (nginx TLS proxy ortida ishlashni
+    ko'zda tutib). Production hali oddiy http:// orqali ishlagani uchun
+    (nginx ataylab ishga tushirilmagan) - brauzer "Secure" bayrog'ili
+    sessiya cookie'ni http:// orqali SAQLAMAYDI/YUBORMAYDI, shuning
+    uchun parol to'g'ri qabul qilinsa ham foydalanuvchi darhol login
+    sahifasiga qaytarilardi ("login ishlamayapti"dek ko'ringan).
+
+    MUHIM (halol izoh): `test_client()` bu xatoni HECH QACHON
+    o'zi ochib bermaydi (haqiqiy brauzerning "Secure" cookie siyosatini
+    simulyatsiya qilmaydi) - bu test faqat ilova env o'zgaruvchisini
+    TO'G'RI o'qib, cookie sarlavhasiga to'g'ri bayroq qo'yayotganini
+    tasdiqlaydi (kodning o'zi to'g'ri edi - muammo `.env`da bu
+    qiymat sozlanmagani, standart holatda "true" qolib ketgani edi).
+    """
+    import importlib
+
+    for secure_value, should_have_secure in [("false", False), ("true", True)]:
+        os.environ["SESSION_COOKIE_SECURE"] = secure_value
+        os.environ["DASHBOARD_SECRET_KEY"] = "ci-test-dashboard-secret-key"
+        import dashboard.app as dash_app_module
+        importlib.reload(dash_app_module)
+
+        client = dash_app_module.app.test_client()
+        r = client.get("/login")
+        set_cookie = r.headers.get("Set-Cookie", "")
+        has_secure = "Secure" in set_cookie
+        assert has_secure == should_have_secure, (
+            f"SESSION_COOKIE_SECURE={secure_value} bo'lganda cookie'da "
+            f"'Secure' bayrog'i {'bo\'lishi' if should_have_secure else 'BO\'LMASLIGI'} "
+            f"kerak edi, Set-Cookie: {set_cookie}"
+        )
+
+    os.environ.pop("SESSION_COOKIE_SECURE", None)
+    import dashboard.app as dash_app_module
+    importlib.reload(dash_app_module)
+
+
+check("SESSION_COOKIE_SECURE - http://da 'Secure' cookie muammosi (real production xatosi tuzatilgan)", _test_session_cookie_secure_toggle)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
