@@ -17,6 +17,12 @@ agent.log
 # Muhit sozlamalari (maxfiy ma'lumot - .env.example commit qilinadi, .env emas)
 .env
 .env.local
+# Vim/editor almashtirish (swap) fayllari - .env'ni tahrirlaganda
+# yaratiladigan "..env.swp" kabi fayllar HAM maxfiy ma'lumot bo'lishi
+# mumkin (.env'ning vaqtinchalik nusxasi), lekin yuqoridagi ".env"
+# qoidasi ularni QAMRAB OLMAYDI (fayl nomi boshqacha).
+*.swp
+*.swo
 
 # Hisobot chiqishlari
 report_output/
