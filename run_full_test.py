@@ -4384,6 +4384,79 @@ def _test_service_wrapper_actually_runs_without_nameerror():
 
 check("service_wrapper.py: HAQIQATAN import/chaqirilganda NameError yo'q (CI regressiyasi tuzatilgan)", _test_service_wrapper_actually_runs_without_nameerror)
 
+
+def _test_service_wrapper_logs_import_crash_to_file():
+    """
+    "AD orqali agent hech qanday xatosiz, izsiz o'rnatilmay/ishlamay
+    qoladi" muammosiga qarshi tuzatish: avval `service_wrapper.py`da
+    faqat pywin32 importi xatoligi tutilardi (`print()` bilan - bu SCM
+    tomonidan konsolsiz ishga tushirilganda hech qayerga ko'rinmasdan
+    yo'qolib ketardi). Endi `windows_agent.agent`/`agent_core.agent`
+    zanjiridagi HAR QANDAY import xatosi (masalan .exe paketida
+    bog'liqlik yetishmasa - ModuleNotFoundError) ham ANIQ,
+    ProgramData'dagi doimiy faylga yoziladi.
+
+    Bu test xatoni SUN'IY ravishda keltirib chiqarib (`windows_agent.agent`
+    modulini `sys.modules`da `None` qilib - bu standart Python "import
+    majburan muvaffaqiyatsiz" texnikasi), crash log fayli HAQIQATAN
+    yozilishini tasdiqlaydi.
+    """
+    import shutil
+    from unittest import mock
+
+    fake_pywin32_dir = "/tmp/_test_fake_pywin32_crashlog"
+    if os.path.exists(fake_pywin32_dir):
+        shutil.rmtree(fake_pywin32_dir)
+    os.makedirs(fake_pywin32_dir)
+    for mod_name, content in {
+        "win32event": "def CreateEvent(*a, **kw): return object()\n",
+        "win32service": "SERVICE_RUNNING = 4\nSERVICE_STOP_PENDING = 3\n",
+        "win32serviceutil": (
+            "class ServiceFramework:\n"
+            "    def __init__(self, args): pass\n"
+            "    def ReportServiceStatus(self, status): pass\n"
+        ),
+        "servicemanager": "def LogErrorMsg(*a, **kw): pass\n",
+    }.items():
+        with open(os.path.join(fake_pywin32_dir, f"{mod_name}.py"), "w") as f:
+            f.write(content)
+
+    program_data = "/tmp/_test_fake_programdata_crashlog"
+    if os.path.exists(program_data):
+        shutil.rmtree(program_data)
+
+    sys.path.insert(0, fake_pywin32_dir)
+    try:
+        for mod_name in ["windows_agent.service_wrapper", "win32event", "win32service",
+                          "win32serviceutil", "servicemanager"]:
+            sys.modules.pop(mod_name, None)
+
+        with mock.patch.dict(os.environ, {"ProgramData": program_data}), \
+             mock.patch.dict(sys.modules, {"windows_agent.agent": None}):
+            try:
+                import windows_agent.service_wrapper  # noqa: F401
+                assert False, "Import xato berishi kerak edi (windows_agent.agent sun'iy buzilgan)"
+            except ImportError:
+                pass
+
+        crash_log = os.path.join(program_data, "NetworkSecurityAgent", "service_startup_crash.log")
+        assert os.path.exists(crash_log), f"Crash log fayli yozilmadi: {crash_log}"
+        with open(crash_log, encoding="utf-8") as f:
+            content = f.read()
+        assert "import xatosi" in content, "Crash log kontekst matnini o'z ichiga olishi kerak"
+
+    finally:
+        sys.path.remove(fake_pywin32_dir)
+        shutil.rmtree(fake_pywin32_dir, ignore_errors=True)
+        shutil.rmtree(program_data, ignore_errors=True)
+        for mod_name in ["windows_agent.service_wrapper", "win32event", "win32service",
+                          "win32serviceutil", "servicemanager"]:
+            sys.modules.pop(mod_name, None)
+        import windows_agent.agent  # noqa: F401 - keyingi testlar uchun holatni tozalash
+
+
+check("service_wrapper.py: import xatosi (masalan ModuleNotFoundError) endi izsiz yo'qolmaydi, ProgramData'ga crash log yoziladi", _test_service_wrapper_logs_import_crash_to_file)
+
 # ---------------------------------------------------------------------------
 print("\n=== 65) Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi ===")
 

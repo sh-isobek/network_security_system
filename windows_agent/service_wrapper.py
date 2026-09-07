@@ -9,6 +9,7 @@ initialises.
 """
 import os
 import sys
+import traceback
 
 # Service processes normally start in C:\Windows\System32. Keep logs/cache in
 # a writable, stable location before importing agent_core (which configures
@@ -21,6 +22,28 @@ os.environ.setdefault("AGENT_CACHE_FILE", os.path.join(AGENT_DATA_DIR, "agent_ha
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# MUHIM (yangi): agar pastdagi importlardan biri (pywin32 yoki
+# windows_agent/agent_core zanjiri, masalan .exe paketida bog'liqlik
+# yetishmasa - ModuleNotFoundError) muvaffaqiyatsiz bo'lsa, bu SCM
+# tomonidan konsolsiz ishga tushirilganda (haqiqiy Windows Service
+# sifatida) hech qanday izsiz, butunlay ko'rinmasdan qulab tushishi
+# mumkin edi - production'da "agent hech qanday xato bermasdan
+# o'rnatilmay/ishlamay qoladi" degan diagnostika qilib bo'lmaydigan
+# holatga olib kelgan. Endi har qanday import xatosi ANIQ, doimiy
+# faylga yoziladi - stdout/konsolga umuman kirish imkoni bo'lmagan
+# holatlarda ham iz qoladi.
+_STARTUP_CRASH_LOG = os.path.join(AGENT_DATA_DIR, "service_startup_crash.log")
+
+
+def _log_startup_crash(context: str) -> None:
+    try:
+        with open(_STARTUP_CRASH_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n=== {context} ===\n")
+            traceback.print_exc(file=f)
+    except OSError:
+        pass
+
+
 try:
     import win32event
     import win32service
@@ -28,10 +51,19 @@ try:
     import servicemanager
 except ImportError:
     print("XATO: pywin32 o'rnatilmagan. Bu fayl faqat Windows'da ishlaydi.")
+    _log_startup_crash("pywin32 import xatosi")
     sys.exit(1)
 
-from windows_agent.agent import EndpointAgent
-from agent_core.agent import logger
+try:
+    from windows_agent.agent import EndpointAgent
+    from agent_core.agent import logger
+except Exception as exc:
+    print(f"XATO: agent modullarini import qilib bo'lmadi: {exc!r}")
+    _log_startup_crash(
+        "windows_agent/agent_core import xatosi "
+        "(masalan ModuleNotFoundError - .exe paketida bog'liqlik yetishmayotgan bo'lishi mumkin)"
+    )
+    raise
 
 
 SERVICE_NAME = "NetworkSecurityEndpointAgent"
