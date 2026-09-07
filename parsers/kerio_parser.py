@@ -92,13 +92,24 @@ def _is_ip(value: str) -> bool:
 
 def _parse_endpoint(part: str):
     """`"hostname (ip):port"`/`"ip:port"`/`"hostname:port"`ni (ip_yoki_None,
-    domen_yoki_None, port) qilib ajratadi."""
+    domen_yoki_None, port) qilib ajratadi.
+
+    MUHIM (real production'da aniqlangan bo'shliq): avvalgi versiya
+    `"hostname (ip):port"` shaklini uchratganda IP'ni to'g'ri olar,
+    lekin hostname'ni (teskari DNS orqali Kerio'ning o'zi topib bergan
+    domen nomini) BUTUNLAY TASHLAB YUBORARDI (`None` qaytarardi) - aynan
+    shu modul docstring'ida "HAQIQIY production'dan olingan namuna"
+    deb ko'rsatilgan `lr-in-f95.1e100.net (209.85.233.95):443` kabi
+    formatning o'ZI. Natijada "Saytlar tarixi" (Web Activity) sahifasi
+    domen nomlari o'rniga deyarli har doim faqat xom IP manzillarni
+    ko'rsatardi - Kerio o'zi domen nomini aniq bergan bo'lsa ham.
+    """
     m = _ENDPOINT_RE.match(part.strip())
     if not m:
         return None, None, None
     port = int(m.group("port"))
     if m.group("ip"):
-        return m.group("ip"), None, port
+        return m.group("ip"), m.group("host").rstrip("."), port
     plain = m.group("plain")
     if _is_ip(plain):
         return plain, None, port

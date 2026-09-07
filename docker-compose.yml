@@ -131,6 +131,28 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------
+  # 11-bo'lim: UEBA/AI - anomaliya aniqlash + Risk Score
+  # ---------------------------------------------------------------------
+  # MUHIM (real production'da aniqlangan bo'shliq - loyihada bir necha
+  # marta uchragan "kod to'g'ri, lekin hech kim uni ishga tushirmaydi"
+  # xato turkumi): engine/ueba_engine.py to'liq yozilgan va test
+  # qilingan edi, lekin bu yerda HECH QANDAY xizmat sifatida
+  # ro'yxatga olinmagan edi - shuning uchun baseline/anomaliya/risk
+  # score hech qachon HAQIQIY ishga tushmagan, garchi events jadvali
+  # yuz minglab yozuv bilan to'lib turgan bo'lsa ham (Alertlar bo'sh
+  # qolishining bir sababi).
+  ueba_engine:
+    build: .
+    restart: unless-stopped
+    command: python -m engine.ueba_engine --loop --interval 300
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
   # 2-3-bosqich: Fayl hash tekshiruvi (VirusTotal/MalwareBazaar/mahalliy)
   # ---------------------------------------------------------------------
   file_analysis_engine:

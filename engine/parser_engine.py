@@ -131,6 +131,25 @@ def process_one(session, raw_log: RawLog):
             protocol="DNS", source=used_parser or "dns",
         ))
 
+    # MUHIM (real production'da aniqlangan bo'shliq): Kerio Connection
+    # loglari ham "sayt faoliyati" - lekin avval FAQAT dns_query
+    # yozuvlari WebAccessLog'ga tushardi. Zeek/NXLog (DNS query
+    # domenlari) hali sozlanmagan muhitlarda bu "Saytlar tarixi"
+    # sahifasini BUTUNLAY bo'sh qoldirgan edi, garchi Kerio orqali
+    # yuz minglab haqiqiy ulanish kelayotgan bo'lsa ham. Endi
+    # Connection hodisalari ham (domen bo'lsa domen bilan, aks holda
+    # IP bilan) qayd etiladi.
+    if event_type == "connection" and (parsed.get("dest_domain") or parsed.get("dest_ip")):
+        target_domain = (str(parsed["dest_domain"]).rstrip(".").lower()
+                          if parsed.get("dest_domain") else None)
+        session.add(WebAccessLog(
+            timestamp=event.timestamp, device_id=device.id,
+            source_ip=parsed["source_ip"], dest_ip=parsed.get("dest_ip"),
+            domain=target_domain or parsed.get("dest_ip"),
+            url=None, protocol=parsed.get("protocol") or "TCP",
+            status_code=None, source=used_parser or "kerio_connection",
+        ))
+
     if event_type == "dns_query":
         target = parsed.get("dest_domain")
         if _is_whitelisted(session, target):
@@ -148,6 +167,30 @@ def process_one(session, raw_log: RawLog):
                 )
                 session.add(alert)
                 logger.warning(f"ALERT: {parsed['source_ip']} -> {target} (blacklist)")
+
+    # MUHIM (real production'da aniqlangan bo'shliq): "connection"
+    # hodisalari uchun HECH QANDAY blacklist tekshiruvi yo'q edi -
+    # faqat dns_query domenlari tekshirilardi. Endi Kerio Connection
+    # orqali ma'lum bo'lgan zararli IP/domenga ulanish ham aniqlanadi
+    # (masalan qo'lda yoki tashqi threat-intel feed orqali
+    # BlacklistEntry'ga qo'shilgan IP/domenlar).
+    if event_type == "connection":
+        for target in (parsed.get("dest_ip"), parsed.get("dest_domain")):
+            if not target or _is_whitelisted(session, target):
+                continue
+            bl_hit = _is_blacklisted(session, target)
+            if bl_hit:
+                alert = Alert(
+                    event_id=event.id,
+                    device_id=device.id,
+                    severity="high",
+                    reason=f"Blacklist'dagi manzilga ulanish: {target} (manba: {bl_hit.source})",
+                    action_taken="TODO: bloklash backend hali ulanmagan (5-bosqich)",
+                    notified=False,
+                )
+                session.add(alert)
+                logger.warning(f"ALERT: {parsed['source_ip']} -> {target} (blacklist, connection)")
+                break
 
     raw_log.processed = True
 

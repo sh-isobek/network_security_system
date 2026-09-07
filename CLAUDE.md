@@ -99,6 +99,83 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | `network_discovery` xizmati (ARP/ICMP/SNMP/LLDP) production'da ISHGA TUSHIRILDI | ✅✅ Dockerfile'da `arp-scan`/`nmap` yetishmagani topildi va qo'shildi - HAQIQIY LAN'da (172.16.0.0/22) tasdiqlandi: 261 ARP javob, 266 tirik host, 17 yangi qurilma DB'ga yozildi |
 | — | Kerio Connection log - IKKINCHI marta tuzatildi (haqiqiy production format hujjatdagidan farq qildi) | ✅✅ `hostname (ip):port -> hostname (ip):port` (eski `>` o'rniga `->`) - Live Map endi HAQIQIY ishlaydi: 123 qurilma, 60 aloqa, 1400+ event (production'da to'g'ridan-to'g'ri tasdiqlandi) |
 | — | Live Map: vis-network CDN havolasi buzilgan edi (404, UCHINCHI sabab) | ✅✅ Backend to'liq ishlab tursa ham xarita bo'sh ko'rinardi - cdnjs.cloudflare.com o'z fayl yo'lini o'zgartirgan edi. Kutubxona endi mahalliy (`dashboard/static/`) - tashqi CDN'ga umuman bog'liq emas |
+| — | Live Map: Grafik/Ro'yxat 2 xil ko'rinish tugmasi | ✅ `/live-map`da "Grafik ko'rinish"/"Ro'yxat ko'rinish" toggle - ikkalasi ham bir xil `/api/topology` javobidan qurilgan |
+| — | UEBA Engine (`engine/ueba_engine.py`) production'da ISHGA TUSHIRILDI | ✅✅ To'liq yozilgan/test qilingan edi, lekin `docker-compose.yml`da HECH QANDAY xizmat sifatida ro'yxatga olinmagan edi (Alertlar bo'sh qolishining bir sababi) - profilsiz `ueba_engine` xizmati qo'shildi |
+| — | Kerio "connection" hodisalari endi blacklist'ga qarshi tekshiriladi + Web Activity'ga yoziladi | ✅✅ Avval faqat `dns_query` tekshirilar/yozilardi - yagona real oqim (Kerio Connection) uchun bunday tekshiruv/yozuv UMUMAN yo'q edi (Alertlar/Saytlar tarixi bo'sh qolishining ikkinchi sababi) |
+| — | Kerio parser: `hostname (ip):port` formatida domen nomi tashlab yuborilardi (TO'RTINCHI marta tuzatilgan Kerio xatosi) | ✅✅ `_parse_endpoint()` IP topilganda hostname'ni butunlay `None` qilib qaytarardi - "Saytlar tarixi" xom IP'lardan boshqa narsa ko'rsata olmasdi |
+
+## Live Map: 2 xil ko'rinish (Grafik/Ro'yxat) + Alertlar/Saytlar tarixi bo'sh qolishining UCH sababi
+
+Foydalanuvchi bitta xabarda 3 ta talab qildi: "live network map ni 2
+xil usulda spiska va hozirgi ko'rinishda bo'lsin. Saytlarga kirish
+tarixi ham ishlamayabdi. alterlar ham pustoy. barchasini to'g'irla".
+
+Production bazasini (`docker exec`, real PostgreSQL) to'g'ridan-to'g'ri
+tekshirganimda: `events` jadvalida **638 812 ta** haqiqiy, yangi yozuv
+bor edi, lekin `alerts` - **0 qator**, `web_access_logs` - **0 qator**
+(MAX(timestamp) = NULL). Uchta mustaqil sabab topildi:
+
+**1) `ueba_engine` HECH QACHON ishga tushirilmagan edi** - bu loyihada
+bir necha marta uchragan "kod to'g'ri, lekin hech kim uni ishga
+tushirmaydi" xato turkumi (UniFi sync, Suricata reader'da ham xuddi
+shunday bo'lgan). `engine/ueba_engine.py` to'liq yozilgan va ilgari
+sintetik ma'lumot bilan test qilingan edi, lekin `docker-compose.yml`da
+uni ishga tushiruvchi HECH QANDAY xizmat yo'q edi. Tuzatildi: `unifi_
+sync`/`ruijie_sync` bilan bir xil naqshda, profilsiz `ueba_engine`
+xizmati qo'shildi (standart `docker compose up -d` bilan ishga tushadi).
+
+**2) "connection" hodisalari uchun blacklist tekshiruvi va Web
+Activity yozuvi UMUMAN yo'q edi** - `engine/parser_engine.py`ning
+`process_one()` faqat `dns_query` hodisalarini (1) `BlacklistEntry`ga
+qarshi tekshirar, (2) `WebAccessLog`ga yozardi. Lekin production'da
+DNS-query manba (Zeek/NXLog) sozlanmagan - yagona real oqim Kerio
+Control "Connection" loglari edi. Natijada: hatto `BlacklistEntry`ga
+qo'lda qo'shilgan zararli IP/domenga ulanish bo'lsa ham hech qanday
+Alert yaratilmasdi, va "Saytlar tarixi" sahifasi tabiatan bo'sh qolardi
+(hech qanday manba uni to'ldirmasdi). Tuzatildi: `process_one()`ga
+"connection" hodisalari uchun ham xuddi shunday tekshiruv/yozuv
+qo'shildi (domen bo'lsa domen, bo'lmasa IP bilan `WebAccessLog.domain`
+to'ldiriladi - bu ustun NOT NULL).
+
+**3) TO'RTINCHI marta topilgan Kerio parser xatosi (yangi test orqali
+ochilib qoldi)**: yangi test yozayotganda `parsers/kerio_parser.py`ning
+`_parse_endpoint()` funksiyasi `"hostname (ip):port"` (aynan modul
+docstring'ida "HAQIQIY production namunasi" deb ko'rsatilgan format!)
+ko'rinishini uchratganda, IP'ni to'g'ri olardi-yu, **hostname'ni
+butunlay tashlab yuborib, `None` qaytarardi**. Bu, hatto (2)-band
+tuzatilgandan keyin ham, "Saytlar tarixi" sahifasini faqat xom IP
+manzillar bilan to'ldirar edi (domen nomlari HECH QACHON ko'rinmasdi),
+garchi Kerio o'zi teskari DNS orqali domen nomini aniq bergan bo'lsa
+ham. Qiziqarli tomoni: bu xato loyihaning **o'zining oldingi
+regressiya testida "to'g'ri" deb tasdiqlangan edi** (`exp_dst_domain
+== None` deb yozilgan) - ya'ni avvalgi test xatoni ushlash o'rniga uni
+"muzlatib" qo'ygan edi. Tuzatildi: `m.group("host")`ni endi to'g'ri
+qaytaradi; eski test ham to'g'ri (foydali) qiymatga yangilandi.
+
+**4) Live Map - 2 xil ko'rinish**: `dashboard/templates/live_map.html`ga
+"Grafik ko'rinish"/"Ro'yxat ko'rinish" almashtirgich qo'shildi - ikkalasi
+ham bir xil `/api/topology` javobidan (client-side, qo'shimcha so'rovsiz)
+quriladi, Ro'yxat ko'rinishida qurilma/manzil/hodisalar soni/risk rangi
+jadval sifatida ko'rsatiladi.
+
+**Real test qilingan (ham SQLite'da, ham vaqtinchalik PostgreSQL
+konteynerida)**: `ueba_engine`ning docker-compose.yml'da profilsiz
+ro'yxatga olingani; `BlacklistEntry`dagi IP'ga Kerio "connection"
+hodisasi orqali ulanish HAQIQATAN `Alert(severity="high")` yaratishi;
+"connection" hodisasi HAQIQATAN `WebAccessLog`ga (domen mavjud bo'lsa
+domen bilan, aks holda IP bilan) yozilishi - barchasi `engine.parser_
+engine.run_once()` orqali real DB bilan tasdiqlandi. Natija: SQLite'da
+76/78, PostgreSQL'da 75/78 (qolgan xatolar - SMTP/git/pg_dump - ushbu
+test image'ida o'rnatilmagan vositalar, kod xatosi EMAS, avval ham
+hujjatlashtirilgan holat).
+
+**Halol eslatma**: `BlacklistEntry` jadvalida hozircha faqat sintetik
+test yozuvlari bor - real threat-intel feed yoki qo'lda kiritilgan
+haqiqiy zararli IP/domenlar yo'q. Demak yangi (2)-tuzatish
+ARXITEKTURA jihatidan to'g'ri ishlaydi, lekin foydalanuvchi
+`BlacklistEntry`ga haqiqiy zararli manzillar qo'shmaguncha, "Alertlar"
+sahifasi UEBA anomaliyalaridan tashqari deyarli bo'sh ko'rinishi mumkin
+- bu kutilgan holat, xato emas.
 
 ## Live Map bo'sh edi - TUB SABAB: Kerio Control parser HECH QACHON to'g'ri formatga mos kelmagan
 
@@ -324,11 +401,11 @@ foydalanuvchi buni ko'rmagan bo'lishi mumkin edi.
 VERSION 1.0.9 saqlanib qoldi (bu safar faqat GPO skripti o'zgardi,
 `.exe`ning ichki kodi emas).
 
-**Joriy: 76/76 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
+**Joriy: 78/78 test o'tadi (`run_full_test.py`) - GitHub Actions CI'da (git/pg_dump/SMTP fixture hammasi mavjud).
 Bu ishlab chiqilgan Docker image'da (git/pg_dump o'rnatilmagan, SMTP
-fixture'i boshqa muammoli) 74/76 (SQLite) va 73/76 (PostgreSQL) - ikkala
-qolgan xato ham shu image'ga xos, kod xatosi EMAS (avval ham
-hujjatlashtirilgan holat).**
+fixture'i boshqa muammoli) 76/78 (SQLite) va 75/78 (PostgreSQL) - qolgan
+xatolar shu image'ga xos, kod xatosi EMAS (avval ham hujjatlashtirilgan
+holat).**
 
 ## Ikkita mustaqil sessiya BIR XIL Ruijie integratsiyasini qurgani aniqlandi - qo'lda birlashtirildi
 

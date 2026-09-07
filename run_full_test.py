@@ -5252,11 +5252,18 @@ def _test_kerio_parser_real_production_capture():
     # --- Production'dan olingan HAQIQIY Connection log qatorlari ---
     real_conn_lines = [
         (
+            # MUHIM (bu yerda ilgari aniqlanmagan real bo'shliq, keyinroq
+            # tuzatilgan): destinationda teskari DNS nomi ("lr-in-f95.1e100.net")
+            # HAM, IP HAM bor - bunday holda `dest_domain` avval jimgina
+            # `None` bo'lib qolar edi (faqat IP saqlanardi), garchi Kerio'ning
+            # o'zi domen nomini aniq bergan bo'lsa ham. Endi bu domen nomi
+            # ham to'g'ri o'qiladi - "Saytlar tarixi" endi xom IP o'rniga
+            # o'qilishi mumkin bo'lgan domen nomlarini ko'rsatadi.
             "[ID] 1831242 [Rule] Internet access (NAT) [Service] TCP 443 "
             "[Connection] TCP sph-262.synergypharm.org (172.16.1.35):63579 -> "
             "lr-in-f95.1e100.net (209.85.233.95):443 [Iface] WAN0_Uztelecom "
             "[Duration] 31 sec [Bytes] 1458/9404/10862 [Packets] 8/10/18",
-            "172.16.1.35", "209.85.233.95", None, 443,
+            "172.16.1.35", "209.85.233.95", "lr-in-f95.1e100.net", 443,
         ),
         (
             # Destinationda teskari DNS nomi YO'Q (faqat IP) - shu holat ham to'g'ri ishlashi kerak
@@ -5343,6 +5350,93 @@ def _test_live_map_vis_network_local_asset():
 
 
 check("Live Map: vis-network mahalliy static asset sifatida xizmat qilinadi (tashqi CDN havolasi buzilgan edi, real production xatosi tuzatilgan)", _test_live_map_vis_network_local_asset)
+
+# ---------------------------------------------------------------------------
+print("\n=== 76) UEBA Engine docker-compose xizmati (Alertlar bo'sh qolishining bir sababi tuzatilgan) ===")
+
+
+def _test_ueba_engine_service_registered():
+    """
+    Foydalanuvchi "alterlar pustoy" deb xabar qildi. Tekshirganda:
+    engine/ueba_engine.py to'liq yozilgan va ilgari test qilingan edi
+    (statistik anomaliya aniqlash + Risk Score + Alert yaratish), lekin
+    docker-compose.yml'da HECH QANDAY uni ishga tushiruvchi xizmat yo'q
+    edi - bu loyihada bir necha marta uchragan "kod to'g'ri, lekin
+    hech kim uni ishga tushirmaydi" xato turkumi (UniFi sync, Suricata
+    reader'da ham xuddi shunday bo'lgan).
+    """
+    import yaml
+    with open("docker-compose.yml") as f:
+        compose = yaml.safe_load(f)
+    assert "ueba_engine" in compose["services"], "ueba_engine xizmati docker-compose.yml'da yo'q"
+    assert "profiles" not in compose["services"]["ueba_engine"], (
+        "ueba_engine PROFILSIZ bo'lishi kerak (standart 'docker compose up -d' bilan ishga tushishi uchun)"
+    )
+    assert "--loop" in compose["services"]["ueba_engine"]["command"]
+
+
+check("UEBA Engine docker-compose xizmati sifatida ro'yxatga olindi (production bo'shlig'i tuzatilgan)", _test_ueba_engine_service_registered)
+
+# ---------------------------------------------------------------------------
+print("\n=== 77) Kerio Connection hodisalari: blacklist tekshiruvi + Web Activity'ga yozilishi (Alertlar/Saytlar tarixi bo'sh qolishining ikkinchi sababi) ===")
+
+
+def _test_connection_events_feed_alerts_and_web_activity():
+    """
+    Foydalanuvchi "alterlar pustoy" va "saytlarga kirish tarixi ham
+    ishlamayapti" deb xabar qildi. Production'da 638 000+ Kerio
+    Connection hodisasi (`events`) bor edi, lekin `alerts` va
+    `web_access_logs` ikkalasi ham 0 edi. TUB SABAB: `parser_engine.py`
+    faqat `dns_query` hodisalarini blacklist'ga qarshi tekshirar va
+    Web Activity'ga yozar edi - "connection" (Kerio'dan, hozirgi
+    yagona real oqim) hodisalari uchun bunday tekshiruv/yozuv UMUMAN
+    yo'q edi.
+
+    Tuzatildi: endi "connection" hodisalari ham (1) `dest_ip`/
+    `dest_domain` BlacklistEntry'ga qarshi tekshiriladi (Alert
+    yaratiladi), (2) WebAccessLog'ga yoziladi (domen bo'lsa domen,
+    aks holda IP bilan) - "Saytlar tarixi" sahifasi endi HAQIQIY
+    Kerio trafigi bilan to'ladi.
+    """
+    from db.models import RawLog, BlacklistEntry, WebAccessLog
+
+    s = get_session()
+    s.add(BlacklistEntry(value="203.0.113.99", source="manual", reason="test"))
+    s.add_all([
+        # Domen bilan (teskari DNS mavjud) - WebAccessLog'da domen ko'rinishi kerak
+        RawLog(source_ip="172.16.0.1", raw_message=(
+            "[ID] 1 [Rule] Internet access (NAT) [Connection] TCP "
+            "ci-pc.local (172.16.9.201):51234 -> mail.example.com (198.51.100.5):443 "
+            "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
+        )),
+        # Blacklist'dagi IP'ga ulanish - Alert yaratilishi kerak
+        RawLog(source_ip="172.16.0.1", raw_message=(
+            "[ID] 2 [Rule] Internet access (NAT) [Connection] TCP "
+            "ci-pc2.local (172.16.9.202):51235 -> 203.0.113.99:443 "
+            "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
+        )),
+    ])
+    s.commit()
+    s.close()
+
+    from engine.parser_engine import run_once
+    count = run_once()
+    assert count == 2
+
+    s = get_session()
+    web_entries = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["172.16.9.201", "172.16.9.202"])).all()
+    assert len(web_entries) == 2, "Connection hodisalari WebAccessLog'ga yozilmadi ('Saytlar tarixi' bo'sh qolgan sabab)"
+    by_src = {w.source_ip: w for w in web_entries}
+    assert by_src["172.16.9.201"].domain == "mail.example.com", "Teskari DNS nomi mavjud bo'lsa, domen bilan yozilishi kerak"
+    assert by_src["172.16.9.202"].domain == "203.0.113.99", "Domen yo'q bo'lsa, IP bilan yozilishi kerak (fallback)"
+
+    alerts = s.query(Alert).filter(Alert.reason.like("%203.0.113.99%")).all()
+    assert len(alerts) == 1, "Blacklist'dagi IP'ga ulanish uchun Alert yaratilmadi ('Alertlar' bo'sh qolgan sabab)"
+    assert alerts[0].severity == "high"
+    s.close()
+
+
+check("Kerio Connection hodisalari: blacklist Alert + Web Activity'ga yozilishi (real production bo'shlig'i tuzatilgan)", _test_connection_events_feed_alerts_and_web_activity)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

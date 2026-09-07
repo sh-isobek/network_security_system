@@ -7,7 +7,20 @@
     Rang = Risk Score (qizil=yuqori, sariq=o'rta, ko'k=past/yo'q). 15 soniyada avtomatik yangilanadi.
 </p>
 
+<div class="filters" style="margin-bottom:14px;">
+    <a href="#" id="view-graph-btn" class="active" onclick="setView('graph'); return false;">Grafik ko'rinish</a>
+    <a href="#" id="view-list-btn" onclick="setView('list'); return false;">Ro'yxat ko'rinish</a>
+</div>
+
 <div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
+
+<div id="list-view" style="display:none;">
+    <table>
+        <tr><th>Qurilma</th><th>Manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
+        <tbody id="list-view-body"></tbody>
+    </table>
+    <div id="list-view-empty" class="empty" style="display:none;">Hech qanday aloqa topilmadi</div>
+</div>
 
 <!-- MUHIM (real production'da aniqlangan xato): bu kutubxona avval
      tashqi CDN (cdnjs.cloudflare.com)dan yuklanardi - lekin cdnjs
@@ -24,11 +37,47 @@
 <script src="/static/vis-network.min.js"></script>
 <script>
 let network = null;
+let currentView = 'graph';
+let latestData = { nodes: [], edges: [] };
+
+function setView(view) {
+    currentView = view;
+    document.getElementById('view-graph-btn').className = view === 'graph' ? 'active' : '';
+    document.getElementById('view-list-btn').className = view === 'list' ? 'active' : '';
+    document.getElementById('network-map').style.display = view === 'graph' ? '' : 'none';
+    document.getElementById('list-view').style.display = view === 'list' ? '' : 'none';
+    if (view === 'list') renderList();
+}
+
+function renderList() {
+    const nodeById = {};
+    latestData.nodes.forEach(n => { nodeById[n.id] = n; });
+
+    const rows = latestData.edges
+        .slice()
+        .sort((a, b) => (b.value || 0) - (a.value || 0))
+        .map(e => {
+            const from = nodeById[e.from];
+            const to = nodeById[e.to];
+            const color = (from && from.color) || '#3498db';
+            return '<tr>' +
+                '<td>' + ((from && from.label) || e.from) + '</td>' +
+                '<td class="mono">' + ((to && to.label) || e.to) + '</td>' +
+                '<td>' + (e.value || 1) + '</td>' +
+                '<td><span class="badge" style="background:' + color + ';">&nbsp;</span></td>' +
+                '</tr>';
+        });
+
+    const body = document.getElementById('list-view-body');
+    body.innerHTML = rows.join('');
+    document.getElementById('list-view-empty').style.display = rows.length ? 'none' : '';
+}
 
 async function loadTopology() {
     const resp = await fetch('/api/topology');
     if (!resp.ok) return;
     const data = await resp.json();
+    latestData = data;
 
     const nodes = new vis.DataSet(data.nodes);
     const edges = new vis.DataSet(data.edges);
@@ -45,6 +94,8 @@ async function loadTopology() {
     } else {
         network.setData({ nodes, edges });
     }
+
+    if (currentView === 'list') renderList();
 
     document.getElementById('last-update').textContent =
         '(oxirgi yangilanish: ' + new Date().toLocaleTimeString() + ')';
