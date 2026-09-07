@@ -4457,6 +4457,65 @@ def _test_service_wrapper_logs_import_crash_to_file():
 
 check("service_wrapper.py: import xatosi (masalan ModuleNotFoundError) endi izsiz yo'qolmaydi, ProgramData'ga crash log yoziladi", _test_service_wrapper_logs_import_crash_to_file)
 
+
+def _test_windows_agent_powershell_prototype():
+    """
+    Foydalanuvchi so'radi: ".exe agent o'rniga faqat PowerShell'dan
+    foydalanish mumkinmi?" - pywin32/SCM bilan bog'liq ko'p sonli
+    (15 martadan ko'p) real production xatosidan qochish uchun.
+
+    Javob sifatida `windows_agent/powershell/Agent.ps1` yaratildi - bu
+    agent_core/agent.py'ning eng muhim zanjirini (fayl kuzatish -> SHA256
+    -> /api/v1/check_hash) Python/pywin32/PyInstaller'siz, faqat native
+    PowerShell/.NET vositalari bilan qayta yozadigan PROTOTIP (jarayon
+    o'ldirish/karantin ATAYLAB HALI YO'Q - foydalanuvchi bilan
+    kelishilgan bosqichma-bosqich qaror).
+
+    MUHIM (halol cheklov): PowerShell bu sandbox'da mavjud emas (Zeek/
+    Grafana/boshqa GPO skriptlari kabi holat) - shuning uchun HAQIQIY
+    ijro emas, faqat matn-asosida (kalit naqshlar + qavslar balansi)
+    tekshiriladi. Haqiqiy Windows'da qo'lda sinash SHART.
+    """
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "windows_agent", "powershell", "Agent.ps1",
+    )
+    assert os.path.exists(script_path), f"PowerShell prototip fayli topilmadi: {script_path}"
+
+    with open(script_path, encoding="utf-8") as f:
+        content = f.read()
+
+    # 1) Asosiy zanjirning har bir bosqichi mavjudligini tekshirish
+    required_patterns = {
+        "Read-DotEnv": "Deploy/Install .ps1 skriptlari bilan bir xil '.env' formatini o'qishi kerak",
+        "DefaultWebProxy": (
+            "LocalSystem/SYSTEM proksi merosi muammosidan (Python agentda "
+            "O'N TO'RTINCHI marta topilgan xato bilan bir xil turkum) himoya bo'lishi kerak"
+        ),
+        "FileSystemWatcher": "Fayl tizimini kuzatish uchun .NET FileSystemWatcher ishlatilishi kerak",
+        "Wait-FileStable": "Fayl barqarorlashishini kutish (agent_core/file_monitor.py bilan bir xil mantiq)",
+        "Get-FileHash": "SHA256 hash hisoblash uchun",
+        "-Algorithm SHA256": "Aniq SHA256 algoritmi ko'rsatilishi kerak (standart emas)",
+        "/api/v1/check_hash": "Markaziy serverga to'g'ri endpoint",
+        "X-API-Key": "Autentifikatsiya sarlavhasi",
+        "ConcurrentQueue": "Hodisalarni thread-safe navbatga qo'yish (Register-ObjectEvent runspace muammosidan qochish uchun)",
+        "PROTOTIP": "Jarayon o'ldirish/karantin hali yo'qligi ANIQ hujjatlashtirilgan bo'lishi kerak (halollik)",
+    }
+    for pattern, why in required_patterns.items():
+        assert pattern in content, f"Agent.ps1'da '{pattern}' topilmadi - {why}"
+
+    # 2) Qavslar balansi (izohlarni chiqarib tashlab - mavjud GPO skript
+    #    testlaridagi bilan bir xil usul)
+    code_only = [l for l in content.splitlines(keepends=True) if not l.strip().startswith("#")]
+    code_content = "".join(code_only)
+    for open_c, close_c in [("{", "}"), ("(", ")"), ("[", "]")]:
+        assert code_content.count(open_c) == code_content.count(close_c), (
+            f"Qavslar balansi buzilgan: {open_c}={code_content.count(open_c)}, {close_c}={code_content.count(close_c)}"
+        )
+
+
+check("Windows Agent PowerShell PROTOTIPI: .exe/pywin32'siz fayl kuzatish->hash->check_hash zanjiri (matn-asosida, haqiqiy Windows'da sinalmagan)", _test_windows_agent_powershell_prototype)
+
 # ---------------------------------------------------------------------------
 print("\n=== 65) Dashboard: Endpoint Agent Online/Offline holati + fayl tekshiruvi ko'rinishi ===")
 
