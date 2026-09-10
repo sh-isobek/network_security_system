@@ -5,9 +5,13 @@ Deep Scan Engine - 4-bosqich.
 hali chuqur tekshiruvdan o'tmagan (deep_scanned=False) yozuvlarni oladi:
 
   1. YARA qoidalari bilan tekshiradi (barcha fayl turlari uchun umumiy).
-  2. Agar Office fayli bo'lsa (docm/xlsm/...) - oletools orqali makro
+  2. Fayl turi nomuvofiqligi (haqiqiy baytlar vs kengaytma) - `scanners/
+     file_type_detector.py` orqali (masalan `invoice.pdf` aslida PE32
+     bajariladigan fayl bo'lsa).
+  3. Agar Office fayli bo'lsa (docm/xlsm/...) - oletools orqali makro
      tekshiradi.
-  3. Agar ZIP bo'lsa - arxivni ochib, ichidagi fayllarni yangi FileEvent
+  4. Agar ZIP bo'lsa (kengaytma YOKI haqiqiy fayl turi bo'yicha - pastga
+     qarang) - arxivni ochib, ichidagi fayllarni yangi FileEvent
      sifatida navbatga qo'yadi (ular avtomatik ravishda oddiy pipeline
      orqali - avval hash, keyin shu deep-scan orqali - qayta ishlanadi).
 
@@ -46,6 +50,7 @@ from scanners.yara_scanner import scan_file as yara_scan_file
 from scanners.office_scanner import scan_office_file, OFFICE_EXTENSIONS
 from scanners.archive_scanner import extract_zip_and_queue
 from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_available as clamav_db_available
+from scanners.file_type_detector import detect_magic_from_file, check_extension_mismatch
 from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -84,6 +89,16 @@ def deep_scan_one(session, fe: FileEvent):
             findings.append(f"ClamAV[critical]: {clamav_result['signature']}")
             is_malicious = True
 
+        # 1c) Fayl turi nomuvofiqligi (⑳-band) - HAQIQIY fayl baytlaridan
+        # (Suricata'ning matn-asosidagi `fe.magic`idan farqli, bu yerda
+        # haqiqiy diskdagi fayl o'qiladi - eng ishonchli manba). Masalan
+        # `invoice.pdf` nomli fayl aslida PE32 bajariladigan bo'lsa.
+        real_magic = detect_magic_from_file(fe.stored_path)
+        mismatch = check_extension_mismatch(fe.file_ext, real_magic)
+        if mismatch["severity"] == "critical":
+            findings.append(f"Fayl turi nomuvofiqligi[critical]: {mismatch['note']}")
+            is_malicious = True
+
         # 2) Office makro
         if fe.file_ext in OFFICE_EXTENSIONS:
             office_result = scan_office_file(fe.stored_path)
@@ -91,8 +106,15 @@ def deep_scan_one(session, fe: FileEvent):
                 findings.extend(office_result.get("findings", []))
                 is_malicious = True
 
-        # 3) ZIP arxiv - ichidagi fayllarni navbatga qo'yish
-        if fe.file_ext in ARCHIVE_EXTENSIONS:
+        # 3) ZIP arxiv - ichidagi fayllarni navbatga qo'yish. MUHIM: FAQAT
+        # kengaytmaga (fe.file_ext) emas, HAQIQIY fayl turiga (real_magic)
+        # ham qaraladi - aks holda hujumchi zararli ZIP'ni oddiygina
+        # `.txt`/`.jpg` deb nomlab, arxiv skanerini butunlay chetlab
+        # o'tishi mumkin edi (real production'da hali kuzatilmagan, lekin
+        # haqiqiy, dokumentlashtirilgan bypass texnikasi).
+        if fe.file_ext in ARCHIVE_EXTENSIONS or real_magic == "ZIP":
+            if fe.file_ext not in ARCHIVE_EXTENSIONS:
+                findings.append(f"Kengaytma '.{fe.file_ext}' ZIP kutmagan, lekin haqiqiy tarkib ZIP - baribir arxiv sifatida tekshirilmoqda.")
             children = extract_zip_and_queue(session, fe)
             if children:
                 findings.append(f"Arxivdan {len(children)} ta fayl chiqarilib, tahlil navbatiga qo'yildi.")

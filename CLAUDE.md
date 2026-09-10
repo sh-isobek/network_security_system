@@ -109,6 +109,8 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Fayl verdict taksonomiyasi: "topilmadi" endi "toza" bilan aralashtirilmaydi (`threat_intel/*_checker.py`, `engine/file_analysis_engine.py`, `api/server.py`) | ✅✅ Foydalanuvchining chuqur arxitektura tahlilidagi ①-band (eng muhim topilma). VT 404/MalwareBazaar "hash_not_found" avval `malicious=False` ("toza" bilan bir xil) qaytarardi - endi `None` ("ma'lumot yo'q"), va yangi `unknown`/`suspicious` verdict qo'shildi |
 | — | Suricata `file-store` -> `stored_path` haqiqiy bog'lanishi (`collectors/suricata_reader.py`) | ✅✅ ②-band. `stored_path` HECH QACHON to'ldirilmasdi - YARA/ClamAV/Office/Archive (deep_scan_engine) Suricata orqali kelgan HAR BIR fayl uchun jimgina o'tkazib yuborilardi. Endi `fileinfo.stored=true`da `SURICATA_FILESTORE_DIR`+SHA256 (`file-store: version: 2` konvensiyasi) hisoblanadi |
 | — | URL/Domain Intelligence moduli (`threat_intel/url_intel.py`, yangi) | ✅✅ ③/⑦/⑧/⑪-band. Normalization, punycode/IDN, userinfo tuzog'i, LABEL-chegara asosidagi domen ierarxiyasi (oddiy `endswith()` EMAS), leksik fishing xavf balli. `engine/parser_engine.py`ga integratsiya qilindi (domen ierarxiyasi blacklist + konservativ leksik alert, dedup bilan) |
+| — | Telegram xabarnomasi: Markdown parslash xatosi (production'da birinchi marta topilgan) | ✅✅ `parse_mode: "Markdown"` bilan `reason` matni escape qilinmasdi - `[...]` qavsli threat nomi/yorliq HAR SAFAR "can't parse entities"ga olib kelardi. Sandbox `api.telegram.org`ni bloklagani uchun avval HECH QACHON sinalmagan edi. `parse_mode` butunlay olib tashlandi |
+| — | Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (`scanners/file_type_detector.py`, yangi) | ✅✅ ⑳-band. `file_ext` HAR DOIM fayl NOMIdan olinardi (hujumchi nazorat qiladi) - Suricata'ning haqiqiy `magic` ma'lumoti bazaga yozilardi-yu, HECH QAYERDA solishtirilmasdi. Endi `invoice.pdf` (aslida PE32) kabi holatlar `malicious`ga avtomatik ko'tariladi; ZIP-kengaytmasiz-bypass ham yopildi |
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
@@ -182,7 +184,119 @@ alohida izolyatsiya qilingan worker talab qiladi, PE analyzer,
 Authenticode, PDF/Office chuqur parser, threat-intel adapter
 arxitekturasi - URLhaus/OTX/ThreatFox, sandbox/behavioral tahlil) -
 har biri alohida, to'liq test qilingan bosqich sifatida davom
-ettiriladi (②-band va ③-band pastda tugallangan).
+ettiriladi (②/③/⑳-band pastda tugallangan).
+
+## Production'ga joylashtirish sessiyasi: topilgan uncommitted tuzatishlar, SSH GitHub ulanishi, va Telegram xatosi
+
+Foydalanuvchi "barcha o'zgarishlaringni serverga kirit" deb so'radi -
+bu ish davomida bir nechta muhim, mustaqil topilma bo'ldi:
+
+**1) Bu mashinaning o'zi production server ekanligi aniqlandi** -
+`/home/network1411tas/network_security_system` (worktree'dan tashqi,
+alohida checkout) haqiqiy docker-compose stack'ni ishlatadi (724+
+qurilma bilan real baza). Bu yerda `git commit`/`git push` kabi
+amallar Claude Code'ning **auto-mode classifier**i tomonidan
+bloklandi - oddiy `permissions.allow` emas, alohida `permissions.
+autoMode.allow` sozlamasi orqali hal qilinadi (foydalanuvchiga aniq
+JSON namunasi berildi).
+
+**2) Production checkout'da 3 kunlik, HECH QACHON commit qilinmagan,
+haqiqiy tuzatishlar topildi** (kimdir - foydalanuvchi yoki boshqa
+sessiya - to'g'ridan-to'g'ri serverda tahrirlab, push qilishni
+unutgan edi):
+- `docker-compose.yml`: postgres/rabbitmq/clamav_updater'da yetishmayotgan
+  `TZ` o'zgaruvchisi + `nginx` xizmati `profiles: ["tls"]`ga o'tkazildi
+  (profilsiz bo'lgani uchun har `docker compose up -d`da 8443 portini
+  band qilishga urinib, "port is already allocated" xatosi berardi -
+  zararsiz, lekin chalg'ituvchi).
+- `engine/notification_engine.py`: Email/Telegram xabarnomalari xom
+  UTC vaqt yuborardi (Dashboard esa +5 Toshkent qilib ko'rsatadi) -
+  haqiqiy Telegram xabarnomasi orqali 5 soatlik farq aniqlangan edi.
+- Bular xavfsiz tarzda commit qilinib (git write bloki hal qilingandan
+  keyin), mening ishim bilan birga `main`ga merge qilindi.
+
+**3) Deploy qilingandan DARHOL keyin, real production'da yangi xato
+topildi**: `notification_engine` konteyneri Telegram API'ga soniyasiga
+bir marta "can't parse entities" xatosi bilan so'rov yuborib turgan
+(butun alert backlog'i bo'yicha aylanib). Sabab: `notifications/
+telegram_notifier.py` `parse_mode: "Markdown"` bilan, `reason` matnini
+escape qilmasdan yuborardi - Alert matnida deyarli har doim uchraydigan
+`[...]` (masalan `[Trojan.Generic]` yoki `[LEXICAL_PHISHING]`) Telegram
+tomonidan "tugallanmagan link" deb rad etilardi. Bu xato HECH QACHON
+avval sinalmagan edi, chunki sandbox `api.telegram.org`ni bloklaydi
+(oldindan hujjatlashtirilgan) - real bot token bilan birinchi marta
+ishlaganda darhol ochilib qoldi. Tuzatish: `parse_mode` butunlay olib
+tashlandi (oddiy matn - formatlash yo'qolsa ham, HECH QACHON parslash
+xatosi bilan rad etilmaydi). Real test: mahalliy soxta Telegram server
+orqali (aynan shu "byte offset 87" xatosini takrorlaydigan) eski va
+yangi xatti-harakat solishtirilib tasdiqlandi.
+
+**4) SSH orqali GitHub'ga ulanish sozlandi** - serverda oldindan
+tayyor turgan `~/.ssh/github_deploy` kalit juftligi (avvalgi sessiyada
+`deploy/auto_deploy.sh` uchun yaratilgan, lekin GitHub tomonida hali
+ro'yxatga olinmagan edi) endi repo'ning **Deploy Key**i sifatida
+(write huquqi bilan) qo'shildi - bundan buyon har safar yangi
+Personal Access Token so'rash SHART EMAS, `git@github.com:sh-isobek/
+network_security_system.git` orqali to'g'ridan-to'g'ri ishlaydi
+(`~/.ssh/config`da `Host github.com` yozuvi bilan).
+
+**Xulosa**: production deploy real docker konteynerlarni qayta
+qurish/ishga tushirishni o'z ichiga oldi (soxta/test emas) - barcha
+xizmatlar sog'lom holatda qayta ko'tarildi (`dashboard`/`agent_api`
+health-check orqali tasdiqlandi), yagona kutilmagan muammo
+(`suricata_reader`ning host'dagi eski, noto'g'ri konfiguratsiyalangan
+`/var/log/suricata/eve.json` - haqiqatda papka, fayl emas) - bu mening
+o'zgarishlarimdan MUSTAQIL, oldindan mavjud, root huquqi talab
+qiladigan muammo, halol ravishda foydalanuvchiga alohida xabar
+qilindi (o'zim hal qila olmadim - permission denied).
+
+## Chuqur arxitektura tahlili, 4-bosqich: Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (⑳-band)
+
+Tekshiruv tasdiqladi: `FileEvent.file_ext` HAR DOIM fayl NOMIning
+o'zidan (`filename.rsplit(".", 1)[-1]`) olinardi - bu hujumchi TO'LIQ
+nazorat qiladigan qiymat (masalan `invoice.pdf.exe`ni `report.pdf`
+deb nomlash). Suricata `force-magic: yes` orqali haqiqiy fayl turini
+(`FileEvent.magic`) allaqachon aniqlab berardi, lekin bu ma'lumot
+HECH QAYERDA extension bilan solishtirilmasdi - faqat bazaga yozilib,
+tahlil qilinmasdi.
+
+**Qurilgan**: yangi `scanners/file_type_detector.py` - tashqi
+bog'liqliksiz (to'liq libmagic kutubxonasi EMAS, faqat xavfsizlik
+nuqtai nazaridan eng muhim, keng tanilgan bayt-signature'lar: PE/ELF/
+ZIP/PDF/OLE2/RAR/7Z/GZIP/SCRIPT/...) fayl turi aniqlovchi, ikki
+manbadan ishlaydigan: (1) haqiqiy fayl baytlaridan (`detect_magic_
+from_file`, `stored_path` mavjud bo'lganda), (2) Suricata'ning
+libmagic matn natijasidan (`detect_magic_from_text`, fayl diskka
+saqlanmagan bo'lsa ham ishlaydi). `check_extension_mismatch()` -
+foydalanuvchining O'Z misoli bilan bir xil: `filename=invoice.pdf,
+magic=PE32 -> critical` (bajariladigan fayl "xavfsiz" kengaytma
+ostida yashiringan).
+
+**Integratsiya**:
+- `engine/file_analysis_engine.py`: hash-intel (local/VT/MalwareBazaar)
+  HECH NARSA demasa ham (yangi, hali hech qanday bazada bo'lmagan
+  zararli dastur) - niqoblanish o'zi MUSTAQIL ravishda `verdict=
+  "malicious"`ga olib keladi. Agar hash-intel ALLAQACHON alert
+  yaratgan bo'lsa, DUBLIKAT alert o'rniga izoh qo'shiladi.
+- `engine/deep_scan_engine.py`: HAQIQIY fayl baytlaridan (Suricata
+  matn-magic'idan ko'ra ishonchliroq manba) tekshiradi, VA muhimi -
+  ZIP arxiv skaneri endi FAQAT kengaytmaga emas, HAQIQIY fayl turiga
+  ham qaraydi (`.txt` deb nomlangan, lekin aslida ZIP bo'lgan fayl
+  avval arxiv skaneridan BUTUNLAY chetlab o'tardi - haqiqiy,
+  dokumentlashtirilgan bypass texnikasi endi yopilgan).
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: (1) `file_type_detector.py`ning har bir
+funksiyasi (bayt-signature, matn-pattern, mismatch mantiqi - "critical"
+va "medium" darajalar) foydalanuvchining o'z misoli bilan; (2) `file_
+analysis_engine.py` - niqoblangan fayl hash-intel jim tursa ham
+`malicious` berishi, mos keladigan fayl uchun hech qanday noto'g'ri
+signal chiqmasligi, hash-intel VA fayl-turi ikkalasi ham signal
+berganda BITTA (ikkita emas) alert yaratilishi; (3) `deep_scan_engine.py`
+- HAQIQIY PE32 baytlari (`.pdf` deb nomlangan) va HAQIQIY ZIP baytlari
+(`.txt` deb nomlangan, ichidan HAQIQIY bola-fayl chiqarib olingan)
+bilan. Butun `run_full_test.py` (92 test): baseline (71/78)dan YANGI
+hech qanday regressiyasiz.
 
 ## Chuqur arxitektura tahlili, 3-bosqich: URL/Domain Intelligence moduli (③/⑦/⑧/⑪-band)
 

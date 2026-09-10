@@ -6406,6 +6406,222 @@ def _test_parser_engine_domain_hierarchy_and_lexical_alert():
 check("Parser Engine: domen ierarxiyasi blacklist + leksik fishing alert (dedup bilan, real DB orqali)", _test_parser_engine_domain_hierarchy_and_lexical_alert)
 
 # ---------------------------------------------------------------------------
+print("\n=== 87) Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishini aniqlash (foydalanuvchi tahlilidagi ⑳-band) ===")
+
+
+def _test_file_type_detector_module():
+    """
+    Foydalanuvchi chuqur arxitektura tahlilidagi ⑳-band: "Fayl MIME
+    type'ini extensiondan ustun qo'yish kerak" - aniq misol sifatida
+    `filename=invoice.pdf, magic=PE32 executable -> HIGH/CRITICAL`
+    keltirilgan edi. Bu test `scanners/file_type_detector.py`ni AYNAN
+    shu misol bilan tekshiradi.
+    """
+    from scanners.file_type_detector import (
+        detect_magic_from_bytes, detect_magic_from_text, check_extension_mismatch,
+    )
+
+    # --- Bayt-signature'lar ---
+    assert detect_magic_from_bytes(b"MZ" + b"\x90" * 58) == "PE"
+    assert detect_magic_from_bytes(b"\x7fELF\x01\x01\x01") == "ELF"
+    assert detect_magic_from_bytes(b"PK\x03\x04" + b"\x00" * 10) == "ZIP"
+    assert detect_magic_from_bytes(b"%PDF-1.4\n") == "PDF"
+    assert detect_magic_from_bytes(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1") == "OLE2"
+    assert detect_magic_from_bytes(b"Rar!\x1a\x07\x00") == "RAR"
+    assert detect_magic_from_bytes(b"random plain text") is None
+
+    # --- Suricata libmagic matn natijasi ---
+    assert detect_magic_from_text("PE32 executable (GUI) Intel 80386, for MS Windows") == "PE"
+    assert detect_magic_from_text("PDF document, version 1.4") == "PDF"
+    assert detect_magic_from_text("Zip archive data, at least v2.0 to extract") == "ZIP"
+    assert detect_magic_from_text("ASCII text") is None
+
+    # --- Foydalanuvchining O'Z misoli: invoice.pdf, aslida PE32 ---
+    result = check_extension_mismatch("pdf", "PE")
+    assert result["mismatch"] is True
+    assert result["severity"] == "critical", f"Niqoblangan bajariladigan fayl 'critical' bo'lishi kerak edi, {result} keldi"
+
+    # --- Mos kelgan holat - mismatch bo'lmasligi kerak ---
+    assert check_extension_mismatch("pdf", "PDF")["mismatch"] is False
+    assert check_extension_mismatch("exe", "PE")["mismatch"] is False
+
+    # --- "medium" daraja: bajariladigan bo'lmagan, lekin noto'g'ri turdagi mos kelmaslik ---
+    medium = check_extension_mismatch("docx", "OLE2")
+    assert medium["mismatch"] is True and medium["severity"] == "medium"
+
+    # --- Noma'lum/tekshirilmagan kengaytma - fikr yuritilmaydi ---
+    assert check_extension_mismatch("txt", "PE") == {"mismatch": False, "severity": None, "note": None}
+    assert check_extension_mismatch("log", None) == {"mismatch": False, "severity": None, "note": None}
+
+
+check("Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishini aniqlash moduli", _test_file_type_detector_module)
+
+# ---------------------------------------------------------------------------
+print("\n=== 88) File Analysis Engine: niqoblangan fayl (kengaytma vs haqiqiy tur) - real DB orqali ===")
+
+
+def _test_file_analysis_engine_detects_masquerade():
+    """
+    Foydalanuvchining aniq misoli: hash-intel (local/VT/MalwareBazaar)
+    HECH NARSA demasa ham (yangi, hech qaysi bazada yo'q fayl) - agar
+    fayl NIQOBLANGAN bo'lsa (Suricata `force-magic`dan kelgan `fe.magic`
+    aslida bajariladigan fayl ekanini ko'rsatsa-yu, `fe.filename`/
+    `file_ext` "hujjat" deb da'vo qilsa), bu ALOHIDA, mustaqil signal
+    sifatida `verdict="malicious"`ga olib kelishi kerak.
+    """
+    from unittest.mock import patch
+    import engine.file_analysis_engine as fae
+
+    # --- 1) Hash-intel hech narsa demaydi, lekin fayl niqoblangan -> malicious ---
+    s = get_session()
+    fe1 = FileEvent(
+        src_ip="172.16.64.1", filename="invoice.pdf", file_ext="pdf",
+        magic="PE32 executable (GUI) Intel 80386, for MS Windows", sha256="1b" * 32, checked=False,
+    )
+    s.add(fe1)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value=None), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe1)
+        s.commit()
+    assert fe1.verdict == "malicious", (
+        f"Niqoblangan fayl (hash-intel hech narsa demagan bo'lsa ham) 'malicious' bo'lishi kerak edi, '{fe1.verdict}' keldi"
+    )
+    alert1 = s.query(Alert).filter(Alert.file_event_id == fe1.id).first()
+    assert alert1 is not None and "Niqoblangan fayl" in alert1.reason
+    assert alert1.severity == "critical"
+    s.close()
+
+    # --- 2) Mos keladigan fayl (chin PDF) - hech qanday mismatch alert yo'q, "unknown" (hech kim tasdiqlamagan) ---
+    s = get_session()
+    fe2 = FileEvent(
+        src_ip="172.16.64.2", filename="report.pdf", file_ext="pdf",
+        magic="PDF document, version 1.4", sha256="2b" * 32, checked=False,
+    )
+    s.add(fe2)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value=None), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe2)
+        s.commit()
+    assert fe2.verdict == "unknown", f"Mos keladigan, tasdiqlanmagan fayl 'unknown' bo'lishi kerak edi, '{fe2.verdict}' keldi"
+    assert s.query(Alert).filter(Alert.file_event_id == fe2.id).first() is None
+    s.close()
+
+    # --- 3) Hash-intel ALLAQACHON malicious deb topgan VA fayl ham niqoblangan -
+    #        IKKITA emas, BITTA alert (dublikat yaratilmasligi) ---
+    s = get_session()
+    s.add(HashBlacklist(sha256="3b" * 32, threat_name="CI.KnownMalware", source="ci_test"))
+    fe3 = FileEvent(
+        src_ip="172.16.64.3", filename="salary.xlsx", file_ext="xlsx",
+        magic="PE32 executable (GUI) Intel 80386, for MS Windows", sha256="3b" * 32, checked=False,
+    )
+    s.add(fe3)
+    s.commit()
+    fae.analyze_one(s, fe3)
+    s.commit()
+    assert fe3.verdict == "malicious"
+    alerts3 = s.query(Alert).filter(Alert.file_event_id == fe3.id).all()
+    assert len(alerts3) == 1, f"Hash-intel VA fayl-turi mosligi ikkalasi ham signal bergani uchun IKKITA alert yaratilmasligi kerak edi, {len(alerts3)} ta topildi"
+    assert "NIQOBLANGAN" in alerts3[0].reason, "Alert matnida fayl-turi nomuvofiqligi haqida izoh bo'lishi kerak edi"
+    s.close()
+
+
+check("File Analysis Engine: niqoblangan fayl (kengaytma vs haqiqiy tur) aniqlanadi, real DB orqali", _test_file_analysis_engine_detects_masquerade)
+
+# ---------------------------------------------------------------------------
+print("\n=== 89) Deep Scan Engine: haqiqiy fayl baytlaridan niqoblanish + kengaytmasiz ZIP bypass yopilishi ===")
+
+
+def _test_deep_scan_engine_magic_mismatch_and_zip_bypass():
+    """
+    (1) Haqiqiy PE32 baytlari bilan, lekin `.pdf` deb nomlangan HAQIQIY
+        fayl `deep_scan_engine`ning o'zi (Suricata matn-magic'iga emas,
+        HAQIQIY diskdagi baytlarga asoslanib) niqoblanganini aniqlashi
+        kerak.
+    (2) Haqiqiy ZIP baytlari bilan, lekin `.txt` deb nomlangan fayl -
+        avval FAQAT kengaytmaga (`file_ext in ARCHIVE_EXTENSIONS`)
+        qarab arxiv skaneri o'tkazib yuborilardi (haqiqiy bypass
+        texnikasi) - endi HAQIQIY tur orqali ham aniqlanib, arxiv
+        sifatida ochilishi kerak.
+    """
+    import shutil
+    import zipfile
+    from unittest.mock import patch
+
+    try:
+        import engine.deep_scan_engine as dse
+    except ImportError as exc:
+        print(f"   (yara/oletools yo'q - bu test o'tkazib yuborildi: {exc})")
+        return
+
+    work_dir = "/tmp/_test_deep_scan_magic_mismatch"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+
+    try:
+        # --- 1) PE32 baytlari, .pdf deb nomlangan ---
+        fake_pdf_path = os.path.join(work_dir, "invoice.pdf")
+        with open(fake_pdf_path, "wb") as f:
+            f.write(b"MZ" + b"\x90" * 58 + b"This program cannot be run in DOS mode")
+
+        s = get_session()
+        fe1 = FileEvent(
+            src_ip="172.16.64.10", filename="invoice.pdf", file_ext="pdf",
+            sha256="4b" * 32, checked=True, verdict="unknown",
+            stored_path=fake_pdf_path,
+        )
+        s.add(fe1)
+        s.commit()
+        with patch.object(dse, "yara_scan_file", return_value=[]), \
+             patch.object(dse, "clamav_db_available", return_value=False), \
+             patch.object(dse, "clamav_scan_file", return_value={"infected": False, "error": None}):
+            dse.deep_scan_one(s, fe1)
+            s.commit()
+        assert fe1.verdict == "malicious", (
+            f"HAQIQIY fayl baytlaridan PE32 aniqlanishi, .pdf deb nomlangan bo'lsa ham 'malicious' berishi kerak edi, '{fe1.verdict}' keldi"
+        )
+        assert "nomuvofiq" in (fe1.deep_scan_findings or "").lower()
+        s.close()
+
+        # --- 2) Haqiqiy ZIP, .txt deb nomlangan (kengaytma-asosli bypass) ---
+        fake_zip_path = os.path.join(work_dir, "notes.txt")
+        inner_path = os.path.join(work_dir, "inner_payload.bin")
+        with open(inner_path, "wb") as f:
+            f.write(b"MZ" + b"\x90" * 58 + b"fake payload for archive bypass test")
+        with zipfile.ZipFile(fake_zip_path, "w") as zf:
+            zf.write(inner_path, arcname="inner_payload.bin")
+
+        s = get_session()
+        fe2 = FileEvent(
+            src_ip="172.16.64.11", filename="notes.txt", file_ext="txt",
+            sha256="5b" * 32, checked=True, verdict="unknown",
+            stored_path=fake_zip_path,
+        )
+        s.add(fe2)
+        s.commit()
+        fe2_id = fe2.id
+        with patch.object(dse, "yara_scan_file", return_value=[]), \
+             patch.object(dse, "clamav_db_available", return_value=False), \
+             patch.object(dse, "clamav_scan_file", return_value={"infected": False, "error": None}):
+            dse.deep_scan_one(s, fe2)
+            s.commit()
+        assert "ZIP" in (fe2.deep_scan_findings or ""), (
+            "Kengaytma '.txt' bo'lsa ham, haqiqiy ZIP tarkib arxiv sifatida tanilmadi (bypass hali yopilmagan)"
+        )
+        child = s.query(FileEvent).filter(FileEvent.parent_file_event_id == fe2_id).first()
+        assert child is not None, "notes.txt ichidan (haqiqatan ZIP bo'lgani uchun) inner_payload.bin chiqarilishi kerak edi"
+        assert child.filename == "inner_payload.bin"
+        s.close()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        shutil.rmtree("/tmp/archive_extraction", ignore_errors=True)
+
+
+check("Deep Scan Engine: haqiqiy fayl baytlaridan niqoblanish aniqlanadi + kengaytmasiz ZIP bypass yopilgan", _test_deep_scan_engine_magic_mismatch_and_zip_bypass)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

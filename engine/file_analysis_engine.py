@@ -44,6 +44,7 @@ from db.models import FileEvent, Alert, HashBlacklist, Device
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
+from scanners.file_type_detector import detect_magic_from_text, check_extension_mismatch
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("file_analysis_engine")
@@ -141,6 +142,17 @@ def analyze_one(session, fe: FileEvent):
     fe.checked = True
     fe.checked_sources = ",".join(sources_checked)
 
+    # ⑳-band (foydalanuvchi chuqur tahlilidagi topilma): `file_ext` HAR
+    # DOIM fayl NOMIning o'zidan olinadi - hujumchi to'liq nazorat
+    # qiladigan qiymat (masalan `invoice.pdf.exe`ni `report.pdf` deb
+    # nomlash). Suricata `force-magic: yes` orqali HAQIQIY fayl turini
+    # (`fe.magic`) allaqachon aniqlab beradi, lekin bu ma'lumot HECH
+    # QAYERDA extension bilan solishtirilmasdi - faqat bazaga yozilib,
+    # tahlil qilinmasdi. Bu yerda solishtiriladi (batafsil: `scanners/
+    # file_type_detector.py`).
+    mismatch = check_extension_mismatch(fe.file_ext, detect_magic_from_text(fe.magic))
+    alert_created = False
+
     if result and result.get("malicious"):
         confirmed = bool(result.get("confirmed", False))
         fe.verdict = "malicious" if confirmed else "suspicious"
@@ -148,6 +160,8 @@ def analyze_one(session, fe: FileEvent):
         _add_to_local_blacklist(session, fe.sha256, result.get("threat_name"), source="auto")
 
         risk_note = " (yuqori xavfli fayl turi)" if fe.file_ext in HIGH_RISK_EXTENSIONS else ""
+        if mismatch["mismatch"]:
+            risk_note += f" | {mismatch['note']}"
         device = _upsert_device_for_file(session, fe.src_ip)
 
         # MUHIM: fayl faqat TASDIQLANGAN bo'lsa avtomatik karantinga
@@ -172,6 +186,7 @@ def analyze_one(session, fe: FileEvent):
             notified=False,
         )
         session.add(alert)
+        alert_created = True
         logger.warning(f"{'TASDIQLANGAN ZARARLI FAYL' if confirmed else 'SHUBHALI FAYL'}: {fe.filename} ({fe.src_ip} -> {fe.dest_ip}) - {result.get('threat_name')}")
     elif scanned_clean:
         fe.verdict = "clean"
@@ -179,6 +194,37 @@ def analyze_one(session, fe: FileEvent):
     else:
         fe.verdict = "unknown"
         fe.threat_score = 0
+
+    # MUHIM: hash-intel (local/VT/MalwareBazaar) HECH NARSA demagan
+    # (yoki hatto VT "toza" deb topgan) taqdirda ham, fayl NIQOBLANGAN
+    # bo'lsa (masalan .pdf deb ko'rsatilgan, aslida PE32 bajariladigan
+    # fayl) - bu o'zi kuchli, mustaqil xavfsizlik signali. Yangi (hali
+    # hech qanday threat-intel bazasida bo'lmagan) zararli dastur
+    # ko'pincha aynan shu tarzda (ishonchli nom bilan) tarqaladi - hash
+    # intel'ning "bilmayman" javobi bunga to'sqinlik qilmasligi kerak.
+    if mismatch["severity"] == "critical" and fe.verdict != "malicious":
+        fe.verdict = "malicious"
+        fe.threat_score = 100
+        if not alert_created:
+            device = _upsert_device_for_file(session, fe.src_ip)
+            alert = Alert(
+                file_event_id=fe.id,
+                device_id=device.id,
+                severity="critical",
+                reason=f"Niqoblangan fayl aniqlandi: {fe.filename} - {mismatch['note']} | SHA256={fe.sha256}",
+                action_taken="TASDIQLANGAN (fayl turi nomuvofiqligi): karantinaga yuborish/endpoint izolyatsiyasi navbatda",
+                notified=False,
+            )
+            session.add(alert)
+        logger.warning(f"NIQOBLANGAN FAYL: {fe.filename} ({fe.src_ip} -> {fe.dest_ip}) - {mismatch['note']}")
+    elif mismatch["mismatch"] and fe.verdict == "clean":
+        # "medium" darajadagi nomuvofiqlik (masalan .docx deb
+        # ko'rsatilgan, aslida eski OLE2 .doc) - hali Alert yaratish
+        # uchun yetarlicha aniq emas (soxta-pozitiv xavfi yuqori),
+        # lekin "VT haqiqatan toza deb tasdiqlagan" degan xulosani ham
+        # keraksiz ishonch bilan qoldirmaslik kerak - "unknown"ga
+        # qaytariladi.
+        fe.verdict = "unknown"
 
 
 def run_once():
