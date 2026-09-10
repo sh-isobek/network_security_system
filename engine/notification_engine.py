@@ -18,10 +18,11 @@ import logging
 import os
 import sys
 import time
+from datetime import timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import LOG_LEVEL
+from config.settings import LOG_LEVEL, TIMEZONE_OFFSET_HOURS
 from db.database import get_session
 from db.models import Alert, Device
 from notifications.email_notifier import send_alert_email
@@ -36,8 +37,18 @@ NOTIFY_CHANNELS = [c.strip() for c in os.getenv("NOTIFY_CHANNELS", "email,telegr
 
 def _build_alert_data(session, alert: Alert) -> dict:
     device = session.query(Device).filter(Device.id == alert.device_id).first() if alert.device_id else None
+    # MUHIM (real production'da aniqlangan xato - foydalanuvchi Telegram
+    # orqali kelgan haqiqiy xabarnomada aynan shu farqni ko'rsatdi):
+    # bazada `alert.timestamp` HAR DOIM UTC formatida saqlanadi (standart
+    # SIEM amaliyoti), va Dashboard buni `local_dt` Jinja filtri orqali
+    # foydalanuvchiga +5 (Toshkent) qilib ko'rsatadi - lekin Email/Telegram
+    # xabarnomalari bu konvertatsiyani UMUMAN qilmasdan, xom UTC vaqtni
+    # to'g'ridan-to'g'ri yuborardi. Natijada xabarnoma matnidagi "Vaqt:"
+    # (masalan 08:47) Telegram'ning o'z yetkazilish vaqtidan (13:47,
+    # qurilmaning mahalliy vaqti) 5 soatga farq qilardi - chalkashtiruvchi.
+    local_ts = (alert.timestamp + timedelta(hours=TIMEZONE_OFFSET_HOURS)) if alert.timestamp else None
     return {
-        "timestamp": alert.timestamp.strftime("%Y-%m-%d %H:%M:%S") if alert.timestamp else "",
+        "timestamp": local_ts.strftime("%Y-%m-%d %H:%M:%S") if local_ts else "",
         "hostname": device.hostname if device and device.hostname else "Nomalum",
         "ip_address": device.ip_address if device else "Nomalum",
         "mac_address": device.mac_address if device and device.mac_address else "Nomalum",

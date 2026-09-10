@@ -577,13 +577,20 @@ controller.stop()
         os.environ["ADMIN_EMAIL"] = "admin@company.local"
         os.environ["NOTIFY_CHANNELS"] = "email,telegram"
 
+        from datetime import datetime as _dt
+
         s = get_session()
         d = Device(ip_address="172.16.5.5", mac_address="AA:BB:CC:00:11:22",
                     hostname="NOTIFY-TEST-PC", connection_type="wifi", source="test")
         s.add(d)
         s.flush()
+        # MUHIM (real production'da real Telegram xabarnomasi orqali
+        # topilgan xato): aniq, nazorat qilinadigan UTC vaqt beriladi -
+        # buni xabarnoma matnida XOM UTC emas, +5 (Toshkent) qilib
+        # ko'rsatilishini tekshirish uchun (pastga qarang).
+        fixed_utc_ts = _dt(2026, 1, 15, 10, 0, 0)
         alert = Alert(device_id=d.id, severity="critical", reason="Test xabarnoma",
-                       action_taken="Test chora", notified=False)
+                       action_taken="Test chora", notified=False, timestamp=fixed_utc_ts)
         s.add(alert)
         s.commit()
         alert_id = alert.id
@@ -608,6 +615,17 @@ controller.stop()
         assert os.path.exists(received_log), "Email qabul qilinmadi (SMTP server fayl yozmadi)"
         content = open(received_log).read()
         assert "NOTIFY-TEST-PC" in content, "Xatda hostname topilmadi"
+        # MUHIM (real production'da real Telegram xabarnomasi orqali
+        # topilgan xato): xabarnomadagi "Vaqt:" avval xom UTC'ni
+        # ko'rsatardi (masalan 08:47), Telegram'ning o'z yetkazilish
+        # vaqtidan (mahalliy, 13:47) 5 soatga farq qilib chalkashtirardi.
+        # Endi _build_alert_data() +5 (TIMEZONE_OFFSET_HOURS) qo'shadi.
+        assert "2026-01-15 15:00:00" in content, (
+            "Xabarnomadagi vaqt +5 (Toshkent) ga o'tkazilmagan - xom UTC yuborilmoqda"
+        )
+        assert "2026-01-15 10:00:00" not in content, (
+            "Xabarnomada hali ham xom UTC vaqt bor - +5 konvertatsiyasi qo'llanmagan"
+        )
     finally:
         smtp_proc.terminate()
         smtp_proc.wait(timeout=5)
