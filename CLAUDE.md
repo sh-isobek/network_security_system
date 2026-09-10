@@ -111,6 +111,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | URL/Domain Intelligence moduli (`threat_intel/url_intel.py`, yangi) | ✅✅ ③/⑦/⑧/⑪-band. Normalization, punycode/IDN, userinfo tuzog'i, LABEL-chegara asosidagi domen ierarxiyasi (oddiy `endswith()` EMAS), leksik fishing xavf balli. `engine/parser_engine.py`ga integratsiya qilindi (domen ierarxiyasi blacklist + konservativ leksik alert, dedup bilan) |
 | — | Telegram xabarnomasi: Markdown parslash xatosi (production'da birinchi marta topilgan) | ✅✅ `parse_mode: "Markdown"` bilan `reason` matni escape qilinmasdi - `[...]` qavsli threat nomi/yorliq HAR SAFAR "can't parse entities"ga olib kelardi. Sandbox `api.telegram.org`ni bloklagani uchun avval HECH QACHON sinalmagan edi. `parse_mode` butunlay olib tashlandi |
 | — | Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (`scanners/file_type_detector.py`, yangi) | ✅✅ ⑳-band. `file_ext` HAR DOIM fayl NOMIdan olinardi (hujumchi nazorat qiladi) - Suricata'ning haqiqiy `magic` ma'lumoti bazaga yozilardi-yu, HECH QAYERDA solishtirilmasdi. Endi `invoice.pdf` (aslida PE32) kabi holatlar `malicious`ga avtomatik ko'tariladi; ZIP-kengaytmasiz-bypass ham yopildi |
+| — | PDF chuqur tahlil (`scanners/pdf_analyzer.py`, yangi) | ✅✅ ⑲-band. Avval YARA faqat XOM baytlarda qidirardi - zamonaviy PDF'lar `/OpenAction`/`/JavaScript`ni ko'pincha FlateDecode (zlib) bilan SIQIB saqlaydi, bu holatda xom-bayt qidiruvi HECH NARSA topmasdi. `zlib` (tashqi kutubxonasiz) orqali stream'lar ochiladi; PDF ichidagi URL'lar `url_intel.py` orqali fishing balliga tekshiriladi |
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
@@ -249,6 +250,51 @@ health-check orqali tasdiqlandi), yagona kutilmagan muammo
 o'zgarishlarimdan MUSTAQIL, oldindan mavjud, root huquqi talab
 qiladigan muammo, halol ravishda foydalanuvchiga alohida xabar
 qilindi (o'zim hal qila olmadim - permission denied).
+
+## Chuqur arxitektura tahlili, 5-bosqich: PDF chuqur tahlil (⑲-band)
+
+Foydalanuvchining o'z tavsiyasi: "PDF scanner alohida modul bo'lishi
+kerak" - avval PDF fayllar FAQAT YARA qoidalari orqali, XOM
+(siqilmagan) baytlarda `/JavaScript`/`/Launch`/`/EmbeddedFile`/
+`/OpenAction` kabi kalit so'zlarni qidirish orqali tekshirilardi.
+**Muhim, real bo'shliq**: zamonaviy PDF'larning aksariyati o'z ichki
+obyektlarini (shu jumladan aynan xavfli `/OpenAction`/`/JavaScript`
+lug'atlarining O'ZINI ham) FlateDecode (zlib) bilan SIQIB saqlaydi -
+bu holatda xom-bayt qidiruvi HECH NARSA topa olmaydi.
+
+**Qurilgan**: yangi `scanners/pdf_analyzer.py` - tashqi kutubxonasiz
+(Python standart `zlib`), PDF ichidagi HAR BIR `stream...endstream`
+blokini FlateDecode bilan ochishga urinadi (xavfsizlik hajm
+chegaralari bilan - "zlib bomb"dan himoya, `archive_scanner.py`dagi
+zip-bomb himoyasi bilan bir xil naqsh), so'ng xom VA ochilgan matnning
+IKKALASIDA HAM xavfli tuzilma belgilarini (/JavaScript, /OpenAction,
+/Launch, /AA, /EmbeddedFile, /RichMedia, /XFA) qidiradi. `/Launch`
+o'zi yolg'iz ham, `/JavaScript` + avtomatik trigger (`/OpenAction`/
+`/AA`) kombinatsiyasi ham - shubhali.
+
+**Foydalanuvchi "eng foydali qism" deb alohida ta'kidlagan xususiyat**:
+PDF ichidagi `/URI(...)` harakatlaridan VA matn ichidan (JS string'lar
+va h.k.) topilgan BARCHA URL'lar endi `threat_intel/url_intel.py`ning
+`analyze_url()` orqali o'tkaziladi - PDF ichidagi fishing havolasi
+(masalan `https://microsoft-login-security.xyz/verify`) ham
+aniqlanadi, bosqich 3'da qurilgan URL Intelligence moduli bilan
+to'g'ridan-to'g'ri bog'lanib.
+
+`engine/deep_scan_engine.py`ga integratsiya qilindi - `fe.file_ext in
+PDF_EXTENSIONS` bo'lganda `scan_pdf_file()` chaqiriladi, `suspicious`
+bo'lsa `verdict="malicious"`.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: qo'lda qurilgan, HAQIQIY PDF sintaksisiga
+mos, zlib bilan SIQILGAN `/OpenAction`+`/JavaScript`+fishing-uslubidagi
+`/URI` bilan (avval decompression bo'lmasa UMUMAN topilmasligi
+alohida tasdiqlangan holda - test xom baytlarda `/OpenAction`
+yo'qligini aniq tekshiradi), `/Launch` bilan, zararsiz PDF bilan (hech
+qanday soxta-pozitiv), va PDF-bo'lmagan/mavjud-bo'lmagan fayl bilan
+(`None` qaytishi). `deep_scan_engine.py` integratsiyasi ham real DB
+orqali (`verdict="malicious"`, Alert yaratilishi) tasdiqlandi. Butun
+`run_full_test.py` (94 test): baseline (71/78)dan YANGI hech qanday
+regressiyasiz.
 
 ## Chuqur arxitektura tahlili, 4-bosqich: Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (⑳-band)
 

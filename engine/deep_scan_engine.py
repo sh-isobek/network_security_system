@@ -10,7 +10,11 @@ hali chuqur tekshiruvdan o'tmagan (deep_scanned=False) yozuvlarni oladi:
      bajariladigan fayl bo'lsa).
   3. Agar Office fayli bo'lsa (docm/xlsm/...) - oletools orqali makro
      tekshiradi.
-  4. Agar ZIP bo'lsa (kengaytma YOKI haqiqiy fayl turi bo'yicha - pastga
+  4. Agar PDF bo'lsa - `scanners/pdf_analyzer.py` orqali (FlateDecode
+     bilan siqilgan qismlarni ham ochib) /OpenAction+/JavaScript,
+     /Launch, va PDF ichidagi URL'larning fishing xavf ballini
+     tekshiradi.
+  5. Agar ZIP bo'lsa (kengaytma YOKI haqiqiy fayl turi bo'yicha - pastga
      qarang) - arxivni ochib, ichidagi fayllarni yangi FileEvent
      sifatida navbatga qo'yadi (ular avtomatik ravishda oddiy pipeline
      orqali - avval hash, keyin shu deep-scan orqali - qayta ishlanadi).
@@ -51,6 +55,7 @@ from scanners.office_scanner import scan_office_file, OFFICE_EXTENSIONS
 from scanners.archive_scanner import extract_zip_and_queue
 from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_available as clamav_db_available
 from scanners.file_type_detector import detect_magic_from_file, check_extension_mismatch
+from scanners.pdf_analyzer import scan_pdf_file, PDF_EXTENSIONS
 from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -104,6 +109,16 @@ def deep_scan_one(session, fe: FileEvent):
             office_result = scan_office_file(fe.stored_path)
             if office_result and office_result.get("suspicious"):
                 findings.extend(office_result.get("findings", []))
+                is_malicious = True
+
+        # 2b) PDF chuqur tahlil (⑲-band) - `scanners/pdf_analyzer.py`ga
+        # qarang: FlateDecode bilan siqilgan /OpenAction+/JavaScript
+        # kombinatsiyasi, /Launch, VA PDF ichidagi URL'larning fishing
+        # xavf ballini (`threat_intel/url_intel.py` orqali) tekshiradi.
+        if fe.file_ext in PDF_EXTENSIONS:
+            pdf_result = scan_pdf_file(fe.stored_path)
+            if pdf_result and pdf_result.get("suspicious"):
+                findings.extend(pdf_result.get("findings", []))
                 is_malicious = True
 
         # 3) ZIP arxiv - ichidagi fayllarni navbatga qo'yish. MUHIM: FAQAT

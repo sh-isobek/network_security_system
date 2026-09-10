@@ -6622,6 +6622,143 @@ def _test_deep_scan_engine_magic_mismatch_and_zip_bypass():
 check("Deep Scan Engine: haqiqiy fayl baytlaridan niqoblanish aniqlanadi + kengaytmasiz ZIP bypass yopilgan", _test_deep_scan_engine_magic_mismatch_and_zip_bypass)
 
 # ---------------------------------------------------------------------------
+print("\n=== 90) PDF chuqur tahlil moduli (siqilgan /OpenAction+/JavaScript, /Launch, ichki URL fishing balli) ===")
+
+
+def _test_pdf_analyzer_module():
+    """
+    Foydalanuvchi chuqur arxitektura tahlilidagi ⑲-band: "PDF scanner
+    alohida modul bo'lishi kerak", eng foydali qismi - "PDF ichidagi
+    URL'larni ham URL engine'ga yuborish". Bu test `scanners/pdf_
+    analyzer.py`ni HAQIQIY (qo'lda qurilgan, lekin haqiqiy PDF
+    sintaksisiga mos) PDF baytlari bilan tekshiradi - shu jumladan
+    zlib bilan SIQILGAN (FlateDecode) qismlar ichida yashiringan
+    xavfli tuzilmalarni ham.
+    """
+    import zlib
+    import shutil
+
+    from scanners.pdf_analyzer import scan_pdf_file
+
+    work_dir = "/tmp/_test_pdf_analyzer"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+
+    try:
+        # --- 1) /OpenAction + /JavaScript - SIQILGAN (FlateDecode) holda,
+        #        XOM baytlarda UMUMAN ko'rinmaydi - faqat decompress orqali
+        #        topilishi kerak. Ichida fishing'ga o'xshash /URI ham bor. ---
+        inner = (
+            b"<< /OpenAction 5 0 R /Names << /JavaScript 6 0 R >> "
+            b"/Annots [ << /URI (https://microsoft-login-security.xyz/verify) >> ] >>"
+        )
+        compressed = zlib.compress(inner)
+        hidden_path = os.path.join(work_dir, "hidden.pdf")
+        with open(hidden_path, "wb") as f:
+            f.write(b"%PDF-1.4\n")
+            f.write(b"1 0 obj\n<< /Type /Catalog /Filter /FlateDecode >>\nstream\n" + compressed + b"\nendstream\nendobj\n")
+            f.write(b"%%EOF\n")
+        assert b"/OpenAction" not in open(hidden_path, "rb").read(), (
+            "Test qurilishi noto'g'ri - /OpenAction XOM baytlarda ko'rinib qolgan, "
+            "bu test decompression'ni HAQIQATAN sinamayapti"
+        )
+
+        result = scan_pdf_file(hidden_path)
+        assert result is not None
+        assert result["suspicious"] is True, f"Siqilgan /OpenAction+/JavaScript aniqlanmadi: {result}"
+        assert any("JavaScript" in f for f in result["findings"])
+        assert any("OpenAction" in f for f in result["findings"])
+        assert "https://microsoft-login-security.xyz/verify" in result["urls"]
+        assert any("Shubhali URL" in f and "malicious" in f for f in result["findings"]), (
+            "PDF ichidagi fishing URL threat_intel/url_intel.py orqali aniqlanmadi"
+        )
+
+        # --- 2) /Launch - o'zi yolg'iz ham har doim shubhali ---
+        launch_path = os.path.join(work_dir, "launch.pdf")
+        with open(launch_path, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj\n<< /S /Launch /F (cmd.exe) >>\nendobj\n%%EOF\n")
+        result2 = scan_pdf_file(launch_path)
+        assert result2["suspicious"] is True
+        assert any("Launch" in f for f in result2["findings"])
+
+        # --- 3) Zararsiz PDF - hech qanday topilma yo'q ---
+        benign_path = os.path.join(work_dir, "benign.pdf")
+        with open(benign_path, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n%%EOF\n")
+        result3 = scan_pdf_file(benign_path)
+        assert result3 == {"suspicious": False, "findings": [], "urls": []}
+
+        # --- 4) PDF bo'lmagan/mavjud bo'lmagan fayl - None ---
+        not_pdf_path = os.path.join(work_dir, "notes.txt")
+        with open(not_pdf_path, "w") as f:
+            f.write("oddiy matn")
+        assert scan_pdf_file(not_pdf_path) is None
+        assert scan_pdf_file(os.path.join(work_dir, "yoq.pdf")) is None
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("PDF chuqur tahlil moduli - siqilgan xavfli tuzilma + ichki URL fishing balli", _test_pdf_analyzer_module)
+
+# ---------------------------------------------------------------------------
+print("\n=== 91) Deep Scan Engine: PDF chuqur tahlil integratsiyasi (real DB orqali) ===")
+
+
+def _test_deep_scan_engine_pdf_integration():
+    """
+    `deep_scan_engine.deep_scan_one()` HAQIQIY diskdagi PDF faylni
+    (siqilgan /OpenAction+/JavaScript bilan) `scanners/pdf_analyzer.py`
+    orqali tekshirib, `verdict="malicious"`ga o'tkazishini va Alert
+    yaratishini tasdiqlaydi.
+    """
+    import zlib
+    import shutil
+    from unittest.mock import patch
+
+    try:
+        import engine.deep_scan_engine as dse
+    except ImportError as exc:
+        print(f"   (yara/oletools yo'q - bu test o'tkazib yuborildi: {exc})")
+        return
+
+    work_dir = "/tmp/_test_deep_scan_pdf"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+
+    try:
+        inner = b"<< /OpenAction 5 0 R /Names << /JavaScript 6 0 R >> >>"
+        compressed = zlib.compress(inner)
+        pdf_path = os.path.join(work_dir, "invoice_details.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n" + compressed + b"\nendstream\nendobj\n%%EOF\n")
+
+        s = get_session()
+        fe = FileEvent(
+            src_ip="172.16.64.20", filename="invoice_details.pdf", file_ext="pdf",
+            sha256="6b" * 32, checked=True, verdict="unknown", stored_path=pdf_path,
+        )
+        s.add(fe)
+        s.commit()
+        with patch.object(dse, "yara_scan_file", return_value=[]), \
+             patch.object(dse, "clamav_db_available", return_value=False), \
+             patch.object(dse, "clamav_scan_file", return_value={"infected": False, "error": None}):
+            dse.deep_scan_one(s, fe)
+            s.commit()
+
+        assert fe.verdict == "malicious", f"PDF ichidagi siqilgan xavfli tuzilma aniqlanmadi, verdict='{fe.verdict}'"
+        assert "JavaScript" in (fe.deep_scan_findings or "")
+        alert = s.query(Alert).filter(Alert.file_event_id == fe.id).first()
+        assert alert is not None and alert.severity == "critical"
+        s.close()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Deep Scan Engine: PDF chuqur tahlil integratsiyasi (real DB orqali)", _test_deep_scan_engine_pdf_integration)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
