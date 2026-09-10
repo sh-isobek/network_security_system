@@ -229,7 +229,14 @@ def _test_file_pipeline():
     assert fes["invoice.exe"].verdict == "malicious", "invoice.exe (hash blacklist) malicious deb topilishi kerak edi"
     assert fes["archive.zip"].verdict == "malicious", "archive.zip (ichida PE bor) malicious deb topilishi kerak edi"
     assert fes["report.pdf"].verdict == "malicious", "report.pdf (ichida JS bor) malicious deb topilishi kerak edi"
-    assert fes["clean.txt"].verdict == "clean", "clean.txt clean deb topilishi kerak edi"
+    # MUHIM (verdict taksonomiyasi tuzatilgan): bu sandbox'da VT_API_KEY
+    # sozlanmagan va MalwareBazaar'ga tarmoq kirish yo'q - ya'ni HECH
+    # QANDAY manba bu faylni haqiqatan "toza" deb TASDIQLAMAGAN, faqat
+    # "zararli emas" deb topilmagan. To'g'ri verdict endi "clean" EMAS,
+    # "unknown" ("hali klassifikatsiya qilinmagan") - avval bu holat
+    # noto'g'ri ravishda "clean" deb belgilanardi (aynan shu xato
+    # tuzatildi - pastdagi alohida testlarga qarang).
+    assert fes["clean.txt"].verdict == "unknown", "hech qanday manba tasdiqlamagan fayl 'unknown' bo'lishi kerak (avvalgi 'clean' xatosi)"
 
     # ZIP ichidan chiqqan payload.exe alohida FileEvent sifatida yaratilganini tekshirish
     payload = s.query(FileEvent).filter(FileEvent.filename == "payload.exe").first()
@@ -238,7 +245,7 @@ def _test_file_pipeline():
     assert payload.verdict == "malicious", "payload.exe malicious deb topilishi kerak edi"
 
     readme = s.query(FileEvent).filter(FileEvent.filename == "readme.txt").first()
-    assert readme is not None and readme.verdict == "clean", "readme.txt clean bo'lishi kerak edi (soxta pozitiv)"
+    assert readme is not None and readme.verdict == "unknown", "readme.txt 'unknown' bo'lishi kerak edi (hech kim tasdiqlamagan, avvalgi 'clean' xatosi)"
 
     file_alerts = s.query(Alert).filter(Alert.file_event_id.isnot(None)).all()
     assert len(file_alerts) >= 3, f"Kamida 3 ta fayl-alert kutilgan, {len(file_alerts)} ta topildi"
@@ -3449,14 +3456,17 @@ def _test_suricata_full_chain():
     os.makedirs(work_dir)
     eve_path = os.path.join(work_dir, "eve.json")
 
-    # Haqiqiy Suricata fileinfo event formatiga mos (rasmiy hujjat asosida)
+    # Haqiqiy Suricata fileinfo event formatiga mos (rasmiy hujjat asosida).
+    # `"stored":false` - bu fayl `filestore;` qoidasiga mos kelmagan
+    # (faqat hash hisoblangan, diskka yozilmagan) - `stored_path` bo'sh
+    # qolishi kerak.
     test_sha256 = "a" * 64  # test uchun sun'iy, real bo'lmagan hash (haqiqiy threat intel'ga so'rov yubormaslik uchun)
     with open(eve_path, "w") as f:
         f.write(
             '{"timestamp":"2026-08-17T10:00:00.000000+0500","event_type":"fileinfo",'
             '"src_ip":"172.16.1.99","dest_ip":"93.184.216.34","proto":"TCP","app_proto":"http",'
             f'"fileinfo":{{"filename":"ci_test_file.exe","magic":"PE32 executable","size":12345,'
-            f'"sha256":"{test_sha256}","md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}\n'
+            f'"sha256":"{test_sha256}","md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","stored":false}}}}\n'
         )
 
     from collectors.suricata_reader import read_existing
@@ -3469,6 +3479,7 @@ def _test_suricata_full_chain():
     assert fe.filename == "ci_test_file.exe"
     assert fe.src_ip == "172.16.1.99"
     assert fe.checked is False
+    assert fe.stored_path is None, "'stored:false' bo'lgan fayl uchun stored_path BO'SH qolishi kerak (fayl diskka yozilmagan)"
     s.close()
 
     # 3) Bir xil hash+src_ip qayta kelsa, TAKRORLANMASLIGI (dedup)
@@ -3479,6 +3490,133 @@ def _test_suricata_full_chain():
 
 
 check("Suricata -> File Analysis to'liq zanjiri (docker-compose xizmati + real formatda parsing)", _test_suricata_full_chain)
+
+# ---------------------------------------------------------------------------
+print("\n=== 49b) Suricata file-store -> stored_path haqiqiy bog'lanishi (foydalanuvchi tahlilidagi ②-band) ===")
+
+
+def _test_suricata_filestore_stored_path_binding():
+    """
+    Foydalanuvchining chuqur arxitektura tahlilidagi ②-band: avval
+    `collectors/suricata_reader.py` `FileEvent.stored_path`ni HECH
+    QACHON to'ldirmasdi - `engine/deep_scan_engine.py` (YARA/ClamAV/
+    Office/Archive) esa FAQAT `stored_path` mavjud bo'lganda ishlay
+    oladi. Natijada Suricata orqali kelgan fayllar uchun bu
+    tekshiruvlarning BARCHASI jimgina o'tkazib yuborilardi - hatto
+    fayl HAQIQATAN `file-store`ga saqlangan bo'lsa ham.
+
+    Bu test: (1) `fileinfo.stored=true` bo'lganda `stored_path`
+    `SURICATA_FILESTORE_DIR` + SHA256 sifatida TO'G'RI hisoblanishini
+    (Suricata `file-store: version: 2`ning HAQIQIY nomlash
+    konvensiyasi - haqiqiy diskdagi fayl bilan, `os.path.isfile()` orqali
+    ham tasdiqlangan holda), (2) `stored=false` bo'lganda `stored_path`
+    ATAYLAB bo'sh qolishini, (3) (agar `yara` moduli mavjud bo'lsa)
+    `deep_scan_engine`ning bu yo'ldan HAQIQIY faylni ochib, real EICAR
+    signature'ni topib, karantinga olishini tekshiradi.
+    """
+    import shutil
+    import hashlib
+
+    work_dir = "/tmp/_test_suricata_stored_path"
+    filestore_dir = os.path.join(work_dir, "filestore")
+    for d in (work_dir, filestore_dir):
+        if os.path.exists(d):
+            shutil.rmtree(d)
+    os.makedirs(filestore_dir)
+
+    # Haqiqiy EICAR test signature (real antivirus/YARA dvigatellari
+    # tomonidan tanib olinadigan, lekin zararsiz standart test fayli).
+    content = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\n"
+    sha256 = hashlib.sha256(content).hexdigest()
+    md5_placeholder = "c" * 32
+
+    # Suricata `file-store: version: 2`ning HAQIQIY nomlash konvensiyasi:
+    # fayl to'g'ridan-to'g'ri <dir>/<sha256> sifatida, ichki papkalarsiz.
+    stored_file_path = os.path.join(filestore_dir, sha256)
+    with open(stored_file_path, "wb") as f:
+        f.write(content)
+
+    eve_path = os.path.join(work_dir, "eve.json")
+    with open(eve_path, "w") as f:
+        # 1-qator: stored=true - HAQIQATAN diskka saqlangan fayl
+        f.write(
+            '{"timestamp":"2026-08-17T10:05:00.000000+0500","event_type":"fileinfo",'
+            '"src_ip":"172.16.1.150","dest_ip":"93.184.216.35","proto":"TCP","app_proto":"http",'
+            f'"fileinfo":{{"filename":"eicar_via_suricata.txt","magic":"ASCII text","size":{len(content)},'
+            f'"sha256":"{sha256}","md5":"{md5_placeholder}","stored":true}}}}\n'
+        )
+        # 2-qator: stored=false - faqat hash hisoblangan, DISKKA YOZILMAGAN
+        # (masalan filestore qoidasiga mos kelmagan) - stored_path bo'sh qolishi kerak
+        f.write(
+            '{"timestamp":"2026-08-17T10:05:01.000000+0500","event_type":"fileinfo",'
+            '"src_ip":"172.16.1.151","dest_ip":"93.184.216.36","proto":"TCP","app_proto":"http",'
+            f'"fileinfo":{{"filename":"hash_only.bin","magic":"data","size":999,'
+            f'"sha256":"{"9" * 64}","md5":"{md5_placeholder}","stored":false}}}}\n'
+        )
+
+    os.environ["SURICATA_FILESTORE_DIR"] = filestore_dir
+    os.environ["QUARANTINE_DIR"] = os.path.join(work_dir, "quarantine")
+    try:
+        from collectors.suricata_reader import read_existing
+        n = read_existing(eve_path)
+        assert n == 2, f"2 ta fileinfo yozuvi kutilgan edi, {n} keldi"
+
+        s = get_session()
+        fe_stored = s.query(FileEvent).filter(FileEvent.sha256 == sha256).first()
+        assert fe_stored is not None
+        assert fe_stored.stored_path == stored_file_path, (
+            f"stored_path noto'g'ri hisoblandi: kutilgan '{stored_file_path}', keldi '{fe_stored.stored_path}'"
+        )
+        assert os.path.isfile(fe_stored.stored_path), (
+            "stored_path haqiqiy diskdagi faylga ISHORA QILISHI kerak - bu aynan tuzatilgan bo'shliq"
+        )
+
+        fe_hash_only = s.query(FileEvent).filter(FileEvent.sha256 == "9" * 64).first()
+        assert fe_hash_only is not None
+        assert fe_hash_only.stored_path is None, "stored=false bo'lgan fayl uchun stored_path BO'SH qolishi kerak edi"
+        fe_stored_id = fe_stored.id
+        s.close()
+
+        # Agar `yara` moduli mavjud bo'lsa (bu sandbox'da bo'lmasligi
+        # mumkin - CI'da GitHub Actions o'rnatadi) - `deep_scan_engine`
+        # HAQIQATAN shu yo'ldan faylni ochib tekshirishini ham tasdiqlaymiz.
+        # `yara_scan_file`ning o'zi mock qilingan (mavjud `_test_deep_scan_
+        # real_quarantine` testidagi bilan bir xil naqsh) - bu yerdagi
+        # maqsad "haqiqiy YARA qoidasi EICAR'ni aniqlaydimi" emas, balki
+        # "deep_scan_engine endi stored_path orqali HAQIQIY faylni ochib,
+        # uni skanerga uzatadimi" (avval bu bosqichga HECH QACHON
+        # yetib bormasdi, chunki stored_path doim bo'sh edi).
+        from unittest.mock import patch
+        try:
+            import engine.deep_scan_engine as dse
+        except ImportError as exc:
+            print(f"   (yara/oletools yo'q - faqat stored_path bog'lanishi tekshirildi: {exc})")
+            return
+
+        s = get_session()
+        fe_stored = s.query(FileEvent).filter(FileEvent.id == fe_stored_id).first()
+        fe_stored.checked = True  # hash bosqichi allaqachon o'tgan deb faraz qilamiz
+        s.commit()
+        with patch.object(dse, "yara_scan_file", return_value=[{"rule": "CI_Suricata_StoredPath_Test", "severity": "critical", "description": "CI test"}]), \
+             patch.object(dse, "clamav_db_available", return_value=False):
+            dse.deep_scan_one(s, fe_stored)
+            s.commit()
+        assert fe_stored.deep_scanned is True
+        assert fe_stored.verdict == "malicious", (
+            "deep_scan_engine YARA topilmasini stored_path orqali HAQIQIY faylni ochib ko'rmasdan turib bera olmasdi - "
+            "bu stored_path bog'lanishi hali ham ishlamayotganini bildiradi"
+        )
+        assert "CI_Suricata_StoredPath_Test" in (fe_stored.deep_scan_findings or ""), (
+            "YARA topilmasi deep_scan_findings'ga yozilmadi - fayl HAQIQATAN ochilmagan bo'lishi mumkin"
+        )
+        s.close()
+    finally:
+        os.environ.pop("SURICATA_FILESTORE_DIR", None)
+        os.environ.pop("QUARANTINE_DIR", None)
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Suricata file-store -> stored_path haqiqiy bog'lanishi (real arxitektura bo'shlig'i tuzatilgan)", _test_suricata_filestore_stored_path_binding)
 
 # ---------------------------------------------------------------------------
 print("\n=== 50) GPO Deploy skripti: $env:USERDNSDOMAIN SYSTEM kontekstida ishonchsiz (real production xatosi) ===")
@@ -4087,7 +4225,12 @@ def _test_file_analysis_confirmed_threshold():
          patch.object(fae, "check_malwarebazaar", return_value=None):
         fae.analyze_one(s, fe2)
         s.commit()
-    assert fe2.verdict == "unknown", "1 ta dvigatel bilan 'tasdiqlangan' bo'lmasligi kerak edi"
+    # MUHIM (verdict taksonomiyasi tuzatilgan): zaif/tasdiqlanmagan
+    # zararli signal endi "unknown" EMAS, "suspicious" - "unknown" endi
+    # FAQAT "hech qanday manba umuman ma'lumot bermadi" holati uchun
+    # ishlatiladi (bular BUTUNLAY BOSHQA holatlar - avval ikkalasi ham
+    # "unknown" bo'lib, bir-biridan farqlanmas edi).
+    assert fe2.verdict == "suspicious", "1 ta dvigatel bilan 'tasdiqlangan' bo'lmasligi, lekin 'unknown' EMAS 'suspicious' bo'lishi kerak edi"
     alert2 = s.query(Alert).filter(Alert.file_event_id == fe2.id).first()
     assert alert2.severity == "medium"
     assert "SHUBHALI" in alert2.action_taken
@@ -4492,7 +4635,12 @@ def _test_agent_online_offline_status():
     clean_event = s.query(FileEvent).filter(FileEvent.sha256 == clean_sha).first()
     malicious_event = s.query(FileEvent).filter(FileEvent.sha256 == "e" * 64).first()
     assert clean_event is not None, "Toza fayl ham file_events'ga yozilishi kerak edi (agent faoliyati ko'rinishi uchun)"
-    assert clean_event.verdict == "clean"
+    # MUHIM (verdict taksonomiyasi tuzatilgan): bu sha256 hech qanday
+    # manbada (local/VT/MalwareBazaar) topilmagan - VT_API_KEY bu
+    # sandbox'da sozlanmagan, ya'ni hech kim uni HAQIQATAN "toza" deb
+    # tasdiqlamagan. To'g'ri verdict "clean" EMAS, "unknown" (avvalgi
+    # xato: "topilmadi" har doim "clean" deb yozilardi).
+    assert clean_event.verdict == "unknown", "hech kim tasdiqlamagan fayl 'unknown' bo'lishi kerak (avvalgi 'clean' xatosi)"
     assert clean_event.channel == "endpoint_agent"
     assert clean_event.filename == "gilocht.pdf"
     assert malicious_event is not None
@@ -5455,6 +5603,710 @@ def _test_connection_events_feed_alerts_and_web_activity():
 
 
 check("Kerio Connection hodisalari: blacklist Alert + Web Activity'ga yozilishi (real production bo'shlig'i tuzatilgan)", _test_connection_events_feed_alerts_and_web_activity)
+
+# ---------------------------------------------------------------------------
+print("\n=== 78) Device identifikatsiyasi: MAC bo'yicha (DHCP IP o'zgarganda duplikat qator yaratilmaydi) ===")
+
+
+def _test_device_mac_identity_no_duplicate_on_ip_change():
+    """
+    Foydalanuvchi: "qurilma online dan oflinega o'tganida va yangi
+    qurilma ulansa uni yana yangi qurilma sifatida ro'yxatga
+    qo'shayabdi". TUB SABAB: `devices` avval FAQAT `ip_address` bo'yicha
+    aniqlanardi (`engine/parser_engine.py`/`network_discovery/
+    asset_inventory.py`dagi `_upsert_device`). DHCP muhitida bitta fizik
+    qurilma (bir xil MAC) oflaynga chiqib qayta ulanganda ko'pincha
+    BOSHQA IP oladi - bu "yangi qurilma" deb ro'yxatga olinardi, eski
+    IP'dagi qator esa abadiy "oflayn" bo'lib qolardi. Vaqt o'tishi bilan
+    bu `devices` jadvalini haqiqiy qurilmalar sonidan ancha ko'p, "arvoh"
+    duplikatlar bilan to'ldirib boradi.
+
+    Tuzatildi: `db/device_identity.py::find_or_create_device` avval MAC
+    bo'yicha qidiradi, topilsa xuddi shu qatorning IP'sini yangilaydi.
+    """
+    mac = "AA:BB:CC:99:88:77"
+    ip1, ip2 = "172.16.9.230", "172.16.9.231"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address == mac).delete()
+    s.query(Device).filter(Device.ip_address.in_([ip1, ip2])).delete(synchronize_session=False)
+    s.add(RawLog(source_ip=ip1, raw_message=f"[IPv4] {ip1} [MAC] {mac.replace(':', '-')} [Hostname] MAC-IDENTITY-PC"))
+    s.commit()
+    s.close()
+
+    from engine.parser_engine import run_once
+    assert run_once() == 1
+
+    s = get_session()
+    matches = s.query(Device).filter(Device.mac_address == mac).all()
+    assert len(matches) == 1, "Birinchi ulanishda bitta qator yaratilishi kerak"
+    device_id = matches[0].id
+    assert matches[0].ip_address == ip1
+    s.close()
+
+    # Qurilma "oflayn" bo'lib, qayta ulanganda YANGI IP oladi (DHCP re-lease)
+    # - real production'da aynan shu holat sodir bo'lgan.
+    s = get_session()
+    s.add(RawLog(source_ip=ip2, raw_message=f"[IPv4] {ip2} [MAC] {mac.replace(':', '-')} [Hostname] MAC-IDENTITY-PC"))
+    s.commit()
+    s.close()
+
+    assert run_once() == 1
+
+    s = get_session()
+    matches = s.query(Device).filter(Device.mac_address == mac).all()
+    assert len(matches) == 1, (
+        f"Bir xil MAC ({mac}) uchun {len(matches)} ta Device qatori topildi - "
+        "IP o'zgarganda YANGI (duplikat) qator yaratilgan, xato tuzatilmagan"
+    )
+    assert matches[0].id == device_id, "Yangi qator o'rniga xuddi shu qator yangilanishi kerak edi"
+    assert matches[0].ip_address == ip2, "Qurilmaning IP'si yangi lease'ga mos yangilanishi kerak"
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: DHCP IP o'zgarganda duplikat qator yaratilmaydi (real production xatosi tuzatilgan)", _test_device_mac_identity_no_duplicate_on_ip_change)
+
+# ---------------------------------------------------------------------------
+print("\n=== 79) Device identifikatsiyasi: IP kolliziyasida tarix (Event/Alert) yo'qotilmaydi ===")
+
+
+def _test_device_mac_identity_merges_ip_collision():
+    """
+    Kamdan-kam, lekin mumkin bo'lgan holat: DHCP bitta IP'ni avval
+    BOSHQA (allaqachon boshqa MAC bilan tanilgan) qurilmaga bergan
+    bo'lib, o'sha qator bazada hali bor, endi esa O'SHA IP'ni YANGI
+    MAC'ga beryapti. `ip_address` UNIQUE bo'lgani uchun ikkala qatorda
+    bir xil IP qololmaydi - shu sabab eski qatorning tarixi (Event/
+    Alert) YO'QOTILMASDAN yangi (MAC-mos) qatorga ko'chirilishi, so'ng
+    bo'sh qolgan eski qator o'chirilishi kerak (bu xavfsizlik monitoring
+    tizimi - tarixiy Alert'ni jimgina yo'qotish maqbul emas).
+    """
+    from db.device_identity import find_or_create_device
+
+    old_mac, new_mac = "11:22:33:AA:BB:CC", "CC:BB:AA:33:22:11"
+    shared_ip, other_ip = "172.16.9.240", "172.16.9.241"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
+    s.query(Device).filter(Device.ip_address.in_([shared_ip, other_ip])).delete(synchronize_session=False)
+    s.commit()
+
+    old_device = Device(ip_address=shared_ip, mac_address=old_mac, hostname="OLD-PC", source="test")
+    s.add(old_device)
+    s.flush()
+    s.add(Event(device_id=old_device.id, source_ip=shared_ip, dest_ip="8.8.8.8", protocol="DNS"))
+    s.add(Alert(device_id=old_device.id, severity="low", reason="eski qurilmaning eski alerti"))
+    s.commit()
+    old_device_id = old_device.id
+
+    new_device = Device(ip_address=other_ip, mac_address=new_mac, hostname="NEW-PC", source="test")
+    s.add(new_device)
+    s.commit()
+    new_device_id = new_device.id
+
+    # Yangi MAC endi O'SHA (eski, band) IP'ni oladi - DHCP kolliziyasi
+    result = find_or_create_device(s, shared_ip, mac=new_mac, source="test")
+    s.commit()
+
+    assert result.id == new_device_id, "MAC-mos (yangi) qator saqlanib qolishi, IP unga o'tishi kerak edi"
+    assert result.ip_address == shared_ip
+
+    assert s.query(Device).filter(Device.id == old_device_id).first() is None, (
+        "Eski, endi bo'sh qolgan (IP kolliziyasiga uchragan) qator o'chirilishi kerak edi"
+    )
+
+    # MUHIM: eski qatorning tarixi yo'qolmasdan yangi qatorga ko'chirilgan bo'lishi kerak
+    assert s.query(Event).filter(Event.device_id == new_device_id, Event.dest_ip == "8.8.8.8").count() == 1, (
+        "Eski qurilmaning Event tarixi yo'qolgan - xavfsizlik monitoring tizimida bu maqbul emas"
+    )
+    assert s.query(Alert).filter(Alert.device_id == new_device_id, Alert.reason.like("%eski qurilmaning%")).count() == 1, (
+        "Eski qurilmaning Alert tarixi yo'qolgan"
+    )
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: IP kolliziyasida Event/Alert tarixi ko'chiriladi, yo'qotilmaydi", _test_device_mac_identity_merges_ip_collision)
+
+# ---------------------------------------------------------------------------
+print("\n=== 80) Dashboard /devices: sahifalash (200+ qurilma bo'lganda ham barchasi ko'rinadi) ===")
+
+
+def _test_devices_pagination_shows_all():
+    """
+    Foydalanuvchi: "qurilmalar ro'yxatida 724 ta qurilmani
+    ko'rsatmayabdi". TUB SABAB: `/devices` sarlavhasi/statistika
+    kartochkalari haqiqiy JAMI sonni ko'rsatsa-da, pastdagi jadval har
+    doim `.limit(200)` bilan qattiq cheklangan edi va SAHIFALASH
+    UMUMAN YO'Q edi - 200 tadan ortiq qurilma bo'lsa, qolganlari HECH
+    QACHON ko'rinmasdi. Endi `page` parametri orqali barcha
+    qurilmalarga (necha sahifa kerak bo'lsa ham) yetish mumkinligini
+    tasdiqlaymiz.
+    """
+    import re
+
+    marker_ips = [f"172.16.40.{i}" for i in range(1, 206)]  # 205 ta - 200 limitdan ortiq
+    s = get_session()
+    s.query(Device).filter(Device.ip_address.in_(marker_ips)).delete(synchronize_session=False)
+    s.commit()
+    for ip in marker_ips:
+        s.add(Device(ip_address=ip, hostname=f"PAGETEST-{ip.split('.')[-1]}", source="pagination_test"))
+    s.commit()
+    total_in_db = s.query(Device).count()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("devpage_ci_admin", "devpageci123", "admin")
+    dashboard_app.secret_key = "test-secret-devices-pagination"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "devpage_ci_admin", "password": "devpageci123"})
+
+    resp = client.get("/devices")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert f"Barcha qurilmalar ({total_in_db})" in html, "Sarlavha haqiqiy jami sonni ko'rsatmayapti"
+
+    m = re.search(r"Sahifa \d+ / (\d+)", html)
+    assert m is not None, "200 tadan ortiq qurilma bor - sahifalash ko'rinishi kerak edi"
+    total_pages = int(m.group(1))
+    assert total_pages >= 2, f"200+ qurilma bor, lekin faqat {total_pages} sahifa ko'rsatilmoqda"
+
+    found_ips = set()
+    for page in range(1, total_pages + 1):
+        resp = client.get(f"/devices?page={page}")
+        assert resp.status_code == 200
+        found_ips.update(re.findall(r"172\.16\.40\.\d+", resp.get_data(as_text=True)))
+
+    missing = set(marker_ips) - found_ips
+    assert not missing, (
+        f"{len(missing)} ta qurilma HECH QAYSI sahifada ko'rinmadi (masalan {sorted(missing)[:3]}) - "
+        "eski '.limit(200), sahifalashsiz' xatosi qaytgan bo'lishi mumkin"
+    )
+
+
+check("Dashboard /devices: sahifalash - 200 tadan ortiq qurilma bo'lganda ham barchasi ko'rinadi (real production xatosi tuzatilgan)", _test_devices_pagination_shows_all)
+
+# ---------------------------------------------------------------------------
+print("\n=== 81) Dashboard: barcha sahifalarga ustun-bo'yicha filtr qo'shildi (Qurilmalar/Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map) ===")
+
+
+def _test_all_pages_column_filters():
+    """
+    Foydalanuvchi ekran-suratida deyarli barcha sahifa/ustunlarni
+    belgilab, "chizilgan oynalarni barchasiga filtr qo'yib ber" deb
+    so'radi. Har bir asosiy ro'yxat sahifasiga (Devices allaqachon
+    to'g'irlangan edi) endi mos ustunlar bo'yicha filtr qo'shildi. Bu
+    test har biri uchun: (1) filtrli so'rov 200 qaytarishi, (2) filtr
+    HAQIQATAN natijani mos/mos bo'lmagan qatorlarga to'g'ri
+    ajratishini tekshiradi (faqat "xato bermadi" emas).
+    """
+    from db.models import Device, Alert, FileEvent, WebAccessLog, User, AuditLog, utcnow
+    from api import token_manager
+
+    s = get_session()
+    alpha = Device(ip_address="172.16.63.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
+                   connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(), risk_score=85,
+                   discovery_source="arp_scan", device_type="workstation", vendor="Dell-Test")
+    beta = Device(ip_address="172.16.63.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
+                  connection_type="cable", source="network_discovery", last_seen=utcnow(), risk_score=5,
+                  discovery_source="icmp", device_type="server", vendor="HP-Test")
+    s.add_all([alpha, beta])
+    s.commit()
+    s.add(Alert(severity="high", reason="ALPHA-FILTER-PC uchun test alert", device_id=alpha.id,
+                mitre_technique_id="T1204.002", acknowledged=False))
+    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="172.16.63.1", sha256="ab" * 32,
+                     verdict="clean", channel="endpoint_agent"))
+    s.add(WebAccessLog(source_ip="172.16.63.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
+    s.commit()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("filtertest_admin", "filtertestpass123", "admin")
+    create_user("filtertest_viewer_zz", "filtertestpass123", "viewer")
+    dashboard_app.secret_key = "test-secret-column-filters"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "filtertest_admin", "password": "filtertestpass123"})
+
+    # --- Devices (allaqachon test 78-80'da chuqur tekshirilgan asosiy
+    #     mantiq - bu yerda faqat qo'shimcha ustunlar) ---
+    html = client.get("/devices?mac=63:00:01").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Devices: MAC filtri ishlamadi"
+    html = client.get("/devices?source=kerio_dhcp").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Devices: Manba filtri ishlamadi"
+
+    # --- Alerts ---
+    html = client.get("/alerts?hostname=ALPHA-FILTER").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html, "Alerts: hostname filtri ishlamadi"
+    html = client.get("/alerts?hostname=NOMAVJUD-QURILMA").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" not in html, "Alerts: hostname filtri mos kelmaganini chiqarib yubordi"
+    html = client.get("/alerts?mitre=T1204").get_data(as_text=True)
+    assert "T1204" in html, "Alerts: MITRE filtri ishlamadi"
+    html = client.get("/alerts?acknowledged=1").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" not in html, "Alerts: acknowledged=1 hali tasdiqlanmagan alertni chiqardi"
+
+    # --- Asset Inventory ---
+    html = client.get("/asset-inventory?device_type=workstation").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Asset Inventory: device_type filtri ishlamadi"
+    html = client.get("/asset-inventory?vendor=HP-Test").get_data(as_text=True)
+    assert "BETA-FILTER-PC" in html and "ALPHA-FILTER-PC" not in html, "Asset Inventory: vendor filtri ishlamadi"
+    html = client.get("/asset-inventory?discovery_source=arp_scan").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Asset Inventory: discovery_source filtri ishlamadi"
+
+    # --- Files ---
+    html = client.get("/files?filename=filtertest_alpha").get_data(as_text=True)
+    assert "filtertest_alpha.exe" in html, "Files: filename filtri ishlamadi"
+    html = client.get("/files?filename=hech-narsa-mos-kelmaydi").get_data(as_text=True)
+    assert "filtertest_alpha.exe" not in html, "Files: filename filtri mos kelmaganini chiqarib yubordi"
+    html = client.get("/files?sha256=abababab").get_data(as_text=True)
+    assert "filtertest_alpha.exe" in html, "Files: sha256 prefiks filtri ishlamadi"
+
+    # --- Users (MUHIM: `current_user.username` nav panelida HAR BIR
+    #     sahifada ko'rinadi - shuning uchun bare username emas, jadval
+    #     qatoridagi `<td>...</td>` shaklini qidiramiz) ---
+    html = client.get("/users?username=filtertest_admin").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" in html and "<td>filtertest_viewer_zz</td>" not in html, "Users: username filtri ishlamadi"
+    html = client.get("/users?role=viewer").get_data(as_text=True)
+    assert "<td>filtertest_viewer_zz</td>" in html and "<td>filtertest_admin</td>" not in html, "Users: rol filtri ishlamadi"
+
+    # --- Audit Log (yuqoridagi login harakati allaqachon yozilgan bo'lishi kerak) ---
+    html = client.get("/audit?username=filtertest_admin&action=login").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" in html, "Audit Log: username+action filtri ishlamadi"
+    html = client.get("/audit?username=hech-kim-bunday-emas").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" not in html, "Audit Log: username filtri mos kelmaganini chiqarib yubordi"
+
+    # --- API Tokens ---
+    token_manager.create_token("FILTERTEST-TOKEN-A", created_by="test", agent_hostname="FILTER-HOST-A")
+    token_manager.create_token("FILTERTEST-TOKEN-B", created_by="test", agent_hostname="FILTER-HOST-B")
+    html = client.get("/api-tokens?hostname=FILTER-HOST-A").get_data(as_text=True)
+    assert "FILTERTEST-TOKEN-A" in html and "FILTERTEST-TOKEN-B" not in html, "API Tokens: hostname filtri ishlamadi"
+    html = client.get("/api-tokens?status=active").get_data(as_text=True)
+    assert "FILTERTEST-TOKEN-A" in html, "API Tokens: status=active filtri kutilgan tokenni yashirdi"
+
+    # --- Agent Coverage (AD sozlanmagan holatda ham xato bermasligi kerak) ---
+    resp = client.get("/agent-coverage?q=hech-narsa")
+    assert resp.status_code == 200, "Agent Coverage: filtrli so'rov xato berdi"
+
+    # --- Live Map (server-tomon o'zgarish yo'q - faqat sahifa ochilishi va
+    #     qidiruv input'i mavjudligi tekshiriladi, filtr client-side JS) ---
+    resp = client.get("/live-map")
+    assert resp.status_code == 200
+    assert 'id="map-search"' in resp.get_data(as_text=True), "Live Map: qidiruv maydoni qo'shilmagan"
+
+
+check("Dashboard: barcha asosiy sahifalarga ustun-bo'yicha filtr qo'shildi (Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map)", _test_all_pages_column_filters)
+
+# ---------------------------------------------------------------------------
+print("\n=== 82) Endpoint Agent: heartbeat tsikli kutilmagan xatodan keyin ABADIY o'lib qolmasligi kerak ===")
+
+
+def _test_heartbeat_loop_survives_unexpected_exception():
+    """
+    Foydalanuvchi real production'da ("Isobek" - o'zi ishlatayotgan
+    kompyuter) xabar qildi: Dashboard'da Endpoint Agent "OFFLINE"
+    ko'rsatilgan (`agent_last_heartbeat` ~16 soat eski), garchi
+    fayllar sahifasida O'SHA agent orqali tekshirilgan fayllar
+    (channel=endpoint_agent) aynan SHU KUN ertalab, bir necha daqiqa
+    oldin ko'rinib turgan bo'lsa ham - ya'ni agent jarayoni ishlab
+    turibdi va serverga ulanmoqda, faqat heartbeat aynan bitta
+    vaqtdan keyin to'xtab qolgan.
+
+    TUB SABAB: `agent_core/agent.py`ning `_heartbeat_loop()`sida
+    `send_heartbeat()` chaqiruvi hech qanday try/except bilan
+    o'ralmagan edi - `send_heartbeat()`ning o'zi FAQAT `requests.
+    RequestException`ni ushlaydi. Agar biror urinishda BOSHQA turdagi
+    kutilmagan xato (masalan tarmoq/DNS'ning g'alati holatidagi,
+    RequestException'ga o'ralmagan xatosi) yuz bersa, bu xato
+    `_heartbeat_loop()`ning o'ziga chiqib ketib, BUTUN heartbeat
+    thread'ini ABADIY o'ldirar edi - fayl kuzatish (butunlay alohida
+    thread) va `check_hash` esa normal davom etaverardi (aynan
+    kuzatilgan simptom).
+
+    Tuzatildi: `_safe_send_heartbeat()` - har bir urinish alohida
+    himoyalangan, HAR QANDAY kutilmagan xato faqat O'SHA tsiklni
+    o'tkazib yuboradi, thread TIRIK qoladi va keyingi intervalda
+    qayta urinadi.
+    """
+    import tempfile
+    import time as _time
+    import importlib
+    import agent_core.agent as agent_mod
+
+    os.environ["HEARTBEAT_INTERVAL_SECONDS"] = "1"
+    importlib.reload(agent_mod)
+
+    call_count = {"n": 0}
+
+    def flaky_send_heartbeat(hostname, ip_address):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # RequestException EMAS - send_heartbeat()ning o'z ichki
+            # except blokidan o'tib, to'g'ridan-to'g'ri _heartbeat_loop()ga
+            # chiqib ketadigan turdagi xato.
+            raise ValueError("kutilmagan, RequestException BO'LMAGAN xato (test)")
+        return True
+
+    original_send_heartbeat = agent_mod.send_heartbeat
+    agent_mod.send_heartbeat = flaky_send_heartbeat
+    agent = None
+    try:
+        agent = agent_mod.EndpointAgent([tempfile.mkdtemp()])
+        agent.start_background()
+
+        _time.sleep(0.3)
+        assert call_count["n"] == 1, "Birinchi (xato beruvchi) urinish umuman chaqirilmadi"
+        assert agent._heartbeat_thread.is_alive(), (
+            "Birinchi urinish kutilmagan xato bergandan so'ng thread darhol o'lib qolgan - "
+            "eski xato ('heartbeat abadiy to'xtab qoladi') qaytgan"
+        )
+
+        _time.sleep(1.5)
+        assert agent._heartbeat_thread.is_alive(), "Thread keyingi intervalgacha yashab qololmadi"
+        assert call_count["n"] >= 2, (
+            "Birinchi urinish xato bergandan keyin tsikl davom etmadi - "
+            "heartbeat abadiy to'xtab qolgan (real production xatosi)"
+        )
+    finally:
+        if agent is not None:
+            agent.stop()
+        agent_mod.send_heartbeat = original_send_heartbeat
+        os.environ.pop("HEARTBEAT_INTERVAL_SECONDS", None)
+        importlib.reload(agent_mod)
+
+
+check("Endpoint Agent: heartbeat tsikli kutilmagan xatodan keyin tirik qoladi (real 'Isobek' production xatosi tuzatilgan)", _test_heartbeat_loop_survives_unexpected_exception)
+
+# ---------------------------------------------------------------------------
+print("\n=== 83) VirusTotal/MalwareBazaar checker'lari: 'topilmadi' endi 'toza' bilan aralashtirilmaydi ===")
+
+
+def _test_threat_intel_checkers_dont_conflate_not_found_with_clean():
+    """
+    Foydalanuvchi (chuqur arxitektura tahlili) topgan eng muhim
+    xato: `check_virustotal()` VT hash haqida UMUMAN ma'lumotga ega
+    bo'lmaganda (404 - hech qachon ko'rmagan) `{"malicious": False,
+    ...}` qaytarardi - bu VT'ning o'zi tekshirib "toza" deb topgan
+    holat bilan BIR XIL ko'rinardi. Xuddi shu muammo `check_
+    malwarebazaar()`da ham bor edi (`query_status != "ok"` - masalan
+    "hash_not_found" - ham `{"malicious": False, ...}` qaytarardi,
+    garchi MalwareBazaar zararli dastur bazasi bo'lgani uchun "toza"
+    degan xulosani UMUMAN chiqara olmasa ham).
+
+    Natijada: yangi (VT/MalwareBazaar hali ko'rmagan) zararli dastur
+    "clean" deb noto'g'ri belgilanishi mumkin edi.
+
+    Tuzatildi: ikkala checker ham endi "ma'lumot yo'q" holatida
+    `None` qaytaradi (avvalgi `{"malicious": False, ...}` o'rniga) -
+    `None` chaqiruvchi tomonidan HECH QACHON "toza" deb talqin
+    qilinmaydi. VT FAQAT hashni HAQIQATAN tekshirib (haqiqiy
+    `last_analysis_stats` bilan) chiqqanda haqiqiy "toza" signalini
+    beradi.
+    """
+    from unittest.mock import patch, Mock
+    import threat_intel.virustotal_checker as vt_mod
+    import threat_intel.malwarebazaar_checker as mb_mod
+
+    # --- VirusTotal: 404 (hash VT bazasida UMUMAN yo'q) -> None, "clean" EMAS ---
+    with patch.object(vt_mod, "VT_API_KEY", "fake-test-key"):
+        fake_404 = Mock(status_code=404)
+        with patch.object(vt_mod.requests, "get", return_value=fake_404):
+            result = vt_mod.check_virustotal("a" * 64)
+        assert result is None, (
+            f"VT 404 (hash topilmadi) endi 'toza' bilan aralashtirilmasligi kerak - None qaytishi kerak edi, {result} qaytdi"
+        )
+
+        # --- VirusTotal: 200, lekin hali birorta dvigatel tekshirmagan (total=0) -> None ---
+        fake_pending = Mock(status_code=200)
+        fake_pending.json.return_value = {"data": {"attributes": {"last_analysis_stats": {}}}}
+        with patch.object(vt_mod.requests, "get", return_value=fake_pending):
+            result = vt_mod.check_virustotal("b" * 64)
+        assert result is None, f"Tahlil ma'lumoti yo'q (total=0) holatda None qaytishi kerak edi, {result} qaytdi"
+
+        # --- VirusTotal: HAQIQIY tekshirilgan, 0/70 dvigatel belgilagan -> haqiqiy 'toza' signali ---
+        fake_clean = Mock(status_code=200)
+        fake_clean.json.return_value = {
+            "data": {"attributes": {
+                "last_analysis_stats": {"malicious": 0, "suspicious": 0, "harmless": 68, "undetected": 2},
+                "last_analysis_results": {},
+            }}
+        }
+        with patch.object(vt_mod.requests, "get", return_value=fake_clean):
+            result = vt_mod.check_virustotal("c" * 64)
+        assert result is not None, "VT haqiqatan tekshirib, 0/70 topgan holatda natija qaytarishi kerak edi"
+        assert result["malicious"] is False
+        assert result["total"] == 70
+
+        # --- VirusTotal: HAQIQIY tekshirilgan, malicious topilgan -> unchanged ---
+        fake_malicious = Mock(status_code=200)
+        fake_malicious.json.return_value = {
+            "data": {"attributes": {
+                "last_analysis_stats": {"malicious": 5, "suspicious": 0, "harmless": 60, "undetected": 5},
+                "last_analysis_results": {"EngineX": {"category": "malicious", "result": "Trojan.Test"}},
+            }}
+        }
+        with patch.object(vt_mod.requests, "get", return_value=fake_malicious):
+            result = vt_mod.check_virustotal("d" * 64)
+        assert result["malicious"] is True and result["positives"] == 5
+
+    # --- MalwareBazaar: "hash_not_found" -> None, "clean" EMAS ---
+    fake_mb_not_found = Mock(status_code=200)
+    fake_mb_not_found.json.return_value = {"query_status": "hash_not_found"}
+    with patch.object(mb_mod.requests, "post", return_value=fake_mb_not_found):
+        result = mb_mod.check_malwarebazaar("e" * 64)
+    assert result is None, (
+        f"MalwareBazaar 'hash_not_found' endi 'toza' bilan aralashtirilmasligi kerak - None qaytishi kerak edi, {result} qaytdi"
+    )
+
+    # --- MalwareBazaar: ma'lum zararli namuna -> unchanged ---
+    fake_mb_found = Mock(status_code=200)
+    fake_mb_found.json.return_value = {"query_status": "ok", "data": [{"signature": "Emotet"}]}
+    with patch.object(mb_mod.requests, "post", return_value=fake_mb_found):
+        result = mb_mod.check_malwarebazaar("f" * 64)
+    assert result is not None and result["malicious"] is True and result["threat_name"] == "Emotet"
+
+
+check("VirusTotal/MalwareBazaar checker'lari: 'topilmadi' endi 'toza' deb hisoblanmaydi (real production xatosi tuzatilgan)", _test_threat_intel_checkers_dont_conflate_not_found_with_clean)
+
+# ---------------------------------------------------------------------------
+print("\n=== 84) File Analysis Engine + check_hash: verdict taksonomiyasi (malicious/suspicious/clean/unknown) ===")
+
+
+def _test_verdict_taxonomy_end_to_end():
+    """
+    Foydalanuvchi tavsiyasi: verdict endi 4 xil aniq holatga ega
+    bo'lishi kerak - `CLEAN` (HAQIQATAN tekshirilib toza topilgan),
+    `SUSPICIOUS` (zaif, tasdiqlanmagan signal), `MALICIOUS`
+    (tasdiqlangan), `UNKNOWN` (hech qanday manba ma'lumot bermagan -
+    bu "clean" EMAS). Bu test to'liq zanjirni (`analyze_one()` VA
+    `/api/v1/check_hash` - ikkalasi ham mustaqil implementatsiya)
+    real DB bilan tasdiqlaydi.
+    """
+    from unittest.mock import patch
+    import engine.file_analysis_engine as fae
+    import api.server as api_server
+
+    # --- 1) analyze_one(): hech qanday manba ma'lumot bermasa -> "unknown" (avvalgi "clean" xatosi) ---
+    s = get_session()
+    fe_unknown = FileEvent(src_ip="172.16.63.10", filename="brand_new_ransomware.exe", sha256="1a" * 32, checked=False)
+    s.add(fe_unknown)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value=None), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe_unknown)
+        s.commit()
+    assert fe_unknown.verdict == "unknown", (
+        f"Hech qanday manba ma'lumot bermagan yangi fayl 'unknown' bo'lishi kerak edi (avvalgi 'clean' xatosi), '{fe_unknown.verdict}' keldi"
+    )
+    s.close()
+
+    # --- 2) analyze_one(): VT HAQIQATAN tekshirib, toza deb topsa -> "clean" ---
+    s = get_session()
+    fe_clean = FileEvent(src_ip="172.16.63.11", filename="notepad_replacement.exe", sha256="2a" * 32, checked=False)
+    s.add(fe_clean)
+    s.commit()
+    with patch.object(fae, "check_virustotal", return_value={"malicious": False, "positives": 0, "total": 70, "threat_name": None}), \
+         patch.object(fae, "check_malwarebazaar", return_value=None):
+        fae.analyze_one(s, fe_clean)
+        s.commit()
+    assert fe_clean.verdict == "clean", f"VT haqiqatan tekshirib toza topgan fayl 'clean' bo'lishi kerak edi, '{fe_clean.verdict}' keldi"
+    s.close()
+
+    # --- 3) /api/v1/check_hash: hech qanday manba ma'lumot bermasa -> FileEvent.verdict "unknown",
+    #        lekin Agent'ga qaytariladigan javob (malicious=False) O'ZGARMAYDI (karantin siyosati bu ish doirasida emas) ---
+    api_server.AGENT_API_KEY = "test-key-verdict-taxonomy"
+    api_client = api_server.app.test_client()
+    with patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        r = api_client.post("/api/v1/check_hash", json={
+            "sha256": "3a" * 32, "filename": "unclassified.bin",
+            "hostname": "TEST-PC-TAXONOMY", "ip_address": "172.16.63.12",
+        }, headers={"X-API-Key": "test-key-verdict-taxonomy"})
+    assert r.status_code == 200
+    resp_json = r.get_json()
+    assert resp_json["malicious"] is False, "Agent'ga qaytariladigan javob o'zgarmasligi kerak edi (unknown != avtomatik bloklash)"
+
+    s = get_session()
+    fe_api_unknown = s.query(FileEvent).filter(FileEvent.sha256 == "3a" * 32).first()
+    assert fe_api_unknown is not None
+    assert fe_api_unknown.verdict == "unknown", (
+        f"check_hash orqali hech qanday manba tasdiqlamagan fayl 'unknown' bo'lishi kerak edi (avvalgi 'clean' xatosi), '{fe_api_unknown.verdict}' keldi"
+    )
+    s.close()
+
+    # --- 4) /api/v1/check_hash: VT HAQIQATAN tekshirib toza topsa -> FileEvent.verdict "clean" ---
+    with patch.object(api_server, "check_virustotal", return_value={"malicious": False, "positives": 0, "total": 70, "threat_name": None}), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        r = api_client.post("/api/v1/check_hash", json={
+            "sha256": "4a" * 32, "filename": "genuinely_clean.bin",
+            "hostname": "TEST-PC-TAXONOMY", "ip_address": "172.16.63.13",
+        }, headers={"X-API-Key": "test-key-verdict-taxonomy"})
+    assert r.status_code == 200
+    assert r.get_json()["malicious"] is False
+
+    s = get_session()
+    fe_api_clean = s.query(FileEvent).filter(FileEvent.sha256 == "4a" * 32).first()
+    assert fe_api_clean is not None and fe_api_clean.verdict == "clean", (
+        f"check_hash orqali VT haqiqatan tasdiqlagan fayl 'clean' bo'lishi kerak edi, {fe_api_clean.verdict if fe_api_clean else None} keldi"
+    )
+    s.close()
+
+
+check("Verdict taksonomiyasi (malicious/suspicious/clean/unknown) - file_analysis_engine VA check_hash, real DB orqali", _test_verdict_taxonomy_end_to_end)
+
+# ---------------------------------------------------------------------------
+print("\n=== 85) URL/Domain Intelligence moduli (normalization/punycode/userinfo/leksik xavf balli) ===")
+
+
+def _test_url_intel_module():
+    """
+    Foydalanuvchi chuqur arxitektura tahlilidagi ③-band: to'liq URL/
+    Domain Intelligence moduli. Bu test `threat_intel/url_intel.py`ning
+    har bir funksiyasini foydalanuvchining O'ZI keltirgan aniq
+    misollar bilan tekshiradi.
+    """
+    from threat_intel.url_intel import (
+        normalize_url, has_userinfo_trick, is_punycode, extract_domain,
+        domain_parent_candidates, domain_matches_blacklist, lexical_risk_score, analyze_url,
+    )
+
+    # --- normalize_url: katta/kichik harf, standart port, % kodlash ---
+    assert normalize_url("http://EXAMPLE.com:80/") == "http://example.com/"
+    assert normalize_url("https://EXAMPLE.com:443") == "https://example.com/"
+    assert normalize_url("https://example.com:8443/path%2Ftest") == "https://example.com:8443/path/test"
+
+    # --- has_userinfo_trick: "https://google.com@evil-site.com/login" ---
+    assert has_userinfo_trick("https://google.com@evil-site.com/login") is True
+    assert has_userinfo_trick("https://example.com/login") is False
+
+    # --- is_punycode / IDN ---
+    assert is_punycode("xn--pypal-4ve.com") is True
+    assert is_punycode("paypal.com") is False
+
+    # --- extract_domain ---
+    assert extract_domain("https://sub.evil.com:8443/a/b?x=1") == "sub.evil.com"
+
+    # --- domain_parent_candidates + domain_matches_blacklist: MUHIM
+    # regressiya himoyasi - foydalanuvchi ANIQ ta'kidlagan xavf: oddiy
+    # endswith() "notevil.com".endswith("evil.com") -> True (NOTO'G'RI!)
+    # bergan bo'lardi. LABEL-chegara asosidagi yondashuv buni oldini olishi kerak.
+    assert domain_parent_candidates("cdn.login.evil.com") == ["cdn.login.evil.com", "login.evil.com", "evil.com"]
+    assert domain_matches_blacklist("cdn.login.evil.com", "evil.com") is True
+    assert domain_matches_blacklist("notevil.com", "evil.com") is False, (
+        "'notevil.com' 'evil.com' bilan MOS KELMASLIGI kerak - oddiy endswith() xatosi qaytgan bo'lishi mumkin"
+    )
+    assert domain_matches_blacklist("evil.com", "evil.com") is True
+
+    # --- lexical_risk_score: foydalanuvchining o'z misollari ---
+    phishing = lexical_risk_score("microsoft-login-security.xyz")
+    assert phishing["level"] == "malicious", f"Fishing'ga o'xshash domen 'malicious' bo'lishi kerak edi, {phishing} keldi"
+    legit = lexical_risk_score("microsoft.com")
+    assert legit["level"] == "normal", f"Haqiqiy microsoft.com 'normal' bo'lishi kerak edi, {legit} keldi"
+    assert lexical_risk_score("google.com")["level"] == "normal"
+
+    # --- analyze_url: orchestrator, userinfo tuzog'i bilan birga ---
+    full = analyze_url("https://google.com@microsoft-login-security.xyz/verify")
+    assert full["domain"] == "microsoft-login-security.xyz"
+    assert full["has_userinfo_trick"] is True
+    assert full["level"] == "malicious"
+
+
+check("URL/Domain Intelligence moduli - normalization/punycode/userinfo/domain hierarchy/leksik xavf balli", _test_url_intel_module)
+
+# ---------------------------------------------------------------------------
+print("\n=== 86) Parser Engine: domen ierarxiyasi bo'yicha blacklist + leksik fishing alert (real DB orqali) ===")
+
+
+def _test_parser_engine_domain_hierarchy_and_lexical_alert():
+    """
+    Foydalanuvchi chuqur arxitektura tahlilidagi ⑦/⑧/⑪-band - real
+    `engine.parser_engine.run_once()` orqali (mock emas, haqiqiy DB
+    yozuvlari bilan):
+      1. Blacklist'da `evil.com` bo'lsa, `cdn.login.evil.com`ga Kerio
+         Connection orqali ulanish HAM Alert yaratishi kerak (avval
+         faqat aniq moslik ishlagan).
+      2. `notevil.com`ga ulanish Alert YARATMASLIGI kerak (oddiy
+         endswith() xatosining regressiya himoyasi).
+      3. Blacklist'da yo'q, lekin nomi bo'yicha aniq fishing'ga
+         o'xshagan domenga DNS so'rovi alohida ("leksik") Alert
+         yaratishi, va bir xil domen uchun ikkinchi marta QAYTA-QAYTA
+         alert yaratmasligi (dedup) kerak.
+      4. Oddiy, zararsiz domen (google.com) hech qanday alert
+         yaratmasligi kerak.
+    """
+    from db.models import RawLog, BlacklistEntry, Alert
+
+    s = get_session()
+    s.add(BlacklistEntry(value="pe-hierarchy-evil.com", source="manual", reason="ci-test"))
+    s.add_all([
+        # 1) Subdomen orqali blacklist mosligi
+        RawLog(source_ip="172.16.0.1", raw_message=(
+            "[ID] 1 [Rule] Internet access (NAT) [Connection] TCP "
+            "pc1.local (172.16.30.1):51000 -> cdn.login.pe-hierarchy-evil.com (198.51.100.10):443 "
+            "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
+        )),
+        # 2) "notevil" - substring o'xshash, lekin MOS KELMASLIGI kerak
+        RawLog(source_ip="172.16.0.1", raw_message=(
+            "[ID] 2 [Rule] Internet access (NAT) [Connection] TCP "
+            "pc2.local (172.16.30.2):51001 -> not-pe-hierarchy-evil.com (198.51.100.11):443 "
+            "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
+        )),
+        # 3) Blacklist'da yo'q, lekin leksik jihatdan aniq fishing (haqiqiy Windows DNS parser formatida)
+        RawLog(source_ip="172.16.0.5", raw_message=(
+            '{"EventID":256,"ClientIP":"172.16.0.5","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
+        )),
+        # 4) Zararsiz, oddiy domen
+        RawLog(source_ip="172.16.0.5", raw_message=(
+            '{"EventID":256,"ClientIP":"172.16.0.5","QueryName":"google.com","QueryType":"A"}'
+        )),
+    ])
+    s.commit()
+    s.close()
+
+    from engine.parser_engine import run_once
+    count = run_once()
+    assert count == 4
+
+    s = get_session()
+    hierarchy_alert = s.query(Alert).filter(Alert.reason.like("%cdn.login.pe-hierarchy-evil.com%")).first()
+    assert hierarchy_alert is not None, (
+        "Domen ierarxiyasi bo'yicha blacklist mosligi ishlamadi - "
+        "'evil.com' blacklist'da bo'lsa, 'cdn.login.evil.com' ham aniqlanishi kerak edi"
+    )
+    assert hierarchy_alert.severity == "high"
+
+    notevil_alert = s.query(Alert).filter(Alert.reason.like("%not-pe-hierarchy-evil.com%")).first()
+    assert notevil_alert is None, (
+        "'not-pe-hierarchy-evil.com' uchun Alert yaratildi - bu oddiy endswith() xatosi qaytganini bildiradi"
+    )
+
+    lexical_alert = s.query(Alert).filter(Alert.reason.like("%microsoft-login-security-update.xyz%")).first()
+    assert lexical_alert is not None, "Leksik jihatdan aniq fishing domen uchun Alert yaratilmadi"
+    assert lexical_alert.severity == "medium"
+    assert "[LEXICAL_PHISHING]" in lexical_alert.reason
+
+    google_alert = s.query(Alert).filter(Alert.reason.like("%google.com%")).first()
+    assert google_alert is None, "Zararsiz domen (google.com) uchun ALERT yaratilmasligi kerak edi"
+    s.close()
+
+    # --- Dedup: bir xil fishing domeniga ikkinchi marta DNS so'rovi kelsa,
+    #     QAYTA alert yaratilmasligi kerak ---
+    s = get_session()
+    s.add(RawLog(source_ip="172.16.0.6", raw_message=(
+        '{"EventID":256,"ClientIP":"172.16.0.6","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
+    )))
+    s.commit()
+    s.close()
+    run_once()
+
+    s = get_session()
+    lexical_alerts = s.query(Alert).filter(Alert.reason.like("%microsoft-login-security-update.xyz%")).all()
+    assert len(lexical_alerts) == 1, (
+        f"Bir xil fishing domeni uchun QAYTA alert yaratilmasligi kerak edi (dedup), {len(lexical_alerts)} ta topildi"
+    )
+    s.close()
+
+
+check("Parser Engine: domen ierarxiyasi blacklist + leksik fishing alert (dedup bilan, real DB orqali)", _test_parser_engine_domain_hierarchy_and_lexical_alert)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

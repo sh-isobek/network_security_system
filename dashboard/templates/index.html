@@ -25,8 +25,10 @@
         <div style="font-size: 12px; color: #95a5a6;">High alertlar</div>
     </div>
     <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <a href="/files?verdict=malicious" style="text-decoration: none; color: inherit;">
         <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.malicious_files }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Zararli fayllar / {{ stats.clean_files }} toza</div>
+        <div style="font-size: 12px; color: #95a5a6;">Zararli / {{ stats.suspicious_files }} shubhali / {{ stats.clean_files }} toza / {{ stats.unknown_files }} noma'lum</div>
+        </a>
     </div>
 </div>
 

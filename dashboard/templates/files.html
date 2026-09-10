@@ -6,9 +6,27 @@
 <div class="filters">
     <a href="/files" class="{% if not verdict_filter %}active{% endif %}">Hammasi</a>
     <a href="/files?verdict=malicious" class="{% if verdict_filter == 'malicious' %}active{% endif %}">Zararli</a>
+    <a href="/files?verdict=suspicious" class="{% if verdict_filter == 'suspicious' %}active{% endif %}">Shubhali</a>
     <a href="/files?verdict=clean" class="{% if verdict_filter == 'clean' %}active{% endif %}">Toza</a>
+    <a href="/files?verdict=unknown" class="{% if verdict_filter == 'unknown' %}active{% endif %}">Noma'lum</a>
     <a href="/files?channel=endpoint_agent" class="{% if channel_filter == 'endpoint_agent' %}active{% endif %}">Faqat Endpoint Agent</a>
 </div>
+
+<form method="GET" action="/files" class="filter-form">
+    <input type="hidden" name="verdict" value="{{ verdict_filter }}">
+    <input type="hidden" name="channel" value="{{ channel_filter }}">
+    <label>Fayl nomi
+        <input type="text" name="filename" value="{{ filename_filter }}">
+    </label>
+    <label>Manba IP
+        <input type="text" name="ip" value="{{ ip_filter }}">
+    </label>
+    <label>SHA256
+        <input type="text" name="sha256" value="{{ sha256_filter }}" placeholder="hex prefiks">
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/files" class="clear-link">Tozalash</a>
+</form>
 
 {% if files %}
 <table>
@@ -25,8 +43,12 @@
         <td>
             {% if f.verdict == 'malicious' %}
             <span class="badge" style="background: #c0392b;">ZARARLI</span>
+            {% elif f.verdict == 'suspicious' %}
+            <span class="badge" style="background: #e67e22;">SHUBHALI</span>
             {% elif f.verdict == 'clean' %}
             <span class="badge" style="background: #27ae60;">TOZA</span>
+            {% elif f.verdict == 'unknown' %}
+            <span class="badge" style="background: #7f8c8d;" title="Hech qanday manba (local/VirusTotal/MalwareBazaar) bu fayl haqida ishonchli ma'lumot bermadi - bu 'toza' emas, 'hali klassifikatsiya qilinmagan'">NOMA'LUM</span>
             {% else %}
             <span class="badge" style="background: #95a5a6;">TEKSHIRILMOQDA</span>
             {% endif %}

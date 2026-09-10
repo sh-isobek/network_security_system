@@ -19,6 +19,14 @@ kerak). Agar `stored_path` bo'sh bo'lsa (masalan hozircha faqat hash
 kelgan bo'lsa), chuqur tekshiruv o'tkazib yuboriladi va faqat hash
 natijasiga tayaniladi.
 
+(Real arxitektura bo'shlig'i tuzatilgan: avval `collectors/suricata_
+reader.py` `stored_path`ni HECH QACHON to'ldirmasdi - shuning uchun bu
+cheklov Suricata orqali kelgan HAR BIR fayl uchun jimgina amalda edi,
+garchi fayl haqiqatan `file-store`ga saqlangan bo'lsa ham. Endi
+`fileinfo.stored == true` bo'lgan fayllar uchun `stored_path` to'g'ri
+hisoblanadi - batafsil: `collectors/suricata_reader.py` va `docs_
+SURICATA_SETUP.md`.)
+
 Ishga tushirish:
     python -m engine.deep_scan_engine
     python -m engine.deep_scan_engine --loop

@@ -168,7 +168,8 @@ def health():
     return jsonify({"status": "ok"})
 
 
-def _log_endpoint_scan(session, data: dict, sha256: str, malicious: bool, threat_name: str, source: str):
+def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_score: int,
+                        threat_name: str, source: str):
     """
     Endpoint Agent tomonidan tekshirilgan har bir faylni `file_events`
     jadvaliga yozadi - Dashboard'ning "Fayllar" sahifasida ko'rinishi
@@ -182,6 +183,12 @@ def _log_endpoint_scan(session, data: dict, sha256: str, malicious: bool, threat
     `ip_address` yuborilmasa (masalan eski agent versiyasi yoki boshqa
     chaqiruvchi) - jim o'tkazib yuboriladi, tekshiruv natijasiga
     ta'sir qilmaydi.
+
+    `verdict` chaqiruvchi (`check_hash()`) tomonidan hisoblab
+    beriladi - "malicious"/"suspicious"/"clean"/"unknown" (`engine/
+    file_analysis_engine.py::analyze_one()`dagi bir xil taksonomiya -
+    "hech qanday manba ma'lumot bermadi" endi "clean" bilan
+    aralashtirilmaydi).
     """
     hostname = data.get("hostname")
     ip_address = data.get("ip_address")
@@ -199,8 +206,8 @@ def _log_endpoint_scan(session, data: dict, sha256: str, malicious: bool, threat
         protocol="endpoint",
         channel="endpoint_agent",
         checked=True,
-        verdict="malicious" if malicious else "clean",
-        threat_score=100 if malicious else 0,
+        verdict=verdict,
+        threat_score=threat_score,
         checked_sources=source or "endpoint_agent",
     )
     session.add(entry)
@@ -228,6 +235,20 @@ def check_hash():
     bazasi) va mahalliy qora ro'yxat esa har doim "tasdiqlangan"
     hisoblanadi (aniq, deterministik moslik).
 
+    MUHIM (real production xatosi tuzatilgan - Agent'ga yuboriladigan
+    javob emas, `file_events`ga yoziladigan yozuv): "hech qanday manba
+    bu hash haqida ma'lumot bermadi" (masalan yangi, hali VT/
+    MalwareBazaar bazasida bo'lmagan fayl) avval `verdict="clean"`
+    sifatida yozilardi. Endi bu holat `verdict="unknown"` sifatida
+    qayd etiladi (Agent'ga qaytariladigan `malicious`/`confirmed`
+    JSON javobi - ya'ni Agent'ning karantin qarori - O'ZGARMAYDI: har
+    ikkala holatda ham `malicious=False`, chunki noma'lum faylni
+    avtomatik o'chirish o'zi boshqa, alohida xavf - ko'pchilik
+    noma'lum fayl aslida zararsiz. Bu faqat Dashboard'dagi "Fayllar"
+    yozuvi qanday YORLIQLANISHIGA tegishli - tahlilchi endi "bu fayl
+    haqiqatan tekshirilib toza topilgan" bilan "bu fayl haqida
+    umuman ma'lumot yo'q"ni farqlay oladi).
+
     `hostname`/`ip_address`/`filename` ixtiyoriy - berilsa, tekshiruv
     Dashboard'ning "Fayllar" sahifasida ko'rish uchun qayd etiladi
     (pastdagi `_log_endpoint_scan` orqali).
@@ -242,7 +263,8 @@ def check_hash():
     try:
         local_result = check_local(session, sha256)
         if local_result:
-            _log_endpoint_scan(session, data, sha256, True, local_result.get("threat_name"), local_result.get("source") or "local")
+            _log_endpoint_scan(session, data, sha256, "malicious", 100,
+                                local_result.get("threat_name"), local_result.get("source") or "local")
             session.commit()
             return jsonify({
                 "malicious": True,
@@ -255,13 +277,14 @@ def check_hash():
         # shunda agentlar o'zlari internetga chiqmaydi - markazlashtirilgan
         # va tezkorroq, chunki natija darhol keshga tushadi)
         vt = check_virustotal(sha256)
-        if vt and vt.get("malicious"):
+        if vt is not None and vt.get("malicious"):
             positives = int(vt.get("positives") or 0)
             total = int(vt.get("total") or 0)
             confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
             if confirmed:
                 _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
-            _log_endpoint_scan(session, data, sha256, True, vt.get("threat_name"), "virustotal")
+            _log_endpoint_scan(session, data, sha256, "malicious" if confirmed else "suspicious",
+                                100 if confirmed else 60, vt.get("threat_name"), "virustotal")
             session.commit()
             return jsonify({
                 "malicious": True, "confirmed": confirmed,
@@ -269,14 +292,20 @@ def check_hash():
                 "positives": positives, "total": total,
             })
 
+        # VT hashni HAQIQATAN tekshirdi (None emas) va hech qaysi dvigatel
+        # belgilamadi - bu haqiqiy "toza" signali (404/ma'lumot yo'q holati
+        # `check_virustotal()`da allaqachon `None` bilan ajratilgan).
+        vt_scanned_clean = vt is not None and not vt.get("malicious")
+
         mb = check_malwarebazaar(sha256)
         if mb and mb.get("malicious"):
             _add_to_blacklist(session, sha256, mb.get("threat_name"), "malwarebazaar")
-            _log_endpoint_scan(session, data, sha256, True, mb.get("threat_name"), "malwarebazaar")
+            _log_endpoint_scan(session, data, sha256, "malicious", 100, mb.get("threat_name"), "malwarebazaar")
             session.commit()
             return jsonify({"malicious": True, "confirmed": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
 
-        _log_endpoint_scan(session, data, sha256, False, None, None)
+        final_verdict = "clean" if vt_scanned_clean else "unknown"
+        _log_endpoint_scan(session, data, sha256, final_verdict, 0, None, None)
         session.commit()
         return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
     finally:

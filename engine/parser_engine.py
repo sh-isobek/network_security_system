@@ -9,8 +9,15 @@ Vazifasi:
        - DHCP lease bo'lsa -> devices jadvalini yangilaydi (IP/MAC/hostname)
        - connection/dns_query bo'lsa -> events jadvaliga yozadi,
          devices jadvalidagi last_seen'ni yangilaydi
-       - agar dns_query bo'lib, domen blacklist'da bo'lsa -> alerts
-         jadvaliga yozuv qo'shadi (bloklash 5-bosqichda ulanadi)
+       - agar dns_query/connection'dagi IP/domen blacklist'da bo'lsa
+         (domen bo'lsa - ota-domen ierarxiyasi bo'yicha ham, masalan
+         `evil.com` blacklist'da bo'lsa `cdn.evil.com` ham mos keladi -
+         `threat_intel/url_intel.py`ga qarang) -> alerts jadvaliga
+         yozuv qo'shadi (bloklash 5-bosqichda ulanadi)
+       - blacklist'da yo'q, lekin domen nomi fishing'ga o'xshasa
+         (leksik evristika, `threat_intel/url_intel.py::lexical_risk_
+         score()`) -> alohida, konservativ (faqat eng yuqori darajada)
+         Alert
   4. Yozuvni processed=True qilib belgilaydi.
 
 Ishga tushirish (doimiy tsikl sifatida, masalan systemd/cron orqali):
@@ -19,6 +26,7 @@ Yoki bir martalik ishga tushirish (mavjud navbatni tozalash):
     python -m engine.parser_engine
 """
 import argparse
+import ipaddress
 import logging
 import os
 import sys
@@ -31,6 +39,7 @@ from db.database import get_session
 from db.models import RawLog, Device, Event, WebAccessLog, Alert, WhitelistEntry, BlacklistEntry, utcnow
 from parsers.kerio_parser import KerioConnectionParser, KerioDHCPParser
 from parsers.windows_dns_parser import WindowsDNSParser
+from threat_intel.url_intel import domain_parent_candidates, is_punycode, lexical_risk_score
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("parser_engine")
@@ -51,25 +60,105 @@ def _is_whitelisted(session, value: str) -> bool:
     return session.query(WhitelistEntry).filter(WhitelistEntry.value == value).first() is not None
 
 
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 def _is_blacklisted(session, value: str):
+    """
+    MUHIM (foydalanuvchi chuqur tahlilidagi ⑪-band): avval FAQAT aniq
+    moslik (`BlacklistEntry.value == value`) tekshirilardi. Masalan
+    blacklist'da `evil.com` bo'lsa-yu, haqiqiy trafik `cdn.login.
+    evil.com`ga borsa - bu HECH QACHON aniqlanmasdi. Endi domen
+    bo'lsa (IP EMAS), ota-domen ierarxiyasi ham (`login.evil.com`,
+    `evil.com`, ... - LABEL chegaralari bo'yicha, `db.device_identity`
+    kabi boshqa joylarda ham qo'llanilgan "aniq, xavfsiz" yondashuv)
+    tekshiriladi - `threat_intel/url_intel.py::domain_parent_
+    candidates()`ga qarang (oddiy `endswith()` EMAS - bu
+    `"notevil.com".endswith("evil.com")` kabi soxta moslikka olib
+    kelardi).
+
+    IP manzillar uchun xatti-harakat O'ZGARMAYDI (faqat aniq moslik -
+    CIDR blacklist bu bosqichda YO'Q, alohida masala).
+    """
     if not value:
         return None
-    return session.query(BlacklistEntry).filter(BlacklistEntry.value == value).first()
+    hit = session.query(BlacklistEntry).filter(BlacklistEntry.value == value).first()
+    if hit or _is_ip(value):
+        return hit
+    for candidate in domain_parent_candidates(value)[1:]:  # [0] - value'ning o'zi, yuqorida allaqachon tekshirildi
+        hit = session.query(BlacklistEntry).filter(BlacklistEntry.value == candidate).first()
+        if hit:
+            return hit
+    return None
+
+
+_LEXICAL_ALERT_TAG = "[LEXICAL_PHISHING]"
+
+
+def _check_lexical_phishing_alert(session, event, device, domain: str, source_ip: str):
+    """
+    Foydalanuvchi chuqur tahlilidagi ⑦/⑧-band: hali BlacklistEntry'da
+    yo'q, lekin nomi bo'yicha fishing'ga o'xshab ko'ringan domen
+    (masalan "microsoft-login-security.xyz") uchun ham signal berish.
+
+    MUHIM (halol, ataylab konservativ): bu FAQAT leksik evristika -
+    haqiqiy threat-intel tasdiqlash EMAS, shuning uchun soxta-pozitiv
+    xavfi bor. Shu sabab Alert FAQAT eng yuqori ("malicious", ballar
+    >=71) darajada yaratiladi - pastroq darajalar ("suspicious"/"high")
+    hozircha alert QILMAYDI (kelajakda, boshqa signallar bilan
+    birlashtirilganda qayta ko'rib chiqilishi mumkin - `CLAUDE.md`ga
+    qarang). Bir xil domen uchun QAYTA-QAYTA alert yaratilmasligi
+    uchun (masalan minutiga o'nlab DNS so'rovi bo'lishi mumkin),
+    `_LEXICAL_ALERT_TAG` + domen orqali oldindan mavjudligi tekshiriladi.
+    """
+    if not domain or _is_ip(domain):
+        return
+    if _is_whitelisted(session, domain):
+        return
+
+    result = lexical_risk_score(domain)
+    if result["level"] != "malicious":
+        return
+
+    marker = f"{_LEXICAL_ALERT_TAG} domen={domain}"
+    already_alerted = session.query(Alert).filter(Alert.reason.like(f"%{marker}%")).first()
+    if already_alerted:
+        return
+
+    reasons_text = "; ".join(result["reasons"]) or "yuqori leksik xavf balli"
+    alert = Alert(
+        event_id=event.id if event else None,
+        device_id=device.id if device else None,
+        severity="medium",
+        reason=(
+            f"Fishing'ga o'xshash domen nomi aniqlandi: {domain} "
+            f"(ball: {result['score']}/100) - {reasons_text} | {marker}"
+        ),
+        action_taken="Leksik evristika - haqiqiy threat-intel tasdiqlanmagan, faqat kuzatish uchun",
+        notified=False,
+    )
+    session.add(alert)
+    logger.warning(f"LEXICAL PHISHING ALERT: {source_ip} -> {domain} (ball: {result['score']})")
 
 
 def _upsert_device(session, ip: str, mac: str = None, hostname: str = None, source: str = "unknown"):
-    device = session.query(Device).filter(Device.ip_address == ip).first()
-    if device is None:
-        device = Device(ip_address=ip, mac_address=mac, hostname=hostname, source=source)
-        session.add(device)
-        session.flush()  # id olish uchun
-    else:
-        if mac:
-            device.mac_address = mac
-        if hostname:
-            device.hostname = hostname
-        device.last_seen = utcnow()
-    return device
+    """
+    MUHIM (real production xatosi tuzatilgan): avval faqat `ip_address`
+    bo'yicha qidirilardi - DHCP muhitida bir xil fizik qurilma (bir xil
+    MAC) qayta ulanganda ko'pincha YANGI IP oladi, va bu funksiya buni
+    "yangi qurilma" deb yaratib yuborardi (eski IP'dagi qator esa
+    "oflayn" bo'lib qolaverardi) - vaqt o'tishi bilan `devices` jadvali
+    haqiqiy qurilmalar sonidan ancha ko'p, duplikat qatorlar bilan
+    to'lib boradi edi. Endi `db.device_identity.find_or_create_device`
+    orqali avval MAC bo'yicha qidiriladi (batafsil: shu modul docstring'i).
+    """
+    from db.device_identity import find_or_create_device
+    return find_or_create_device(session, ip, mac=mac, source=source, hostname=hostname)
 
 
 def process_one(session, raw_log: RawLog):
@@ -167,6 +256,11 @@ def process_one(session, raw_log: RawLog):
                 )
                 session.add(alert)
                 logger.warning(f"ALERT: {parsed['source_ip']} -> {target} (blacklist)")
+            else:
+                # ⑦/⑧-band: blacklist'da yo'q, lekin nomi bo'yicha
+                # fishing'ga o'xshash domen (batafsil: yuqoridagi
+                # _check_lexical_phishing_alert() docstring'i).
+                _check_lexical_phishing_alert(session, event, device, target, parsed["source_ip"])
 
     # MUHIM (real production'da aniqlangan bo'shliq): "connection"
     # hodisalari uchun HECH QANDAY blacklist tekshiruvi yo'q edi -
@@ -175,6 +269,7 @@ def process_one(session, raw_log: RawLog):
     # (masalan qo'lda yoki tashqi threat-intel feed orqali
     # BlacklistEntry'ga qo'shilgan IP/domenlar).
     if event_type == "connection":
+        blacklist_hit_found = False
         for target in (parsed.get("dest_ip"), parsed.get("dest_domain")):
             if not target or _is_whitelisted(session, target):
                 continue
@@ -190,7 +285,13 @@ def process_one(session, raw_log: RawLog):
                 )
                 session.add(alert)
                 logger.warning(f"ALERT: {parsed['source_ip']} -> {target} (blacklist, connection)")
+                blacklist_hit_found = True
                 break
+
+        # ⑦/⑧-band: blacklist'da topilmagan bo'lsa, domen nomi bo'yicha
+        # fishing'ga o'xshashligini ham tekshiramiz.
+        if not blacklist_hit_found and parsed.get("dest_domain"):
+            _check_lexical_phishing_alert(session, event, device, parsed["dest_domain"], parsed["source_ip"])
 
     raw_log.processed = True
 

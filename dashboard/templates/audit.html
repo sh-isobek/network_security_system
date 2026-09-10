@@ -10,6 +10,27 @@
     <a href="/audit?action=create_user" class="{% if action_filter == 'create_user' %}active{% endif %}">Foydalanuvchi yaratish</a>
 </div>
 
+<form method="GET" action="/audit" class="filter-form">
+    <input type="hidden" name="action" value="{{ action_filter }}">
+    <label>Foydalanuvchi
+        <input type="text" name="username" value="{{ username_filter }}">
+    </label>
+    <label>Nishon turi
+        <input type="text" name="target_type" value="{{ target_type_filter }}" placeholder="masalan Alert, User">
+    </label>
+    <label>IP
+        <input type="text" name="ip" value="{{ ip_filter }}">
+    </label>
+    <label>Sanadan
+        <input type="date" name="date_from" value="{{ date_from }}">
+    </label>
+    <label>Sanagacha
+        <input type="date" name="date_to" value="{{ date_to }}">
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/audit" class="clear-link">Tozalash</a>
+</form>
+
 {% if entries %}
 <table>
     <tr>

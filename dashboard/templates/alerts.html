@@ -17,6 +17,34 @@
     </span>
 </div>
 
+<form method="GET" action="/alerts" class="filter-form">
+    <input type="hidden" name="severity" value="{{ severity_filter }}">
+    <label>Hostname
+        <input type="text" name="hostname" value="{{ hostname_filter }}">
+    </label>
+    <label>IP manzil
+        <input type="text" name="ip" value="{{ ip_filter }}">
+    </label>
+    <label>MITRE texnika
+        <input type="text" name="mitre" value="{{ mitre_filter }}" placeholder="masalan T1204">
+    </label>
+    <label>Tasdiqlash
+        <select name="acknowledged">
+            <option value="" {% if not ack_filter %}selected{% endif %}>Hammasi</option>
+            <option value="1" {% if ack_filter == '1' %}selected{% endif %}>Tasdiqlangan</option>
+            <option value="0" {% if ack_filter == '0' %}selected{% endif %}>Kutilmoqda</option>
+        </select>
+    </label>
+    <label>Sanadan
+        <input type="date" name="date_from" value="{{ date_from }}">
+    </label>
+    <label>Sanagacha
+        <input type="date" name="date_to" value="{{ date_to }}">
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/alerts" class="clear-link">Tozalash</a>
+</form>
+
 {% if alerts %}
 <table>
     <tr>

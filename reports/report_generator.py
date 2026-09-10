@@ -97,7 +97,9 @@ def export_summary_pdf(summary: dict, alert_rows: list, filepath: str, title: st
          ["Jami alertlar", str(summary["total_alerts"])],
          ["Xabar berilmagan alertlar", str(summary["unnotified_alerts"])],
          ["Zararli fayllar aniqlandi", str(summary["malicious_files_detected"])],
-         ["Toza fayllar tekshirildi", str(summary["clean_files_scanned"])]],
+         ["Shubhali fayllar (tasdiqlanmagan)", str(summary["suspicious_files_detected"])],
+         ["Toza fayllar tekshirildi", str(summary["clean_files_scanned"])],
+         ["Noma'lum fayllar (klassifikatsiya qilinmagan)", str(summary["unknown_files_unclassified"])]],
         colWidths=[9 * cm, 6 * cm],
     )
     stat_table.setStyle(TableStyle([
@@ -249,7 +251,9 @@ def export_alerts_excel(summary: dict, alert_rows: list, filepath: str):
         ("  - Low", f'=COUNTIF(Alerts!C2:C{last_row},"low")' if has_data else 0),
         ("Xabar berilmagan alertlar", f'=COUNTIF(Alerts!I2:I{last_row},"yo\'q")' if has_data else 0),
         ("Zararli fayllar aniqlandi", summary["malicious_files_detected"]),
+        ("Shubhali fayllar (tasdiqlanmagan)", summary["suspicious_files_detected"]),
         ("Toza fayllar tekshirildi", summary["clean_files_scanned"]),
+        ("Noma'lum fayllar (klassifikatsiya qilinmagan)", summary["unknown_files_unclassified"]),
     ]
 
     start_row = 4
@@ -296,9 +300,24 @@ def build_summary(session, since: datetime) -> dict:
         .filter(FileEvent.timestamp >= since, FileEvent.verdict == "malicious")
         .count()
     )
+    suspicious_files = (
+        session.query(FileEvent)
+        .filter(FileEvent.timestamp >= since, FileEvent.verdict == "suspicious")
+        .count()
+    )
     clean_files = (
         session.query(FileEvent)
         .filter(FileEvent.timestamp >= since, FileEvent.verdict == "clean")
+        .count()
+    )
+    # MUHIM: "unknown" - hech qanday manba (local/VT/MalwareBazaar) bu
+    # fayllar haqida ma'lumot bermagani - avval bular "clean" ichida
+    # yashiringan edi (real production xatosi, `engine/file_analysis_
+    # engine.py::analyze_one()`ga qarang). Hisobotda alohida ko'rsatilishi
+    # SHART - aks holda tahdid ko'lami yashirin qoladi.
+    unknown_files = (
+        session.query(FileEvent)
+        .filter(FileEvent.timestamp >= since, FileEvent.verdict == "unknown")
         .count()
     )
 
@@ -311,7 +330,9 @@ def build_summary(session, since: datetime) -> dict:
         "mitre_tactic_breakdown": dict(tactic_counts),
         "top_affected_devices": top_devices,
         "malicious_files_detected": malicious_files,
+        "suspicious_files_detected": suspicious_files,
         "clean_files_scanned": clean_files,
+        "unknown_files_unclassified": unknown_files,
         "unnotified_alerts": sum(1 for a in alerts if not a.notified),
     }
 

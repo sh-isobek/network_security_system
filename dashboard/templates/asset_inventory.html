@@ -7,6 +7,47 @@
     Yangilash: <code>python -m network_discovery.asset_inventory --cidr ... --interface ...</code>
 </p>
 
+<form method="GET" action="/asset-inventory" class="filter-form">
+    <label>IP
+        <input type="text" name="ip" value="{{ ip_filter }}">
+    </label>
+    <label>MAC
+        <input type="text" name="mac" value="{{ mac_filter }}">
+    </label>
+    <label>Hostname
+        <input type="text" name="hostname" value="{{ hostname_filter }}">
+    </label>
+    <label>Tur
+        <select name="device_type">
+            <option value="" {% if not device_type_filter %}selected{% endif %}>Hammasi</option>
+            <option value="server" {% if device_type_filter == 'server' %}selected{% endif %}>Server</option>
+            <option value="switch" {% if device_type_filter == 'switch' %}selected{% endif %}>Switch</option>
+            <option value="router" {% if device_type_filter == 'router' %}selected{% endif %}>Router</option>
+            <option value="printer" {% if device_type_filter == 'printer' %}selected{% endif %}>Printer</option>
+            <option value="ups" {% if device_type_filter == 'ups' %}selected{% endif %}>UPS</option>
+            <option value="workstation" {% if device_type_filter == 'workstation' %}selected{% endif %}>Workstation</option>
+            <option value="unknown" {% if device_type_filter == 'unknown' %}selected{% endif %}>Nomalum</option>
+        </select>
+    </label>
+    <label>Vendor
+        <input type="text" name="vendor" value="{{ vendor_filter }}">
+    </label>
+    <label>Manba
+        <select name="discovery_source">
+            <option value="" {% if not discovery_source_filter %}selected{% endif %}>Hammasi</option>
+            <option value="arp_scan" {% if discovery_source_filter == 'arp_scan' %}selected{% endif %}>ARP scan</option>
+            <option value="icmp" {% if discovery_source_filter == 'icmp' %}selected{% endif %}>ICMP</option>
+            <option value="snmp" {% if discovery_source_filter == 'snmp' %}selected{% endif %}>SNMP</option>
+            <option value="ad" {% if discovery_source_filter == 'ad' %}selected{% endif %}>Active Directory</option>
+            <option value="unifi" {% if discovery_source_filter == 'unifi' %}selected{% endif %}>UniFi</option>
+            <option value="ruijie" {% if discovery_source_filter == 'ruijie' %}selected{% endif %}>Ruijie</option>
+            <option value="kerio_dhcp" {% if discovery_source_filter == 'kerio_dhcp' %}selected{% endif %}>Kerio DHCP</option>
+        </select>
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/asset-inventory" class="clear-link">Tozalash</a>
+</form>
+
 {% if devices %}
 <table style="margin-bottom: 32px;">
     <tr>

@@ -41,8 +41,22 @@ def check_virustotal(sha256: str, timeout: int = 10) -> Optional[dict]:
 
     Qaytaradi:
         {"malicious": bool, "threat_name": str, "positives": int, "total": int}
-        yoki API kaliti yo'q/xatolik bo'lsa None (bu holda tizim boshqa
-        manbaga - MalwareBazaar yoki local blacklist'ga - tayanadi).
+        - FAQAT VT bu hash haqida HAQIQIY tahlil ma'lumotiga ega bo'lsa
+        (ya'ni "scanned" - fayl VT bazasida bor VA kamida bitta dvigatel
+        uni tekshirgan). Bu holatda `malicious=False` HAQIQIY "toza"
+        signalidir (VT ko'rgan, hech qaysi dvigatel belgilamagan).
+
+        Aks holda `None` qaytaradi - bu quyidagi holatlarning BARCHASINI
+        qamraydi: API kalit yo'q, tarmoq xatosi, rate limit, VA (MUHIM,
+        ilgari xato bo'lgan holat) hash VT bazasida UMUMAN topilmagan
+        (404). `None` HECH QACHON "toza" deb talqin qilinmasligi kerak -
+        chaqiruvchi (`file_analysis_engine.py`/`api/server.py`) buni
+        "hali tekshirilmagan / ma'lumot yo'q" (unknown) deb hisoblashi
+        SHART, aks holda tarmoqqa yangi (VT hali ko'rmagan) zararli
+        dastur "toza" deb noto'g'ri belgilanib qoladi - bu real
+        production xavfsizlik xatosi edi (avval 404 -> `malicious=False`
+        qaytarardi, bu "VT ko'rdi va toza deb topdi" bilan bir xil
+        ko'rinardi, garchi VT bu haqida UMUMAN hech narsa bilmasa ham).
     """
     if not VT_API_KEY:
         return None  # API kalit sozlanmagan - bu manba o'tkazib yuboriladi
@@ -59,15 +73,27 @@ def check_virustotal(sha256: str, timeout: int = 10) -> Optional[dict]:
         return None  # tarmoq xatoligi - keyingi tsiklda qayta urinib ko'riladi
 
     if resp.status_code == 404:
-        return {"malicious": False, "threat_name": None, "positives": 0, "total": 0}
+        # MUHIM (real production xatosi tuzatilgan): VT bu hash haqida
+        # HECH NARSA bilmaydi - bu "toza" degani EMAS, "ma'lumot yo'q"
+        # degani. Avval bu yerda `{"malicious": False, ...}` qaytarilib,
+        # chaqiruvchi tomonidan "VT toza deb topdi" bilan bir xil
+        # ko'rilardi.
+        return None
 
     if resp.status_code != 200:
         return None  # rate limit yoki boshqa xatolik
 
     data = resp.json()
     stats = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
-    malicious_count = stats.get("malicious", 0) + stats.get("suspicious", 0)
     total = sum(stats.values()) if stats else 0
+
+    if total == 0:
+        # VT bazasida yozuv bor, lekin hali birorta dvigatel tomonidan
+        # tekshirilmagan (masalan endigina yuklangan, tahlil navbatda) -
+        # bu ham "toza" emas, "hali ma'lumot yo'q".
+        return None
+
+    malicious_count = stats.get("malicious", 0) + stats.get("suspicious", 0)
 
     # Threat nomini birinchi "malicious" deb topgan dvigatel natijasidan olamiz
     results = data.get("data", {}).get("attributes", {}).get("last_analysis_results", {})
