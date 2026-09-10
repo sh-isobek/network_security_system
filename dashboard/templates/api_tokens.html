@@ -16,6 +16,24 @@
 </div>
 {% endif %}
 
+<form method="GET" action="/api-tokens" class="filter-form">
+    <label>Nomi
+        <input type="text" name="name" value="{{ name_filter }}">
+    </label>
+    <label>Kompyuter
+        <input type="text" name="hostname" value="{{ hostname_filter }}">
+    </label>
+    <label>Holat
+        <select name="status">
+            <option value="" {% if not status_filter %}selected{% endif %}>Hammasi</option>
+            <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Faol</option>
+            <option value="revoked" {% if status_filter == 'revoked' %}selected{% endif %}>Bekor qilingan</option>
+        </select>
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/api-tokens" class="clear-link">Tozalash</a>
+</form>
+
 <table style="margin-bottom: 24px;">
     <tr><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
     {% for t in tokens %}

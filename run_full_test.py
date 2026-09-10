@@ -5439,6 +5439,298 @@ def _test_connection_events_feed_alerts_and_web_activity():
 check("Kerio Connection hodisalari: blacklist Alert + Web Activity'ga yozilishi (real production bo'shlig'i tuzatilgan)", _test_connection_events_feed_alerts_and_web_activity)
 
 # ---------------------------------------------------------------------------
+print("\n=== 78) Device identifikatsiyasi: MAC bo'yicha (DHCP IP o'zgarganda duplikat qator yaratilmaydi) ===")
+
+
+def _test_device_mac_identity_no_duplicate_on_ip_change():
+    """
+    Foydalanuvchi: "qurilma online dan oflinega o'tganida va yangi
+    qurilma ulansa uni yana yangi qurilma sifatida ro'yxatga
+    qo'shayabdi". TUB SABAB: `devices` avval FAQAT `ip_address` bo'yicha
+    aniqlanardi (`engine/parser_engine.py`/`network_discovery/
+    asset_inventory.py`dagi `_upsert_device`). DHCP muhitida bitta fizik
+    qurilma (bir xil MAC) oflaynga chiqib qayta ulanganda ko'pincha
+    BOSHQA IP oladi - bu "yangi qurilma" deb ro'yxatga olinardi, eski
+    IP'dagi qator esa abadiy "oflayn" bo'lib qolardi. Vaqt o'tishi bilan
+    bu `devices` jadvalini haqiqiy qurilmalar sonidan ancha ko'p, "arvoh"
+    duplikatlar bilan to'ldirib boradi.
+
+    Tuzatildi: `db/device_identity.py::find_or_create_device` avval MAC
+    bo'yicha qidiradi, topilsa xuddi shu qatorning IP'sini yangilaydi.
+    """
+    mac = "AA:BB:CC:99:88:77"
+    ip1, ip2 = "172.16.9.230", "172.16.9.231"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address == mac).delete()
+    s.query(Device).filter(Device.ip_address.in_([ip1, ip2])).delete(synchronize_session=False)
+    s.add(RawLog(source_ip=ip1, raw_message=f"[IPv4] {ip1} [MAC] {mac.replace(':', '-')} [Hostname] MAC-IDENTITY-PC"))
+    s.commit()
+    s.close()
+
+    from engine.parser_engine import run_once
+    assert run_once() == 1
+
+    s = get_session()
+    matches = s.query(Device).filter(Device.mac_address == mac).all()
+    assert len(matches) == 1, "Birinchi ulanishda bitta qator yaratilishi kerak"
+    device_id = matches[0].id
+    assert matches[0].ip_address == ip1
+    s.close()
+
+    # Qurilma "oflayn" bo'lib, qayta ulanganda YANGI IP oladi (DHCP re-lease)
+    # - real production'da aynan shu holat sodir bo'lgan.
+    s = get_session()
+    s.add(RawLog(source_ip=ip2, raw_message=f"[IPv4] {ip2} [MAC] {mac.replace(':', '-')} [Hostname] MAC-IDENTITY-PC"))
+    s.commit()
+    s.close()
+
+    assert run_once() == 1
+
+    s = get_session()
+    matches = s.query(Device).filter(Device.mac_address == mac).all()
+    assert len(matches) == 1, (
+        f"Bir xil MAC ({mac}) uchun {len(matches)} ta Device qatori topildi - "
+        "IP o'zgarganda YANGI (duplikat) qator yaratilgan, xato tuzatilmagan"
+    )
+    assert matches[0].id == device_id, "Yangi qator o'rniga xuddi shu qator yangilanishi kerak edi"
+    assert matches[0].ip_address == ip2, "Qurilmaning IP'si yangi lease'ga mos yangilanishi kerak"
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: DHCP IP o'zgarganda duplikat qator yaratilmaydi (real production xatosi tuzatilgan)", _test_device_mac_identity_no_duplicate_on_ip_change)
+
+# ---------------------------------------------------------------------------
+print("\n=== 79) Device identifikatsiyasi: IP kolliziyasida tarix (Event/Alert) yo'qotilmaydi ===")
+
+
+def _test_device_mac_identity_merges_ip_collision():
+    """
+    Kamdan-kam, lekin mumkin bo'lgan holat: DHCP bitta IP'ni avval
+    BOSHQA (allaqachon boshqa MAC bilan tanilgan) qurilmaga bergan
+    bo'lib, o'sha qator bazada hali bor, endi esa O'SHA IP'ni YANGI
+    MAC'ga beryapti. `ip_address` UNIQUE bo'lgani uchun ikkala qatorda
+    bir xil IP qololmaydi - shu sabab eski qatorning tarixi (Event/
+    Alert) YO'QOTILMASDAN yangi (MAC-mos) qatorga ko'chirilishi, so'ng
+    bo'sh qolgan eski qator o'chirilishi kerak (bu xavfsizlik monitoring
+    tizimi - tarixiy Alert'ni jimgina yo'qotish maqbul emas).
+    """
+    from db.device_identity import find_or_create_device
+
+    old_mac, new_mac = "11:22:33:AA:BB:CC", "CC:BB:AA:33:22:11"
+    shared_ip, other_ip = "172.16.9.240", "172.16.9.241"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
+    s.query(Device).filter(Device.ip_address.in_([shared_ip, other_ip])).delete(synchronize_session=False)
+    s.commit()
+
+    old_device = Device(ip_address=shared_ip, mac_address=old_mac, hostname="OLD-PC", source="test")
+    s.add(old_device)
+    s.flush()
+    s.add(Event(device_id=old_device.id, source_ip=shared_ip, dest_ip="8.8.8.8", protocol="DNS"))
+    s.add(Alert(device_id=old_device.id, severity="low", reason="eski qurilmaning eski alerti"))
+    s.commit()
+    old_device_id = old_device.id
+
+    new_device = Device(ip_address=other_ip, mac_address=new_mac, hostname="NEW-PC", source="test")
+    s.add(new_device)
+    s.commit()
+    new_device_id = new_device.id
+
+    # Yangi MAC endi O'SHA (eski, band) IP'ni oladi - DHCP kolliziyasi
+    result = find_or_create_device(s, shared_ip, mac=new_mac, source="test")
+    s.commit()
+
+    assert result.id == new_device_id, "MAC-mos (yangi) qator saqlanib qolishi, IP unga o'tishi kerak edi"
+    assert result.ip_address == shared_ip
+
+    assert s.query(Device).filter(Device.id == old_device_id).first() is None, (
+        "Eski, endi bo'sh qolgan (IP kolliziyasiga uchragan) qator o'chirilishi kerak edi"
+    )
+
+    # MUHIM: eski qatorning tarixi yo'qolmasdan yangi qatorga ko'chirilgan bo'lishi kerak
+    assert s.query(Event).filter(Event.device_id == new_device_id, Event.dest_ip == "8.8.8.8").count() == 1, (
+        "Eski qurilmaning Event tarixi yo'qolgan - xavfsizlik monitoring tizimida bu maqbul emas"
+    )
+    assert s.query(Alert).filter(Alert.device_id == new_device_id, Alert.reason.like("%eski qurilmaning%")).count() == 1, (
+        "Eski qurilmaning Alert tarixi yo'qolgan"
+    )
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: IP kolliziyasida Event/Alert tarixi ko'chiriladi, yo'qotilmaydi", _test_device_mac_identity_merges_ip_collision)
+
+# ---------------------------------------------------------------------------
+print("\n=== 80) Dashboard /devices: sahifalash (200+ qurilma bo'lganda ham barchasi ko'rinadi) ===")
+
+
+def _test_devices_pagination_shows_all():
+    """
+    Foydalanuvchi: "qurilmalar ro'yxatida 724 ta qurilmani
+    ko'rsatmayabdi". TUB SABAB: `/devices` sarlavhasi/statistika
+    kartochkalari haqiqiy JAMI sonni ko'rsatsa-da, pastdagi jadval har
+    doim `.limit(200)` bilan qattiq cheklangan edi va SAHIFALASH
+    UMUMAN YO'Q edi - 200 tadan ortiq qurilma bo'lsa, qolganlari HECH
+    QACHON ko'rinmasdi. Endi `page` parametri orqali barcha
+    qurilmalarga (necha sahifa kerak bo'lsa ham) yetish mumkinligini
+    tasdiqlaymiz.
+    """
+    import re
+
+    marker_ips = [f"172.16.40.{i}" for i in range(1, 206)]  # 205 ta - 200 limitdan ortiq
+    s = get_session()
+    s.query(Device).filter(Device.ip_address.in_(marker_ips)).delete(synchronize_session=False)
+    s.commit()
+    for ip in marker_ips:
+        s.add(Device(ip_address=ip, hostname=f"PAGETEST-{ip.split('.')[-1]}", source="pagination_test"))
+    s.commit()
+    total_in_db = s.query(Device).count()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("devpage_ci_admin", "devpageci123", "admin")
+    dashboard_app.secret_key = "test-secret-devices-pagination"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "devpage_ci_admin", "password": "devpageci123"})
+
+    resp = client.get("/devices")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert f"Barcha qurilmalar ({total_in_db})" in html, "Sarlavha haqiqiy jami sonni ko'rsatmayapti"
+
+    m = re.search(r"Sahifa \d+ / (\d+)", html)
+    assert m is not None, "200 tadan ortiq qurilma bor - sahifalash ko'rinishi kerak edi"
+    total_pages = int(m.group(1))
+    assert total_pages >= 2, f"200+ qurilma bor, lekin faqat {total_pages} sahifa ko'rsatilmoqda"
+
+    found_ips = set()
+    for page in range(1, total_pages + 1):
+        resp = client.get(f"/devices?page={page}")
+        assert resp.status_code == 200
+        found_ips.update(re.findall(r"172\.16\.40\.\d+", resp.get_data(as_text=True)))
+
+    missing = set(marker_ips) - found_ips
+    assert not missing, (
+        f"{len(missing)} ta qurilma HECH QAYSI sahifada ko'rinmadi (masalan {sorted(missing)[:3]}) - "
+        "eski '.limit(200), sahifalashsiz' xatosi qaytgan bo'lishi mumkin"
+    )
+
+
+check("Dashboard /devices: sahifalash - 200 tadan ortiq qurilma bo'lganda ham barchasi ko'rinadi (real production xatosi tuzatilgan)", _test_devices_pagination_shows_all)
+
+# ---------------------------------------------------------------------------
+print("\n=== 81) Dashboard: barcha sahifalarga ustun-bo'yicha filtr qo'shildi (Qurilmalar/Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map) ===")
+
+
+def _test_all_pages_column_filters():
+    """
+    Foydalanuvchi ekran-suratida deyarli barcha sahifa/ustunlarni
+    belgilab, "chizilgan oynalarni barchasiga filtr qo'yib ber" deb
+    so'radi. Har bir asosiy ro'yxat sahifasiga (Devices allaqachon
+    to'g'irlangan edi) endi mos ustunlar bo'yicha filtr qo'shildi. Bu
+    test har biri uchun: (1) filtrli so'rov 200 qaytarishi, (2) filtr
+    HAQIQATAN natijani mos/mos bo'lmagan qatorlarga to'g'ri
+    ajratishini tekshiradi (faqat "xato bermadi" emas).
+    """
+    from db.models import Device, Alert, FileEvent, WebAccessLog, User, AuditLog, utcnow
+    from api import token_manager
+
+    s = get_session()
+    alpha = Device(ip_address="172.16.63.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
+                   connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(), risk_score=85,
+                   discovery_source="arp_scan", device_type="workstation", vendor="Dell-Test")
+    beta = Device(ip_address="172.16.63.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
+                  connection_type="cable", source="network_discovery", last_seen=utcnow(), risk_score=5,
+                  discovery_source="icmp", device_type="server", vendor="HP-Test")
+    s.add_all([alpha, beta])
+    s.commit()
+    s.add(Alert(severity="high", reason="ALPHA-FILTER-PC uchun test alert", device_id=alpha.id,
+                mitre_technique_id="T1204.002", acknowledged=False))
+    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="172.16.63.1", sha256="ab" * 32,
+                     verdict="clean", channel="endpoint_agent"))
+    s.add(WebAccessLog(source_ip="172.16.63.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
+    s.commit()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("filtertest_admin", "filtertestpass123", "admin")
+    create_user("filtertest_viewer_zz", "filtertestpass123", "viewer")
+    dashboard_app.secret_key = "test-secret-column-filters"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "filtertest_admin", "password": "filtertestpass123"})
+
+    # --- Devices (allaqachon test 78-80'da chuqur tekshirilgan asosiy
+    #     mantiq - bu yerda faqat qo'shimcha ustunlar) ---
+    html = client.get("/devices?mac=63:00:01").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Devices: MAC filtri ishlamadi"
+    html = client.get("/devices?source=kerio_dhcp").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Devices: Manba filtri ishlamadi"
+
+    # --- Alerts ---
+    html = client.get("/alerts?hostname=ALPHA-FILTER").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html, "Alerts: hostname filtri ishlamadi"
+    html = client.get("/alerts?hostname=NOMAVJUD-QURILMA").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" not in html, "Alerts: hostname filtri mos kelmaganini chiqarib yubordi"
+    html = client.get("/alerts?mitre=T1204").get_data(as_text=True)
+    assert "T1204" in html, "Alerts: MITRE filtri ishlamadi"
+    html = client.get("/alerts?acknowledged=1").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" not in html, "Alerts: acknowledged=1 hali tasdiqlanmagan alertni chiqardi"
+
+    # --- Asset Inventory ---
+    html = client.get("/asset-inventory?device_type=workstation").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Asset Inventory: device_type filtri ishlamadi"
+    html = client.get("/asset-inventory?vendor=HP-Test").get_data(as_text=True)
+    assert "BETA-FILTER-PC" in html and "ALPHA-FILTER-PC" not in html, "Asset Inventory: vendor filtri ishlamadi"
+    html = client.get("/asset-inventory?discovery_source=arp_scan").get_data(as_text=True)
+    assert "ALPHA-FILTER-PC" in html and "BETA-FILTER-PC" not in html, "Asset Inventory: discovery_source filtri ishlamadi"
+
+    # --- Files ---
+    html = client.get("/files?filename=filtertest_alpha").get_data(as_text=True)
+    assert "filtertest_alpha.exe" in html, "Files: filename filtri ishlamadi"
+    html = client.get("/files?filename=hech-narsa-mos-kelmaydi").get_data(as_text=True)
+    assert "filtertest_alpha.exe" not in html, "Files: filename filtri mos kelmaganini chiqarib yubordi"
+    html = client.get("/files?sha256=abababab").get_data(as_text=True)
+    assert "filtertest_alpha.exe" in html, "Files: sha256 prefiks filtri ishlamadi"
+
+    # --- Users (MUHIM: `current_user.username` nav panelida HAR BIR
+    #     sahifada ko'rinadi - shuning uchun bare username emas, jadval
+    #     qatoridagi `<td>...</td>` shaklini qidiramiz) ---
+    html = client.get("/users?username=filtertest_admin").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" in html and "<td>filtertest_viewer_zz</td>" not in html, "Users: username filtri ishlamadi"
+    html = client.get("/users?role=viewer").get_data(as_text=True)
+    assert "<td>filtertest_viewer_zz</td>" in html and "<td>filtertest_admin</td>" not in html, "Users: rol filtri ishlamadi"
+
+    # --- Audit Log (yuqoridagi login harakati allaqachon yozilgan bo'lishi kerak) ---
+    html = client.get("/audit?username=filtertest_admin&action=login").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" in html, "Audit Log: username+action filtri ishlamadi"
+    html = client.get("/audit?username=hech-kim-bunday-emas").get_data(as_text=True)
+    assert "<td>filtertest_admin</td>" not in html, "Audit Log: username filtri mos kelmaganini chiqarib yubordi"
+
+    # --- API Tokens ---
+    token_manager.create_token("FILTERTEST-TOKEN-A", created_by="test", agent_hostname="FILTER-HOST-A")
+    token_manager.create_token("FILTERTEST-TOKEN-B", created_by="test", agent_hostname="FILTER-HOST-B")
+    html = client.get("/api-tokens?hostname=FILTER-HOST-A").get_data(as_text=True)
+    assert "FILTERTEST-TOKEN-A" in html and "FILTERTEST-TOKEN-B" not in html, "API Tokens: hostname filtri ishlamadi"
+    html = client.get("/api-tokens?status=active").get_data(as_text=True)
+    assert "FILTERTEST-TOKEN-A" in html, "API Tokens: status=active filtri kutilgan tokenni yashirdi"
+
+    # --- Agent Coverage (AD sozlanmagan holatda ham xato bermasligi kerak) ---
+    resp = client.get("/agent-coverage?q=hech-narsa")
+    assert resp.status_code == 200, "Agent Coverage: filtrli so'rov xato berdi"
+
+    # --- Live Map (server-tomon o'zgarish yo'q - faqat sahifa ochilishi va
+    #     qidiruv input'i mavjudligi tekshiriladi, filtr client-side JS) ---
+    resp = client.get("/live-map")
+    assert resp.status_code == 200
+    assert 'id="map-search"' in resp.get_data(as_text=True), "Live Map: qidiruv maydoni qo'shilmagan"
+
+
+check("Dashboard: barcha asosiy sahifalarga ustun-bo'yicha filtr qo'shildi (Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map)", _test_all_pages_column_filters)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

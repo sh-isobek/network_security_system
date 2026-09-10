@@ -10,6 +10,22 @@
     <a href="/files?channel=endpoint_agent" class="{% if channel_filter == 'endpoint_agent' %}active{% endif %}">Faqat Endpoint Agent</a>
 </div>
 
+<form method="GET" action="/files" class="filter-form">
+    <input type="hidden" name="verdict" value="{{ verdict_filter }}">
+    <input type="hidden" name="channel" value="{{ channel_filter }}">
+    <label>Fayl nomi
+        <input type="text" name="filename" value="{{ filename_filter }}">
+    </label>
+    <label>Manba IP
+        <input type="text" name="ip" value="{{ ip_filter }}">
+    </label>
+    <label>SHA256
+        <input type="text" name="sha256" value="{{ sha256_filter }}" placeholder="hex prefiks">
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/files" class="clear-link">Tozalash</a>
+</form>
+
 {% if files %}
 <table>
     <tr>

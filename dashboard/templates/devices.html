@@ -18,11 +18,58 @@
     </div>
 </div>
 
-<div class="filters">
-    <a href="/devices" class="{% if not status_filter %}active{% endif %}">Hammasi</a>
-    <a href="/devices?status=online" class="{% if status_filter == 'online' %}active{% endif %}">Onlayn</a>
-    <a href="/devices?status=offline" class="{% if status_filter == 'offline' %}active{% endif %}">Offlayn</a>
-</div>
+<form method="GET" action="/devices" class="filter-form">
+    <label>Holat
+        <select name="status">
+            <option value="" {% if not status_filter %}selected{% endif %}>Hammasi</option>
+            <option value="online" {% if status_filter == 'online' %}selected{% endif %}>Onlayn</option>
+            <option value="offline" {% if status_filter == 'offline' %}selected{% endif %}>Offlayn</option>
+        </select>
+    </label>
+    <label>IP manzil
+        <input type="text" name="ip" value="{{ ip_filter }}" placeholder="masalan 172.16.1.">
+    </label>
+    <label>MAC
+        <input type="text" name="mac" value="{{ mac_filter }}" placeholder="masalan AA:BB:CC">
+    </label>
+    <label>Hostname
+        <input type="text" name="hostname" value="{{ hostname_filter }}">
+    </label>
+    <label>Ulanish
+        <select name="connection_type">
+            <option value="" {% if not connection_filter %}selected{% endif %}>Hammasi</option>
+            <option value="wifi" {% if connection_filter == 'wifi' %}selected{% endif %}>Wi-Fi</option>
+            <option value="cable" {% if connection_filter == 'cable' %}selected{% endif %}>Kabel</option>
+            <option value="unknown" {% if connection_filter == 'unknown' %}selected{% endif %}>Nomalum</option>
+        </select>
+    </label>
+    <label>Manba
+        <input type="text" name="source" value="{{ source_filter }}" placeholder="masalan kerio_dhcp">
+    </label>
+    <label>Endpoint Agent
+        <select name="agent_status">
+            <option value="" {% if not agent_status_filter %}selected{% endif %}>Hammasi</option>
+            <option value="online" {% if agent_status_filter == 'online' %}selected{% endif %}>Online</option>
+            <option value="offline" {% if agent_status_filter == 'offline' %}selected{% endif %}>Offline</option>
+            <option value="none" {% if agent_status_filter == 'none' %}selected{% endif %}>O'rnatilmagan</option>
+        </select>
+    </label>
+    <label>Risk Score &ge;
+        <select name="min_risk">
+            <option value="" {% if not min_risk_filter %}selected{% endif %}>Hammasi</option>
+            <option value="30" {% if min_risk_filter == '30' %}selected{% endif %}>30+</option>
+            <option value="70" {% if min_risk_filter == '70' %}selected{% endif %}>70+</option>
+        </select>
+    </label>
+    <label>Alertlar
+        <select name="has_alerts">
+            <option value="" {% if not has_alerts_filter %}selected{% endif %}>Hammasi</option>
+            <option value="1" {% if has_alerts_filter == '1' %}selected{% endif %}>Faqat alertli</option>
+        </select>
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/devices" class="clear-link">Tozalash</a>
+</form>
 
 {% if devices %}
 <table>
@@ -78,6 +125,21 @@
     </tr>
     {% endfor %}
 </table>
+
+{% if total_pages > 1 %}
+{% set pargs = request.args.to_dict() %}
+{% set _ = pargs.pop('page', None) %}
+<div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+    {% if page > 1 %}
+    <a href="{{ url_for('devices', page=page - 1, **pargs) }}">&laquo; Oldingi</a>
+    {% endif %}
+    <span style="color:#95a5a6; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta qurilma)</span>
+    {% if page < total_pages %}
+    <a href="{{ url_for('devices', page=page + 1, **pargs) }}">Keyingi &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+
 {% else %}
 <div class="empty">Hech qanday qurilma topilmadi</div>
 {% endif %}

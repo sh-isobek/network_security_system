@@ -58,18 +58,18 @@ def _is_blacklisted(session, value: str):
 
 
 def _upsert_device(session, ip: str, mac: str = None, hostname: str = None, source: str = "unknown"):
-    device = session.query(Device).filter(Device.ip_address == ip).first()
-    if device is None:
-        device = Device(ip_address=ip, mac_address=mac, hostname=hostname, source=source)
-        session.add(device)
-        session.flush()  # id olish uchun
-    else:
-        if mac:
-            device.mac_address = mac
-        if hostname:
-            device.hostname = hostname
-        device.last_seen = utcnow()
-    return device
+    """
+    MUHIM (real production xatosi tuzatilgan): avval faqat `ip_address`
+    bo'yicha qidirilardi - DHCP muhitida bir xil fizik qurilma (bir xil
+    MAC) qayta ulanganda ko'pincha YANGI IP oladi, va bu funksiya buni
+    "yangi qurilma" deb yaratib yuborardi (eski IP'dagi qator esa
+    "oflayn" bo'lib qolaverardi) - vaqt o'tishi bilan `devices` jadvali
+    haqiqiy qurilmalar sonidan ancha ko'p, duplikat qatorlar bilan
+    to'lib boradi edi. Endi `db.device_identity.find_or_create_device`
+    orqali avval MAC bo'yicha qidiriladi (batafsil: shu modul docstring'i).
+    """
+    from db.device_identity import find_or_create_device
+    return find_or_create_device(session, ip, mac=mac, source=source, hostname=hostname)
 
 
 def process_one(session, raw_log: RawLog):

@@ -255,15 +255,51 @@ def index():
 @app.route("/alerts")
 @login_required
 def alerts():
+    from datetime import datetime, time as dt_time
+
     session = get_session()
     try:
         severity_filter = request.args.get("severity", "")
+        ack_filter = request.args.get("acknowledged", "")
+        hostname_filter = request.args.get("hostname", "").strip()
+        ip_filter = request.args.get("ip", "").strip()
+        mitre_filter = request.args.get("mitre", "").strip()
+        date_from = request.args.get("date_from", "").strip()
+        date_to = request.args.get("date_to", "").strip()
+
         query = session.query(Alert)
         if severity_filter:
             query = query.filter(Alert.severity == severity_filter)
+        if ack_filter == "1":
+            query = query.filter(Alert.acknowledged.is_(True))
+        elif ack_filter == "0":
+            query = query.filter(Alert.acknowledged.is_(False))
+        if mitre_filter:
+            query = query.filter(Alert.mitre_technique_id.ilike(f"%{mitre_filter}%"))
+        if hostname_filter or ip_filter:
+            query = query.join(Device, Alert.device_id == Device.id)
+            if hostname_filter:
+                query = query.filter(Device.hostname.ilike(f"%{hostname_filter}%"))
+            if ip_filter:
+                query = query.filter(Device.ip_address.ilike(f"%{ip_filter}%"))
+        if date_from:
+            try:
+                query = query.filter(Alert.timestamp >= datetime.combine(datetime.strptime(date_from, "%Y-%m-%d").date(), dt_time.min))
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                query = query.filter(Alert.timestamp < datetime.combine(datetime.strptime(date_to, "%Y-%m-%d").date(), dt_time.max))
+            except ValueError:
+                pass
+
         all_alerts = query.order_by(Alert.timestamp.desc()).limit(200).all()
         alerts_data = [_alert_to_dict(session, a) for a in all_alerts]
-        return render_template("alerts.html", alerts=alerts_data, severity_filter=severity_filter)
+        return render_template(
+            "alerts.html", alerts=alerts_data, severity_filter=severity_filter,
+            ack_filter=ack_filter, hostname_filter=hostname_filter, ip_filter=ip_filter,
+            mitre_filter=mitre_filter, date_from=date_from, date_to=date_to,
+        )
     finally:
         session.close()
 
@@ -302,13 +338,41 @@ def _agent_status(agent_last_heartbeat):
     return "online" if agent_last_heartbeat >= cutoff else "offline"
 
 
+DEVICES_PAGE_SIZE = 200
+
+
 @app.route("/devices")
 @login_required
 def devices():
+    """
+    MUHIM (real production xatosi tuzatilgan): sarlavha/statistika
+    kartochkalari HAQIQIY jami sonni (`total_count`, filtrsiz butun
+    `devices` jadvali) ko'rsatsa-da, pastdagi jadval avval `.limit(200)`
+    bilan qattiq cheklangan edi - foydalanuvchi "724 ta qurilma" deb
+    o'qiydi, lekin ro'yxatda faqat birinchi 200 tasini ko'radi, qolgan
+    500+ tasi HECH QACHON ko'rinmasdi (sahifalash yo'q edi). Endi
+    `page` parametri orqali sahifalab, BARCHA qurilmalarga (joriy
+    onlayn/offlayn filtriga mos) yetish mumkin.
+    """
+    from datetime import timedelta
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+
     session = get_session()
     try:
         online_cutoff = _device_online_cutoff()
+        agent_cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
         status_filter = request.args.get("status", "")
+        ip_filter = request.args.get("ip", "").strip()
+        mac_filter = request.args.get("mac", "").strip()
+        hostname_filter = request.args.get("hostname", "").strip()
+        connection_filter = request.args.get("connection_type", "").strip()
+        source_filter = request.args.get("source", "").strip()
+        agent_status_filter = request.args.get("agent_status", "").strip()
+        min_risk_filter = request.args.get("min_risk", "").strip()
+        has_alerts_filter = request.args.get("has_alerts", "").strip()
+        page = request.args.get("page", 1, type=int) or 1
+        if page < 1:
+            page = 1
         total_count = session.query(Device).count()
         online_count = session.query(Device).filter(Device.last_seen >= online_cutoff).count()
         offline_count = total_count - online_count
@@ -318,7 +382,37 @@ def devices():
             query = query.filter(Device.last_seen >= online_cutoff)
         elif status_filter == "offline":
             query = query.filter(Device.last_seen < online_cutoff)
-        all_devices = query.order_by(Device.risk_score.desc(), Device.last_seen.desc()).limit(200).all()
+        if ip_filter:
+            query = query.filter(Device.ip_address.ilike(f"%{ip_filter}%"))
+        if mac_filter:
+            query = query.filter(Device.mac_address.ilike(f"%{mac_filter}%"))
+        if hostname_filter:
+            query = query.filter(Device.hostname.ilike(f"%{hostname_filter}%"))
+        if connection_filter in {"wifi", "cable", "unknown"}:
+            query = query.filter(Device.connection_type == connection_filter)
+        if source_filter:
+            query = query.filter(Device.source.ilike(f"%{source_filter}%"))
+        if agent_status_filter == "online":
+            query = query.filter(Device.agent_last_heartbeat.isnot(None), Device.agent_last_heartbeat >= agent_cutoff)
+        elif agent_status_filter == "offline":
+            query = query.filter(Device.agent_last_heartbeat.isnot(None), Device.agent_last_heartbeat < agent_cutoff)
+        elif agent_status_filter == "none":
+            query = query.filter(Device.agent_last_heartbeat.is_(None))
+        if min_risk_filter.isdigit():
+            query = query.filter(Device.risk_score >= int(min_risk_filter))
+        if has_alerts_filter == "1":
+            query = query.filter(session.query(Alert).filter(Alert.device_id == Device.id).exists())
+
+        filtered_count = query.count()
+        total_pages = max(1, (filtered_count + DEVICES_PAGE_SIZE - 1) // DEVICES_PAGE_SIZE)
+        if page > total_pages:
+            page = total_pages
+        all_devices = (
+            query.order_by(Device.risk_score.desc(), Device.last_seen.desc())
+            .offset((page - 1) * DEVICES_PAGE_SIZE)
+            .limit(DEVICES_PAGE_SIZE)
+            .all()
+        )
 
         devices_data = []
         for d in all_devices:
@@ -336,6 +430,11 @@ def devices():
         return render_template(
             "devices.html", devices=devices_data, status_filter=status_filter,
             total_count=total_count, online_count=online_count, offline_count=offline_count,
+            page=page, total_pages=total_pages, filtered_count=filtered_count,
+            ip_filter=ip_filter, mac_filter=mac_filter, hostname_filter=hostname_filter,
+            connection_filter=connection_filter, source_filter=source_filter,
+            agent_status_filter=agent_status_filter, min_risk_filter=min_risk_filter,
+            has_alerts_filter=has_alerts_filter,
         )
     finally:
         session.close()
@@ -345,13 +444,23 @@ def devices():
 @role_required("admin")
 def agent_coverage_page():
     from network_discovery.agent_coverage import generate_coverage_report, STALE_THRESHOLD_HOURS
+    q = request.args.get("q", "").strip().lower()
     try:
         report = generate_coverage_report()
         error = None
     except Exception as exc:
         report = None
         error = str(exc)
-    return render_template("agent_coverage.html", report=report, error=error, stale_hours=STALE_THRESHOLD_HOURS)
+
+    missing_filtered = stale_filtered = []
+    if report is not None:
+        missing_filtered = [n for n in report.missing if q in n.lower()] if q else report.missing
+        stale_filtered = [n for n in report.stale if q in n.lower()] if q else report.stale
+
+    return render_template(
+        "agent_coverage.html", report=report, error=error, stale_hours=STALE_THRESHOLD_HOURS,
+        q=q, missing_filtered=missing_filtered, stale_filtered=stale_filtered,
+    )
 
 
 @app.route("/asset-inventory")
@@ -362,13 +471,28 @@ def asset_inventory():
 
     session = get_session()
     try:
-        all_devices = (
-            session.query(Device)
-            .filter(Device.discovery_source.isnot(None))
-            .order_by(Device.last_discovered_at.desc())
-            .limit(300)
-            .all()
-        )
+        ip_filter = request.args.get("ip", "").strip()
+        mac_filter = request.args.get("mac", "").strip()
+        hostname_filter = request.args.get("hostname", "").strip()
+        device_type_filter = request.args.get("device_type", "").strip()
+        vendor_filter = request.args.get("vendor", "").strip()
+        discovery_source_filter = request.args.get("discovery_source", "").strip()
+
+        query = session.query(Device).filter(Device.discovery_source.isnot(None))
+        if ip_filter:
+            query = query.filter(Device.ip_address.ilike(f"%{ip_filter}%"))
+        if mac_filter:
+            query = query.filter(Device.mac_address.ilike(f"%{mac_filter}%"))
+        if hostname_filter:
+            query = query.filter(Device.hostname.ilike(f"%{hostname_filter}%"))
+        if device_type_filter:
+            query = query.filter(Device.device_type == device_type_filter)
+        if vendor_filter:
+            query = query.filter(Device.vendor.ilike(f"%{vendor_filter}%"))
+        if discovery_source_filter:
+            query = query.filter(Device.discovery_source == discovery_source_filter)
+
+        all_devices = query.order_by(Device.last_discovered_at.desc()).limit(300).all()
         devices_data = []
         for d in all_devices:
             open_ports = []
@@ -386,7 +510,12 @@ def asset_inventory():
 
         topology = session.query(TopologyLink).order_by(TopologyLink.discovered_at.desc()).limit(100).all()
 
-        return render_template("asset_inventory.html", devices=devices_data, topology=topology)
+        return render_template(
+            "asset_inventory.html", devices=devices_data, topology=topology,
+            ip_filter=ip_filter, mac_filter=mac_filter, hostname_filter=hostname_filter,
+            device_type_filter=device_type_filter, vendor_filter=vendor_filter,
+            discovery_source_filter=discovery_source_filter,
+        )
     finally:
         session.close()
 
@@ -453,13 +582,27 @@ def files():
     try:
         verdict_filter = request.args.get("verdict", "")
         channel_filter = request.args.get("channel", "")
+        filename_filter = request.args.get("filename", "").strip()
+        ip_filter = request.args.get("ip", "").strip()
+        sha256_filter = request.args.get("sha256", "").strip()
+
         query = session.query(FileEvent)
         if verdict_filter:
             query = query.filter(FileEvent.verdict == verdict_filter)
         if channel_filter:
             query = query.filter(FileEvent.channel == channel_filter)
+        if filename_filter:
+            query = query.filter(FileEvent.filename.ilike(f"%{filename_filter}%"))
+        if ip_filter:
+            query = query.filter(FileEvent.src_ip.ilike(f"%{ip_filter}%"))
+        if sha256_filter:
+            query = query.filter(FileEvent.sha256.ilike(f"{sha256_filter}%"))
+
         all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
-        return render_template("files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter)
+        return render_template(
+            "files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter,
+            filename_filter=filename_filter, ip_filter=ip_filter, sha256_filter=sha256_filter,
+        )
     finally:
         session.close()
 
@@ -492,8 +635,25 @@ def download_report():
 def users():
     session = get_session()
     try:
-        all_users = session.query(User).order_by(User.username).all()
-        return render_template("users.html", users=all_users)
+        username_filter = request.args.get("username", "").strip()
+        role_filter = request.args.get("role", "").strip()
+        active_filter = request.args.get("active", "").strip()
+
+        query = session.query(User)
+        if username_filter:
+            query = query.filter(User.username.ilike(f"%{username_filter}%"))
+        if role_filter in {"admin", "analyst", "viewer"}:
+            query = query.filter(User.role == role_filter)
+        if active_filter == "1":
+            query = query.filter(User.is_active.is_(True))
+        elif active_filter == "0":
+            query = query.filter(User.is_active.is_(False))
+
+        all_users = query.order_by(User.username).all()
+        return render_template(
+            "users.html", users=all_users, username_filter=username_filter,
+            role_filter=role_filter, active_filter=active_filter,
+        )
     finally:
         session.close()
 
@@ -644,7 +804,23 @@ def api_tokens():
     tokens = token_manager.list_tokens()
     new_token = flask_session.pop("new_token_plaintext", None)
     flask_session.modified = True
-    return render_template("api_tokens.html", tokens=tokens, new_token=new_token)
+
+    name_filter = request.args.get("name", "").strip().lower()
+    hostname_filter = request.args.get("hostname", "").strip().lower()
+    status_filter = request.args.get("status", "").strip()
+    if name_filter:
+        tokens = [t for t in tokens if name_filter in (t.name or "").lower()]
+    if hostname_filter:
+        tokens = [t for t in tokens if hostname_filter in (t.agent_hostname or "").lower()]
+    if status_filter == "active":
+        tokens = [t for t in tokens if not t.revoked]
+    elif status_filter == "revoked":
+        tokens = [t for t in tokens if t.revoked]
+
+    return render_template(
+        "api_tokens.html", tokens=tokens, new_token=new_token,
+        name_filter=name_filter, hostname_filter=hostname_filter, status_filter=status_filter,
+    )
 
 
 @app.route("/api-tokens/create", methods=["POST"])
@@ -682,15 +858,43 @@ def api_tokens_revoke(token_id):
 @app.route("/audit")
 @role_required("admin")
 def audit_log():
+    from datetime import datetime, time as dt_time
     from db.models import AuditLog
     session = get_session()
     try:
         action_filter = request.args.get("action", "")
+        username_filter = request.args.get("username", "").strip()
+        target_type_filter = request.args.get("target_type", "").strip()
+        ip_filter = request.args.get("ip", "").strip()
+        date_from = request.args.get("date_from", "").strip()
+        date_to = request.args.get("date_to", "").strip()
+
         query = session.query(AuditLog)
         if action_filter:
             query = query.filter(AuditLog.action == action_filter)
+        if username_filter:
+            query = query.filter(AuditLog.username.ilike(f"%{username_filter}%"))
+        if target_type_filter:
+            query = query.filter(AuditLog.target_type.ilike(f"%{target_type_filter}%"))
+        if ip_filter:
+            query = query.filter(AuditLog.ip_address.ilike(f"%{ip_filter}%"))
+        if date_from:
+            try:
+                query = query.filter(AuditLog.timestamp >= datetime.combine(datetime.strptime(date_from, "%Y-%m-%d").date(), dt_time.min))
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                query = query.filter(AuditLog.timestamp < datetime.combine(datetime.strptime(date_to, "%Y-%m-%d").date(), dt_time.max))
+            except ValueError:
+                pass
+
         entries = query.order_by(AuditLog.timestamp.desc()).limit(300).all()
-        return render_template("audit.html", entries=entries, action_filter=action_filter)
+        return render_template(
+            "audit.html", entries=entries, action_filter=action_filter,
+            username_filter=username_filter, target_type_filter=target_type_filter,
+            ip_filter=ip_filter, date_from=date_from, date_to=date_to,
+        )
     finally:
         session.close()
 

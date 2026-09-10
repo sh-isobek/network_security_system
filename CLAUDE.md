@@ -103,6 +103,168 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | UEBA Engine (`engine/ueba_engine.py`) production'da ISHGA TUSHIRILDI | ✅✅ To'liq yozilgan/test qilingan edi, lekin `docker-compose.yml`da HECH QANDAY xizmat sifatida ro'yxatga olinmagan edi (Alertlar bo'sh qolishining bir sababi) - profilsiz `ueba_engine` xizmati qo'shildi |
 | — | Kerio "connection" hodisalari endi blacklist'ga qarshi tekshiriladi + Web Activity'ga yoziladi | ✅✅ Avval faqat `dns_query` tekshirilar/yozilardi - yagona real oqim (Kerio Connection) uchun bunday tekshiruv/yozuv UMUMAN yo'q edi (Alertlar/Saytlar tarixi bo'sh qolishining ikkinchi sababi) |
 | — | Kerio parser: `hostname (ip):port` formatida domen nomi tashlab yuborilardi (TO'RTINCHI marta tuzatilgan Kerio xatosi) | ✅✅ `_parse_endpoint()` IP topilganda hostname'ni butunlay `None` qilib qaytarardi - "Saytlar tarixi" xom IP'lardan boshqa narsa ko'rsata olmasdi |
+| — | Device identifikatsiyasi - IP emas, MAC orqali (`db/device_identity.py`, yangi) | ✅✅ `devices` avval FAQAT IP orqali aniqlanardi - DHCP IP o'zgarsa (qurilma oflaynga chiqib qayta ulanganda) "yangi qurilma" deb duplikat qator yaratilardi. Endi avval MAC bo'yicha qidiriladi (batafsil quyida) |
+| — | Dashboard `/devices` sahifalash (200+ qurilma bo'lganda ham hammasi ko'rinadi) | ✅ Sarlavha haqiqiy jami sonni ko'rsatsa-da, jadval `.limit(200)` bilan qattiq cheklangan, sahifalash YO'Q edi - foydalanuvchi "724" o'qib, faqat 200 tasini ko'rardi |
+| — | Dashboard: barcha asosiy sahifalarga ustun-bo'yicha filtr (Qurilmalar/Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map) | ✅ Foydalanuvchi ekran-suratida deyarli barcha sahifa/ustunni belgilab so'ragan - avval faqat bir nechta sahifada (severity/verdict/channel/action kabi) oddiy kategoriya-filtr bor edi, ko'pchilik ustunda (IP/MAC/hostname/vendor/username/MITRE va h.k.) UMUMAN yo'q edi |
+
+## Dashboard: "chizilgan oynalarni barchasiga filtr qo'yib ber" - barcha asosiy sahifalarga ustun-bo'yicha filtr
+
+Foydalanuvchi `/devices` ekran-suratida deyarli barcha nav sahifalarini
+(Alertlar, Asset Inventory, Agent Coverage, Fayllar, Saytlar tarixi,
+Live Map, Foydalanuvchilar, Audit Log, API Tokenlar) va Qurilmalar
+jadvalining barcha ustunlarini (Holat, IP, MAC, Hostname, Ulanish,
+Manba, Oxirgi ko'rilgan, Endpoint Agent, Alertlar, Risk Score) qizil
+rangda belgilab, "hammasiga filtr qo'yib ber" deb so'radi. Ko'lam
+so'ralganda foydalanuvchi "Barcha sahifalar"ni tanladi.
+
+**Tekshiruv**: sahifalarning aksariyatida allaqachon oddiy, BITTA
+kategoriya bo'yicha filtr bor edi (Alerts - severity, Files - verdict/
+channel, Audit - action, Web Activity'da esa - allaqachon TO'LIQ,
+ip/site/hostname/protocol/sana bilan), lekin ko'pchilik ustun (IP/MAC/
+hostname/vendor/username/MITRE texnika/sana oralig'i va h.k.) uchun
+UMUMAN filtr yo'q edi, va Devices/Asset Inventory/Users/API Tokens/
+Agent Coverage sahifalarida bironta ham matn-qidiruv filtri yo'q edi.
+
+**Qurilgan** (`dashboard/templates/base.html`ga umumiy `.filter-form`
+CSS klassi qo'shilib, barcha sahifada bir xil uslub ishlatildi):
+- **Qurilmalar** (`/devices`): IP, MAC, Hostname, Ulanish, Manba,
+  Endpoint Agent holati, Risk Score (30+/70+), "Faqat alertli" - eski
+  Holat (onlayn/offlayn) filtri bitta formaga birlashtirildi.
+- **Alertlar** (`/alerts`): Hostname, IP, MITRE texnika, Tasdiqlash
+  holati, sana oralig'i - eski severity tugmalari saqlab qolindi.
+- **Asset Inventory** (`/asset-inventory`): IP, MAC, Hostname, Tur,
+  Vendor, Manba (discovery_source) - avval UMUMAN filtr yo'q edi.
+- **Fayllar** (`/files`): Fayl nomi, Manba IP, SHA256 prefiks - eski
+  verdict/channel tugmalari saqlab qolindi.
+- **Foydalanuvchilar** (`/users`): Login, Rol, Holat - avval UMUMAN
+  filtr yo'q edi.
+- **Audit Log** (`/audit`): Foydalanuvchi, Nishon turi, IP, sana
+  oralig'i - eski action tugmalari saqlab qolindi.
+- **API Tokenlar** (`/api-tokens`): Nomi, Kompyuter, Holat - avval
+  UMUMAN filtr yo'q edi.
+- **Agent Coverage** (`/agent-coverage`): kompyuter nomi bo'yicha
+  qidiruv (missing/stale ro'yxatlarini filtrlaydi, umumiy qamrov %
+  hisob-kitobi o'zgarmaydi).
+- **Live Map** (`/live-map`): qidiruv maydoni - Ro'yxat ko'rinishida
+  mos kelmagan qatorlarni yashiradi, Grafik ko'rinishida mos kelmagan
+  tugunlarni xiralashtiradi (butunlay yo'qotmaydi - qo'shni aloqalarni
+  ko'rish imkoni saqlanadi uchun) - bu client-side JS, server o'zgarmadi.
+- `/devices`ning sahifalash havolalari (`Oldingi/Keyingi`) endi
+  `url_for(..., **request.args)` orqali BARCHA joriy filtrlarni
+  saqlab qoladi - filtr qo'llab, keyingi sahifaga o'tganda filtr
+  yo'qolib qolmaydi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: har bir yangi filtr uchun HAQIQIY HTTP
+so'rov + real DB orqali - filtr nafaqat "xato bermadi", balki mos
+kelgan/kelmagan qatorlarni TO'G'RI ajratganligi tasdiqlandi (masalan
+`device_type=workstation` faqat workstation qurilmani ko'rsatib,
+server'ni yashirishi; `acknowledged=1` hali tasdiqlanmagan alertni
+chiqarib yubormasligi; `hostname`/`username` filtri navigatsiya
+panelidagi joriy foydalanuvchi nomi bilan chalkashib ketmasligi -
+bu test yozish paytida topilgan, jadval qatori `<td>...</td>` shakli
+bo'yicha aniqlab tuzatilgan xato edi). `/devices` sahifalash+filtr
+birgalikda (205 ta qurilma, filtrli 2-sahifaga o'tish) ham
+tasdiqlandi. Butun `run_full_test.py` (82 test) - baseline'dan
+(71/78) YANGI hech qanday regressiyasiz: 75/82 (SQLite), 74/82
+(vaqtinchalik Postgres, farq - shu muhitda `pg_dump` yo'qligi,
+oldindan hujjatlashtirilgan holat).
+
+## Device ro'yxati: "724 ta qurilmani ko'rsatmayapti" + online/offline bo'lganda "yangi qurilma" bo'lib qo'shilishi (ikki mustaqil real xato)
+
+Foydalanuvchi ikkita kamchilikni bitta xabarda bildirdi: (1) qurilmalar
+ro'yxatida 724 ta qurilmani ko'rsatmayapti (sarlavhada "724" yozilgan,
+lekin pastdagi jadvalda hammasi ko'rinmaydi), (2) qurilma online'dan
+oflaynga o'tganida va yangi qurilma ulanganda, u qayta "yangi qurilma"
+sifatida ro'yxatga qo'shilib qoladi.
+
+**1-sabab (`/devices` sahifalash yo'qligi)**: `dashboard/app.py`ning
+`devices()` route'i sarlavha/statistika kartochkalari uchun HAQIQIY
+jami sonni (`total_count = session.query(Device).count()`) hisoblardi,
+lekin pastdagi jadval har doim `.limit(200)` bilan qattiq cheklangan
+edi - hech qanday sahifalash yo'q edi. Natijada foydalanuvchi
+sarlavhada "Barcha qurilmalar (724)" o'qiydi, lekin jadvalda faqat
+birinchi 200 tasini ko'radi - qolgan 500+ tasi HECH QACHON ko'rinmaydi.
+Tuzatildi: `page` query parametri qo'shildi (`DEVICES_PAGE_SIZE = 200`,
+`.offset()/.limit()` orqali), `devices.html`ga "Oldingi/Keyingi"
+sahifalash navigatsiyasi qo'shildi (joriy onlayn/offlayn filtrini
+saqlagan holda).
+
+**2-sabab (chuqurroq, HAQIQIY ILDIZ SABAB)**: `db/models.py`da
+`Device.ip_address` UNIQUE ustun, va qurilmani "topish/yaratish"
+mantig'i (`engine/parser_engine.py::_upsert_device`,
+`network_discovery/asset_inventory.py::_upsert_device`) FAQAT shu IP
+bo'yicha qidirardi. DHCP muhitida IP - vaqtinchalik: bitta fizik
+qurilma (bir xil MAC) oflaynga chiqib qayta ulanganda ko'pincha
+BOSHQA IP oladi (lease muddati tugagan/yangilangan). Bu holatda: eski
+IP'dagi qator "oflayn" bo'lib abadiy qolib ketardi, YANGI IP uchun esa
+BUTUNLAY YANGI `Device` qatori yaratilardi - garchi bu aynan O'SHA
+qurilma bo'lsa ham. Vaqt o'tishi bilan bu `devices` jadvalini haqiqiy
+qurilmalar sonidan ancha ko'p, "arvoh" duplikatlar bilan to'ldirib
+boradi - foydalanuvchi xabar qilgan "724 ta qurilma"ning katta qismi
+aynan shu duplikatlar bo'lishi ehtimoli yuqori.
+
+**Tuzatish**: yangi umumiy modul `db/device_identity.py` -
+`find_or_create_device()` avval MAC (mavjud bo'lsa) bo'yicha qidiradi,
+topilsa xuddi shu qatorning `ip_address`sini yangilaydi (yangi qator
+YARATMAYDI). MAC solishtirish katta/kichik harfga sezgir emas
+(`func.upper()`), lekin saqlangan qiymatning FORMATINI o'zgartirmaydi
+(Ruijie'ning nuqtali `aabb.ccdd.9001` notatsiyasi ham, Kerio/ARP'ning
+ikki nuqtali `AA:BB:CC:...` notatsiyasi ham o'z holicha saqlanadi -
+faqat qidiruv ikkalasiga ham bab-baravar mos keladi).
+
+IP kolliziyasi (DHCP o'sha IP'ni oldin BOSHQA MAC'ga bergan, o'sha
+eski qator hali bazada bor) alohida hal qilindi: `ip_address` UNIQUE
+bo'lgani uchun ikkala qatorda bir xil IP qololmaydi - bu holatda eski
+qatorning TARIXI (Event/Alert/WebAccessLog/DeviceBaseline) YO'QOTIL-
+MAYDI, balki MAC-mos qatorga ko'chiriladi (`_merge_device()`), so'ng
+bo'sh qolgan eski qator o'chiriladi. Xavfsizlik monitoring tizimida
+tarixiy Alert'ni jimgina yo'qotish maqbul emas - shuning uchun
+o'chirishdan oldin har doim ko'chiriladi.
+
+`engine/parser_engine.py` va `network_discovery/asset_inventory.py`dagi
+o'zlarining `_upsert_device()` funksiyalari endi shu umumiy modulga
+delegatsiya qiladi (kodni ikki marta yozmaslik). MAC bermaydigan
+manbalar (Suricata/Zeek/fayl tekshiruvi/SNMP/TCP scan - bular faqat IP
+biladi) uchun xatti-harakat o'zgarmadi - ular baribir hech qachon MAC
+bermagan, demak duplikatsiya xavfi ham yo'q edi.
+
+**MUHIM (test paytida topilgan, sessiyaning o'z regressiyasi)**:
+birinchi versiyada MAC format ham normallashtirilgan edi (`.upper()`
++ `.replace("-", ":")`) - bu haqiqiy Ruijie integratsiya testini
+buzib qo'ydi (`d.mac_address == "aabb.ccdd.9001"` - Ruijie nuqtali
+notatsiya ishlatadi, kod esa uni "AABB.CCDD.9001" qilib qayta yozib
+yuborardi). Tuzatildi: format saqlanadi, faqat qidiruv katta/kichik
+harfga sezgir emas.
+
+**Real test qilingan (ham SQLite'da, ham vaqtinchalik, alohida
+Docker PostgreSQL konteynerida - production bazasi UMUMAN
+ishlatilmadi)**: (1) bir xil MAC ikki xil IP bilan ketma-ket
+`engine.parser_engine.run_once()` orqali yuborilganda, `devices`
+jadvalida BITTA qator qolishi va uning IP'si yangilanishi; (2) IP
+kolliziyasi stsenariysida eski qatorning Event/Alert tarixi yangi
+qatorga to'liq ko'chirilishi, eski (bo'sh qolgan) qator o'chirilishi;
+(3) 205 ta qurilma yaratilib, `/devices` orqali BARCHA sahifalarni
+aylanib chiqilganda, hech biri yo'qolmasligi - real HTTP orqali
+tasdiqlandi. Butun `run_full_test.py` (81 test) ham SQLite'da (74/81),
+ham vaqtinchalik Postgres konteynerida (73/81, farq - `pg_dump` bu
+muhitda o'rnatilmagan, oldindan hujjatlashtirilgan holat) - avvalgi
+71/78'dan (baseline) YANGI hech qanday regressiya yo'qligi
+tasdiqlandi.
+
+**Diqqat (muhim, xavfsizlik nuqtai nazaridan)**: bu ishni sinash
+paytida aniqlandi - `config/settings.py`dagi `load_dotenv()` worktree
+ichidan chaqirilganda, python-dotenv katalogni YUQORIGA qarab qidirib,
+ASOSIY repo katalogidagi HAQIQIY production `.env` faylini (real
+parollar bilan) topib yuklab olishi mumkin ekan (worktree - asosiy
+repo ichidagi quyi katalog bo'lgani uchun). Shuning uchun bu sessiyada
+test butunlay ALOHIDA nusxa katalogida (production repo daraxtidan
+tashqarida) va ANIQ `DATABASE_URL` bilan ishga tushirildi - haqiqiy
+production Postgres konteyneriga (`docker ps`da ko'ringan, real 724
+qurilmali) HECH QACHON tegilmadi. **Bu holat alohida, kelajakda hal
+qilinishi kerak bo'lgan muammo** - agar kimdir worktree ichida
+`DATABASE_URL`ni aniq belgilamasdan `run_full_test.py`ni ishga
+tushirsa, u bilmagan holda production bazasiga ulanib qolishi mumkin.
 
 ## Live Map: 2 xil ko'rinish (Grafik/Ro'yxat) + Alertlar/Saytlar tarixi bo'sh qolishining UCH sababi
 

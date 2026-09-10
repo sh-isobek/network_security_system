@@ -9,6 +9,29 @@
     {% endfor %}
 {% endwith %}
 
+<form method="GET" action="/users" class="filter-form">
+    <label>Login
+        <input type="text" name="username" value="{{ username_filter }}">
+    </label>
+    <label>Rol
+        <select name="role">
+            <option value="" {% if not role_filter %}selected{% endif %}>Hammasi</option>
+            <option value="admin" {% if role_filter == 'admin' %}selected{% endif %}>Admin</option>
+            <option value="analyst" {% if role_filter == 'analyst' %}selected{% endif %}>Analyst</option>
+            <option value="viewer" {% if role_filter == 'viewer' %}selected{% endif %}>Viewer</option>
+        </select>
+    </label>
+    <label>Holat
+        <select name="active">
+            <option value="" {% if not active_filter %}selected{% endif %}>Hammasi</option>
+            <option value="1" {% if active_filter == '1' %}selected{% endif %}>Faol</option>
+            <option value="0" {% if active_filter == '0' %}selected{% endif %}>Faolsizlantirilgan</option>
+        </select>
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/users" class="clear-link">Tozalash</a>
+</form>
+
 <table style="margin-bottom: 24px;">
     <tr><th>Login</th><th>Rol</th><th>Holat</th><th>Oxirgi kirish</th><th>Amal</th></tr>
     {% for u in users %}

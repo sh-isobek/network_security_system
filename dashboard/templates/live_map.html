@@ -7,9 +7,13 @@
     Rang = Risk Score (qizil=yuqori, sariq=o'rta, ko'k=past/yo'q). 15 soniyada avtomatik yangilanadi.
 </p>
 
-<div class="filters" style="margin-bottom:14px;">
-    <a href="#" id="view-graph-btn" class="active" onclick="setView('graph'); return false;">Grafik ko'rinish</a>
-    <a href="#" id="view-list-btn" onclick="setView('list'); return false;">Ro'yxat ko'rinish</a>
+<div class="filters" style="margin-bottom:14px; display:flex; align-items:center; gap:14px;">
+    <span>
+        <a href="#" id="view-graph-btn" class="active" onclick="setView('graph'); return false;">Grafik ko'rinish</a>
+        <a href="#" id="view-list-btn" onclick="setView('list'); return false;">Ro'yxat ko'rinish</a>
+    </span>
+    <input type="text" id="map-search" placeholder="Qurilma/IP bo'yicha filtrlash..." oninput="applyFilter()"
+           style="padding:6px 10px; border:1px solid #dde3e8; border-radius:4px; font-size:12px; min-width:220px;">
 </div>
 
 <div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
@@ -39,6 +43,7 @@
 let network = null;
 let currentView = 'graph';
 let latestData = { nodes: [], edges: [] };
+let filterText = '';
 
 function setView(view) {
     currentView = view;
@@ -47,6 +52,22 @@ function setView(view) {
     document.getElementById('network-map').style.display = view === 'graph' ? '' : 'none';
     document.getElementById('list-view').style.display = view === 'list' ? '' : 'none';
     if (view === 'list') renderList();
+    else highlightGraph();
+}
+
+// Qurilma/IP bo'yicha filtr - Ro'yxat ko'rinishida mos kelmagan
+// qatorlarni yashiradi, Grafik ko'rinishida mos kelmagan tugunlarni
+// xiralashtiradi (butunlay yo'qotmaydi - qo'shni aloqalarni ko'rish
+// uchun grafni qayta qurish shart emas).
+function applyFilter() {
+    filterText = document.getElementById('map-search').value.trim().toLowerCase();
+    if (currentView === 'list') renderList();
+    else highlightGraph();
+}
+
+function _matchesFilter(text) {
+    if (!filterText) return true;
+    return (text || '').toLowerCase().includes(filterText);
 }
 
 function renderList() {
@@ -56,6 +77,11 @@ function renderList() {
     const rows = latestData.edges
         .slice()
         .sort((a, b) => (b.value || 0) - (a.value || 0))
+        .filter(e => {
+            const from = nodeById[e.from];
+            const to = nodeById[e.to];
+            return _matchesFilter((from && from.label) || e.from) || _matchesFilter((to && to.label) || e.to);
+        })
         .map(e => {
             const from = nodeById[e.from];
             const to = nodeById[e.to];
@@ -71,6 +97,15 @@ function renderList() {
     const body = document.getElementById('list-view-body');
     body.innerHTML = rows.join('');
     document.getElementById('list-view-empty').style.display = rows.length ? 'none' : '';
+}
+
+function highlightGraph() {
+    if (!network) return;
+    const updates = latestData.nodes.map(n => ({
+        id: n.id,
+        opacity: _matchesFilter(n.label) || _matchesFilter(n.id) ? 1 : 0.15,
+    }));
+    if (updates.length) network.body.data.nodes.update(updates);
 }
 
 async function loadTopology() {
@@ -96,6 +131,7 @@ async function loadTopology() {
     }
 
     if (currentView === 'list') renderList();
+    else highlightGraph();
 
     document.getElementById('last-update').textContent =
         '(oxirgi yangilanish: ' + new Date().toLocaleTimeString() + ')';

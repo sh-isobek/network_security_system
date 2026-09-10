@@ -30,23 +30,17 @@ logger = logging.getLogger("asset_inventory")
 
 
 def _upsert_device(session, ip: str, **fields) -> Device:
-    device = session.query(Device).filter(Device.ip_address == ip).first()
-    if device is None:
-        device = Device(ip_address=ip, source="network_discovery")
-        session.add(device)
-        session.flush()
-
-    for key, value in fields.items():
-        if value is None:
-            continue
-        if key == "discovery_source" and device.discovery_source:
-            # MUHIM: agar qurilma allaqachon boyroq manba orqali topilgan
-            # bo'lsa (masalan ARP - MAC bilan), ICMP kabi kambag'alroq
-            # manba (faqat "tirik" ekanini biladi) buni "pasaytirmasligi"
-            # kerak. discovery_source faqat hali bo'sh bo'lsa yoziladi.
-            continue
-        setattr(device, key, value)
-    device.last_seen = utcnow()
+    """
+    MUHIM (real production xatosi tuzatilgan): avval faqat `ip_address`
+    bo'yicha qidirilardi - DHCP muhitida bir xil fizik qurilma (bir xil
+    MAC) qayta ulanganda ko'pincha YANGI IP oladi, va bu funksiya buni
+    "yangi qurilma" deb yaratib yuborardi. Endi `db.device_identity.
+    find_or_create_device` orqali avval MAC bo'yicha qidiriladi
+    (batafsil: shu modul docstring'i).
+    """
+    from db.device_identity import find_or_create_device
+    mac = fields.pop("mac_address", None)
+    device = find_or_create_device(session, ip, mac=mac, source="network_discovery", **fields)
     device.last_discovered_at = utcnow()
     return device
 

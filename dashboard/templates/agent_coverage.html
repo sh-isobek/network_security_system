@@ -27,24 +27,42 @@
     </div>
 </div>
 
+{% if report.missing or report.stale %}
+<form method="GET" action="/agent-coverage" class="filter-form">
+    <label>Kompyuter nomi
+        <input type="text" name="q" value="{{ q }}" placeholder="qidirish...">
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/agent-coverage" class="clear-link">Tozalash</a>
+</form>
+{% endif %}
+
 {% if report.missing %}
-<h1>Agent o'rnatilishi kerak bo'lgan kompyuterlar</h1>
+<h1>Agent o'rnatilishi kerak bo'lgan kompyuterlar ({{ missing_filtered | length }}/{{ report.missing | length }})</h1>
+{% if missing_filtered %}
 <table style="margin-bottom:24px;">
     <tr><th>Kompyuter nomi</th></tr>
-    {% for name in report.missing %}
+    {% for name in missing_filtered %}
     <tr><td class="mono">{{ name }}</td></tr>
     {% endfor %}
 </table>
+{% else %}
+<div class="empty">Qidiruvga mos kompyuter topilmadi</div>
+{% endif %}
 {% endif %}
 
 {% if report.stale %}
-<h1>Eskirgan (agent to'xtagan bo'lishi mumkin)</h1>
+<h1>Eskirgan (agent to'xtagan bo'lishi mumkin) ({{ stale_filtered | length }}/{{ report.stale | length }})</h1>
+{% if stale_filtered %}
 <table>
     <tr><th>Kompyuter nomi</th></tr>
-    {% for name in report.stale %}
+    {% for name in stale_filtered %}
     <tr><td class="mono">{{ name }}</td></tr>
     {% endfor %}
 </table>
+{% else %}
+<div class="empty">Qidiruvga mos kompyuter topilmadi</div>
+{% endif %}
 {% endif %}
 {% endif %}
 {% endblock %}
