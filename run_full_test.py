@@ -628,6 +628,121 @@ controller.stop()
 check("Notification engine (real SMTP orqali email yetkazish)", _test_notification_engine)
 
 # ---------------------------------------------------------------------------
+print("\n=== 4b) Telegram Notifier: Markdown parslash xatosi (real production'da birinchi marta topilgan) ===")
+
+
+def _test_telegram_notifier_markdown_parse_fix():
+    """
+    HAQIQIY PRODUCTION'DA (bu sessiyaning o'zi tomonidan, deploy'dan
+    keyin) topilgan xato: `notifications/telegram_notifier.py`
+    `parse_mode: "Markdown"` bilan xabar yuborar edi, va `reason`
+    kabi dinamik maydonlar HECH QANDAY escape qilinmasdan
+    interpolatsiya qilinardi. Alert matnida deyarli har doim
+    Telegram'ning Markdown uchun maxsus belgilari (`[`, `_`, `*`)
+    uchraydi (masalan `[Trojan.Generic]` threat nomi yoki
+    `[LEXICAL_PHISHING]` yorlig'i) - bittasi "juftlashmagan" bo'lsa,
+    Telegram butun xabarni "can't parse entities" bilan RAD ETARDI.
+
+    Bu xato HECH QACHON avval sinalmagan edi - sandbox tarmoq siyosati
+    `api.telegram.org`ni bloklaganligi sababli (CLAUDE.md'da oldindan
+    hujjatlashtirilgan) - kod faqat "TELEGRAM_BOT_TOKEN sozlanmagan"
+    yo'lidan o'tib, haqiqiy so'rov hech qachon yuborilmagan edi. Real
+    production'da (haqiqiy bot token bilan) birinchi marta ishlaganda,
+    deyarli HAR BIR alert uchun bu xato chiqdi - xabarnomalar amalda
+    HECH QACHON yetib bormagan.
+
+    Bu test haqiqiy HTTP orqali - soxta Telegram API serveri bilan
+    (real `api.telegram.org`ning aynan shu xatosini takrorlaydigan) -
+    (1) eski (`parse_mode` bilan) xatti-harakat HAQIQATAN muvaffaqiyatsiz
+    bo'lishini, (2) tuzatilgan (`parse_mode`siz) `send_alert_telegram()`
+    xuddi shu (qavsli) matn bilan MUVAFFAQIYATLI yuborilishini tekshiradi.
+    """
+    import subprocess
+    import time as _time
+    from unittest.mock import patch
+
+    mock_script = "/tmp/_ci_mock_telegram.py"
+    with open(mock_script, "w") as f:
+        f.write('''
+from flask import Flask, request, jsonify
+app = Flask(__name__)
+
+@app.route("/bot<token>/sendMessage", methods=["POST"])
+def send_message(token):
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "")
+    # HAQIQIY Telegram API'ning production'da kuzatilgan xatosini
+    # takrorlaydi: parse_mode="Markdown" bilan, juftlashmagan "["
+    # bo'lsa (masalan "[Trojan.Generic]" keyin yopilmagan yana bir "["
+    # kabi emas - oddiy, real ssenariyni takrorlash uchun matnda
+    # HAR QANDAY "[" borligi + parse_mode borligi kifoya, chunki
+    # bizning eski kodimiz buni escape qilmasdi).
+    if data.get("parse_mode") and "[" in text:
+        return jsonify({"ok": False, "error_code": 400,
+                         "description": "Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 87"}), 400
+    return jsonify({"ok": True, "result": {"message_id": 1}})
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=19910)
+''')
+
+    mock_proc = subprocess.Popen(["python3", mock_script])
+    try:
+        _time.sleep(2)
+
+        import notifications.telegram_notifier as tg_mod
+
+        alert_data = {
+            "severity": "high", "timestamp": "2026-09-10 12:00:00",
+            "hostname": "CI-PC", "ip_address": "172.16.9.9", "mac_address": "-",
+            "connection_type": "wifi",
+            # Foydalanuvchi PRODUCTION'da aynan shu turdagi matn bilan
+            # duch kelgan - qavs ichida threat nomi/yorliq.
+            "reason": "Shubhali fayl aniqlandi: invoice.exe [Trojan.Generic] | SHA256=abc123",
+            "action_taken": "TASDIQLANGAN: karantinaga yuborish navbatda",
+        }
+
+        with patch.object(tg_mod, "TELEGRAM_BOT_TOKEN", "ci-test-token"), \
+             patch.object(tg_mod, "TELEGRAM_CHAT_ID", "12345"), \
+             patch.object(tg_mod, "TELEGRAM_API_URL", "http://127.0.0.1:19910/bot{token}/sendMessage"):
+
+            # 1) ESKI xatti-harakatni HAQIQATAN takrorlab, mock server
+            #    haqiqatan ham buni rad etishini tasdiqlaymiz (aks holda
+            #    bu test hech narsani isbotlamagan bo'lardi - mock
+            #    server real xatoni to'g'ri simulyatsiya qilishi kerak).
+            import requests
+            old_style_payload = {
+                "chat_id": tg_mod.TELEGRAM_CHAT_ID,
+                "text": tg_mod._build_message(alert_data),
+                "parse_mode": "Markdown",
+            }
+            mock_url = tg_mod.TELEGRAM_API_URL.format(token=tg_mod.TELEGRAM_BOT_TOKEN)
+            old_resp = requests.post(mock_url, json=old_style_payload, timeout=5)
+            assert old_resp.status_code == 400, (
+                "Mock server eski (parse_mode bilan) so'rovni rad etmadi - "
+                "bu test haqiqiy production xatosini to'g'ri simulyatsiya qilmayapti"
+            )
+
+            # 2) Tuzatilgan send_alert_telegram() - xuddi shu (qavsli) matn
+            #    bilan MUVAFFAQIYATLI bo'lishi kerak.
+            result = tg_mod.send_alert_telegram(alert_data)
+            assert result is True, (
+                "send_alert_telegram() muvaffaqiyatsiz bo'ldi - Markdown parslash "
+                "xatosi hali ham qaytgan bo'lishi mumkin (parse_mode qayta qo'shilgan?)"
+            )
+    finally:
+        mock_proc.terminate()
+        try:
+            mock_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mock_proc.kill()
+        if os.path.exists(mock_script):
+            os.remove(mock_script)
+
+
+check("Telegram Notifier: Markdown parslash xatosi (real production'da birinchi marta topilgan, sandbox tarmoq bloki tufayli avval hech qachon sinalmagan)", _test_telegram_notifier_markdown_parse_fix)
+
+# ---------------------------------------------------------------------------
 print("\n=== 11) CLAMAV INTEGRATSIYASI (maxsus test-signatura bazasi bilan) ===")
 
 

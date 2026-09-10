@@ -28,16 +28,43 @@ TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 def _build_message(alert_data: dict) -> str:
+    """
+    MUHIM (real production xatosi tuzatilgan): avval `parse_mode:
+    "Markdown"` bilan yuborilardi, va `reason`/severity kabi DINAMIK
+    maydonlar HECH QANDAY escape qilinmasdan to'g'ridan-to'g'ri
+    interpolatsiya qilinardi. Telegram'ning legacy Markdown formati
+    `_`, `*`, `` ` ``, `[` belgilarini maxsus deb hisoblaydi - Alert
+    matnida bular deyarli har doim uchraydi (masalan `[Trojan.Generic]`
+    kabi threat nomi, yoki `[LEXICAL_PHISHING]` yorlig'i, yoki
+    `invoice_final.exe` kabi pastki chiziqli fayl nomi) - bittasi
+    ochiq qolsa ("juftlashmagan `[`" kabi), Telegram butun xabarni
+    "can't parse entities" bilan RAD ETARDI.
+
+    Bu xato ilgari HECH QACHON sinalmagan edi - sandbox tarmoq
+    siyosati `api.telegram.org`ni bloklaganligi sababli (CLAUDE.md'da
+    ilgari ham hujjatlashtirilgan), kod "to'g'ri yozilgan" deb
+    hisoblangan, lekin haqiqiy Telegram API'ga birinchi marta real
+    xabar yuborilganda (production'da) darhol ochilib qoldi - deyarli
+    HAR BIR alert uchun (chunki reason matnida deyarli har doim
+    maxsus belgi bor), demak xabarnomalar amalda HECH QACHON
+    yetkazilmagan.
+
+    Tuzatish: `parse_mode` butunlay OLIB TASHLANDI (oddiy matn) - bu
+    formatlashni yo'qotadi (qalin matn), lekin Alert matni QANDAY
+    bo'lishidan qat'iy nazar HECH QACHON parslanish xatosi bilan rad
+    etilmasligini kafolatlaydi - bu xavfsizlik xabarnomasi uchun
+    "chiroyli, lekin yetib bormaydi"dan ko'ra ancha muhim.
+    """
     lines = [
-        f"🚨 *Xavfsizlik Ogohlantirishi* [{alert_data.get('severity', '').upper()}]",
+        f"🚨 Xavfsizlik Ogohlantirishi [{alert_data.get('severity', '').upper()}]",
         "",
-        f"*Vaqt:* {alert_data.get('timestamp', '')}",
-        f"*Qurilma:* {alert_data.get('hostname', 'Nomalum')}",
-        f"*IP:* {alert_data.get('ip_address', 'Nomalum')}",
-        f"*MAC:* {alert_data.get('mac_address', 'Nomalum')}",
-        f"*Ulanish:* {alert_data.get('connection_type', 'Nomalum')}",
-        f"*Tafsilot:* {alert_data.get('reason', '')}",
-        f"*Chora:* {alert_data.get('action_taken', '')}",
+        f"Vaqt: {alert_data.get('timestamp', '')}",
+        f"Qurilma: {alert_data.get('hostname', 'Nomalum')}",
+        f"IP: {alert_data.get('ip_address', 'Nomalum')}",
+        f"MAC: {alert_data.get('mac_address', 'Nomalum')}",
+        f"Ulanish: {alert_data.get('connection_type', 'Nomalum')}",
+        f"Tafsilot: {alert_data.get('reason', '')}",
+        f"Chora: {alert_data.get('action_taken', '')}",
     ]
     return "\n".join(lines)
 
@@ -55,7 +82,11 @@ def send_alert_telegram(alert_data: dict, timeout: int = 10) -> bool:
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": _build_message(alert_data),
-        "parse_mode": "Markdown",
+        # MUHIM: `parse_mode` ATAYLAB YO'Q - yuqoridagi `_build_message()`
+        # docstring'iga qarang (real production xatosi tuzatilgan:
+        # Markdown parslash reason matnidagi oddiy belgilardan
+        # (`[`/`_`/`*`) tez-tez buzilib, xabarnoma HECH QACHON
+        # yetib bormasdi).
     }
 
     try:
