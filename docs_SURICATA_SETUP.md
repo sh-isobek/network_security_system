@@ -138,7 +138,9 @@ sudo suricata -c /etc/suricata/suricata.yaml --af-packet -D
 
 `/var/log/suricata/eve.json` fayli paydo bo'ladi — har bir aniqlangan
 fayl uchun `"event_type":"fileinfo"` yozuvi, ichida `sha256`, `filename`,
-`magic`, `size`, `src_ip`, `dest_ip` maydonlari bilan.
+`magic`, `size`, `src_ip`, `dest_ip`, va **`stored`** (bool - bu aniq
+fayl `filestore;` qoidasiga mos kelib HAQIQATAN diskka yozilganmi)
+maydonlari bilan.
 
 ## 5. Bizning tizim bilan integratsiya
 
@@ -146,6 +148,36 @@ Python tomonda `collectors/suricata_reader.py` `eve.json` faylini
 doimiy o'qib turadi (`tail -f` uslubida), faqat `fileinfo` event'larni
 oladi va bazamizdagi `file_events` jadvaliga yozadi. Undan keyin
 `engine/file_analysis_engine.py` hash'larni tekshiradi.
+
+**MUHIM (real arxitektura bo'shlig'i tuzatilgan)**: avval `stored_path`
+HECH QACHON to'ldirilmasdi - `engine/deep_scan_engine.py` (YARA/ClamAV/
+Office/Archive) esa FAQAT `stored_path` mavjud bo'lganda ishlay oladi,
+demak Suricata orqali kelgan fayllar uchun bu tekshiruvlarning BARCHASI
+jimgina o'tkazib yuborilardi (faqat hash-asosli VT/MalwareBazaar
+tekshiruvi ishlardi). Endi `fileinfo.stored == true` bo'lganda,
+`stored_path` `SURICATA_FILESTORE_DIR` (standart: yuqoridagi `file-store:
+dir:` bilan BIR XIL, `/var/log/suricata/files`) + SHA256 sifatida
+avtomatik hisoblanadi - bu `file-store: version: 2`ning HAQIQIY fayl
+nomlash konvensiyasi (`<dir>/<sha256>`, ichki papkalarsiz).
+
+**Halol cheklovlar**:
+- Bu FAQAT `file-store: version: 2` bilan ishlaydi (yuqoridagi
+  sozlamaga qarang) - eskirgan `version: 1` boshqa, ichma-ich
+  papka konvensiyasidan foydalanadi va QO'LLAB-QUVVATLANMAYDI.
+- `force-hash: [sha256, md5]` HAR BIR ko'rilgan fayl uchun hash
+  hisoblaydi, lekin bu ularning BARCHASI diskka saqlanganini
+  ANGLATMAYDI (faqat `filestore;` qoidasiga mos kelganlar saqlanadi) -
+  shuning uchun `stored=false` bo'lgan fayllar uchun `stored_path`
+  ataylab bo'sh qoldiriladi (hash-asosli tekshiruv baribir ishlaydi,
+  chuqur skanerlash esa o'tkazib yuboriladi - bu to'g'ri xatti-harakat).
+- Kichik, nazariy poyga holati (race condition): agar `eve.json`dagi
+  fileinfo qatori Suricata faylni diskka yozib bo'lishidan OLDINROQ
+  o'qilsa (amalda kam uchraydi), `deep_scan_engine` birinchi urinishda
+  faylni topa olmasligi mumkin - bu holatda chuqur skanerlash
+  o'tkazib yuboriladi (qayta urinilmaydi). Amalda `file_analysis_
+  engine.py` (hash tekshiruvi, odatda bir necha soniya davom etadi)
+  bilan `deep_scan_engine` orasidagi tabiiy kechikish buni deyarli
+  har doim oldini oladi.
 
 ### Docker orqali ishga tushirish
 

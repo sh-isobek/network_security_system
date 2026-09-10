@@ -106,6 +106,258 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Device identifikatsiyasi - IP emas, MAC orqali (`db/device_identity.py`, yangi) | ✅✅ `devices` avval FAQAT IP orqali aniqlanardi - DHCP IP o'zgarsa (qurilma oflaynga chiqib qayta ulanganda) "yangi qurilma" deb duplikat qator yaratilardi. Endi avval MAC bo'yicha qidiriladi (batafsil quyida) |
 | — | Dashboard `/devices` sahifalash (200+ qurilma bo'lganda ham hammasi ko'rinadi) | ✅ Sarlavha haqiqiy jami sonni ko'rsatsa-da, jadval `.limit(200)` bilan qattiq cheklangan, sahifalash YO'Q edi - foydalanuvchi "724" o'qib, faqat 200 tasini ko'rardi |
 | — | Dashboard: barcha asosiy sahifalarga ustun-bo'yicha filtr (Qurilmalar/Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map) | ✅ Foydalanuvchi ekran-suratida deyarli barcha sahifa/ustunni belgilab so'ragan - avval faqat bir nechta sahifada (severity/verdict/channel/action kabi) oddiy kategoriya-filtr bor edi, ko'pchilik ustunda (IP/MAC/hostname/vendor/username/MITRE va h.k.) UMUMAN yo'q edi |
+| — | Fayl verdict taksonomiyasi: "topilmadi" endi "toza" bilan aralashtirilmaydi (`threat_intel/*_checker.py`, `engine/file_analysis_engine.py`, `api/server.py`) | ✅✅ Foydalanuvchining chuqur arxitektura tahlilidagi ①-band (eng muhim topilma). VT 404/MalwareBazaar "hash_not_found" avval `malicious=False` ("toza" bilan bir xil) qaytarardi - endi `None` ("ma'lumot yo'q"), va yangi `unknown`/`suspicious` verdict qo'shildi |
+| — | Suricata `file-store` -> `stored_path` haqiqiy bog'lanishi (`collectors/suricata_reader.py`) | ✅✅ ②-band. `stored_path` HECH QACHON to'ldirilmasdi - YARA/ClamAV/Office/Archive (deep_scan_engine) Suricata orqali kelgan HAR BIR fayl uchun jimgina o'tkazib yuborilardi. Endi `fileinfo.stored=true`da `SURICATA_FILESTORE_DIR`+SHA256 (`file-store: version: 2` konvensiyasi) hisoblanadi |
+| — | URL/Domain Intelligence moduli (`threat_intel/url_intel.py`, yangi) | ✅✅ ③/⑦/⑧/⑪-band. Normalization, punycode/IDN, userinfo tuzog'i, LABEL-chegara asosidagi domen ierarxiyasi (oddiy `endswith()` EMAS), leksik fishing xavf balli. `engine/parser_engine.py`ga integratsiya qilindi (domen ierarxiyasi blacklist + konservativ leksik alert, dedup bilan) |
+
+## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
+
+Foydalanuvchi File Intelligence/URL Intelligence/Risk Engine bo'yicha
+29 bandli chuqur arxitektura tahlili yubordi (VT/MalwareBazaar
+mantiqidan tortib, sandbox/behavioral analysis'gacha), ustuvorlikni
+🔴/🟠/🟡 darajalarga bo'lib, va "bosqichma-bosqich topshiriqlarni
+bajar" deb so'radi. Loyihaning o'zining "bitta aniq bosqichni tanlab,
+oxirigacha qurib, keyin navbatdagisiga o'tish" qoidasiga muvofiq,
+foydalanuvchi o'zi "eng muhim" deb belgilagan ①-band bilan boshlandi.
+
+**①-band: "clean" har doim "xavfsiz" degani emas edi (ENG MUHIM,
+haqiqiy topilma)**. Tekshiruv tasdiqladi: `threat_intel/virustotal_
+checker.py`da VT hash haqida UMUMAN ma'lumotga ega bo'lmaganda (404)
+`{"malicious": False, ...}` qaytarardi - bu VT hashni HAQIQATAN
+tekshirib "toza" deb topgan holat bilan BIR XIL ko'rinardi. Xuddi shu
+xato `threat_intel/malwarebazaar_checker.py`da ham bor edi
+(`query_status != "ok"` - masalan "hash_not_found" - ham
+`{"malicious": False, ...}` qaytarardi, garchi MalwareBazaar FAQAT
+zararli namunalar bazasi bo'lgani uchun "toza" degan xulosani UMUMAN
+chiqara olmasa ham). Natijada: `engine/file_analysis_engine.py::
+analyze_one()`da har uchala manba (local/VT/MalwareBazaar) hech narsa
+topmasa, `else: fe.verdict = "clean"` - ya'ni YANGI (hali hech qanday
+threat-intel bazasida ko'rinmagan) zararli dastur "clean" deb noto'g'ri
+belgilanardi. Xuddi shu naqsh mustaqil ravishda `api/server.py::
+check_hash()`da ham (Endpoint Agent uchun) takrorlangan edi.
+
+**Tuzatish**: ikkala checker endi "ma'lumot yo'q" holatida `{"malicious":
+False, ...}` o'rniga `None` qaytaradi - `None` chaqiruvchi tomonidan
+HECH QACHON "toza" deb talqin qilinmaydi. Verdict taksonomiyasi 2
+holatdan 4 holatga kengaytirildi:
+  - `malicious`  - tasdiqlangan (local blacklist / MalwareBazaar /
+    VT'da >=3 dvigatel VA >=5%)
+  - `suspicious` - zaif, tasdiqlanmagan signal (masalan VT'da 1-2
+    dvigatel) - avval bu holat ADASHTIRIB `unknown` deb atalar edi
+  - `clean`      - FAQAT VT hashni HAQIQATAN tekshirib (haqiqiy
+    `last_analysis_stats` bilan, 404/bo'sh natija EMAS), hech qaysi
+    dvigatel belgilamaganda
+  - `unknown`    - hech qanday manba ishonchli ma'lumot bermadi (YANGI
+    holat - avval bu "clean" bilan aralashtirilardi)
+
+`/api/v1/check_hash` endpoint'ining Agent'ga qaytaradigan javobi
+(`malicious`/`confirmed` bool maydonlar, demak Agent'ning avtomatik
+karantin QARORI) ATAYLAB O'ZGARTIRILMADI - noma'lum faylni avtomatik
+bloklash o'zi alohida, ancha xavfli siyosat qarori (aksariyat noma'lum
+fayl aslida zararsiz); faqat `file_events`ga YOZILADIGAN yorliq
+to'g'irlandi, shunda tahlilchi Dashboard'da "bu fayl HAQIQATAN toza
+deb tasdiqlangan" bilan "bu fayl haqida hech qanday ma'lumot yo'q"ni
+farqlay oladi. Dashboard'ga (`/`, `/files`) yangi `suspicious`/`unknown`
+statistika kartochkalari va filtr/badge'lar, hisobotlarga
+(`reports/report_generator.py` - PDF/Excel/JSON) ham yangi qatorlar
+qo'shildi - aks holda tuzatishning o'zi foydasiz bo'lar edi (yangi
+`unknown` toifasi hech qayerda ko'rinmasa).
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker PostgreSQL
+konteynerida)**: (1) VT 404 va MalwareBazaar "hash_not_found" endi
+`None` qaytarishi (soxta HTTP javob orqali); (2) VT haqiqiy tahlil
+ma'lumoti bilan (0/70 va 5/70) to'g'ri ishlashi (regressiya yo'q); (3)
+`analyze_one()` VA `/api/v1/check_hash` - IKKALASI HAM mustaqil - hech
+qanday manba ma'lumot bermaganda `unknown`, VT haqiqatan tasdiqlaganda
+`clean` yozishi, va Agent'ga qaytariladigan `malicious` javobi
+o'zgarmasligi. Mavjud testlar ham yangilandi (`clean.txt`/`readme.txt`
+kabi, bu sandbox'da VT_API_KEY sozlanmagani sababli hech qachon
+haqiqiy "toza" deb tasdiqlanmagan fayllar - to'g'ri ravishda `unknown`
+kutadi endi). Butun `run_full_test.py` (85 test): baseline (71/78)dan
+YANGI hech qanday regressiyasiz.
+
+**Keyingi bosqichlar (foydalanuvchining 29 bandligidan, navbatda)**:
+qolgan 🔴/🟠/🟡 darajali bandlar (URL redirect zanjiri tahlili -
+alohida izolyatsiya qilingan worker talab qiladi, PE analyzer,
+Authenticode, PDF/Office chuqur parser, threat-intel adapter
+arxitekturasi - URLhaus/OTX/ThreatFox, sandbox/behavioral tahlil) -
+har biri alohida, to'liq test qilingan bosqich sifatida davom
+ettiriladi (②-band va ③-band pastda tugallangan).
+
+## Chuqur arxitektura tahlili, 3-bosqich: URL/Domain Intelligence moduli (③/⑦/⑧/⑪-band)
+
+Yangi `threat_intel/url_intel.py` moduli qurildi - TARMOQQA CHIQMAYDIGAN
+(local, deterministik) URL/domen tahlili:
+
+- **`normalize_url()`** - kanonik shakl (kichik harf, standart port
+  olib tashlanadi, % kodlash ochiladi) - `http://EXAMPLE.com:80/` va
+  `http://example.com/` bir xil ko'rinadi.
+- **`has_userinfo_trick()`** - `https://google.com@evil-site.com/login`
+  kabi "ko'rinadigan domen bilan HAQIQIY ulanish domeni farqli" fishing
+  texnikasini aniqlaydi (`@`dan oldingi qism shunchaki userinfo -
+  brauzer buni domen deb hisoblamaydi).
+- **`is_punycode()`** - IDN xakerlik (`xn--...`) domenlarini aniqlaydi.
+- **`domain_matches_blacklist()`/`domain_parent_candidates()`** -
+  domen ierarxiyasi (⑪-band): `evil.com` blacklist'da bo'lsa,
+  `cdn.login.evil.com` ham mos keladi. MUHIM: bu LABEL (nuqta bilan
+  ajratilgan segment) chegaralari bo'yicha ishlaydi, oddiy `endswith()`
+  EMAS - foydalanuvchi aynan shu xavfni ta'kidlagan edi
+  (`"notevil.com".endswith("evil.com")` ham `True` bo'lardi).
+- **`lexical_risk_score()`** - fishing'ga xos so'z/naqshlar (brend
+  nomi + login/verify/secure kabi so'zlar + ko'p chiziqcha/raqam +
+  shubhali TLD) asosida 0-100 ball, foydalanuvchi taklif qilgan
+  bosqichlar bilan (`normal`/`suspicious`/`high`/`malicious`).
+
+**`engine/parser_engine.py`ga integratsiya**:
+1. `_is_blacklisted()` endi domen bo'lsa ota-domen ierarxiyasini ham
+   tekshiradi (IP'lar uchun xatti-harakat o'zgarmagan - faqat aniq
+   moslik, CIDR hali yo'q).
+2. Yangi `_check_lexical_phishing_alert()` - blacklist'da yo'q, lekin
+   nomi bo'yicha aniq fishing'ga o'xshagan domen (masalan
+   "microsoft-login-security.xyz") uchun ALOHIDA Alert. **Ataylab
+   konservativ**: FAQAT eng yuqori ("malicious", ball >=71) darajada
+   ishlaydi - past/o'rta darajalar (soxta-pozitiv xavfi yuqori bo'lgani
+   uchun) hozircha alert QILMAYDI. Bir xil domen uchun QAYTA-QAYTA
+   alert yaratilmasligi uchun (`[LEXICAL_PHISHING] domen=...` yorlig'i
+   orqali) dedup qilingan.
+
+**ATAYLAB BU BOSQICHDA QILINMAGAN (halol, keyingi bosqichlar uchun)**:
+redirect zanjiri tahlili (HAQIQIY HTTP so'rov kerak - bu alohida,
+izolyatsiya qilingan worker/sandbox'da bo'lishi kerak, asosiy serverda
+EMAS - xavfsizlik nuqtai nazaridan); IP/ASN/domen reputatsiyasi
+(URLhaus/OTX/ThreatFox); to'liq Public Suffix List (`domain_matches_
+blacklist()` oddiy, universal - "co.uk" kabi holatlarni maxsus
+hisobga OLMAYDI, foydalanuvchining o'z tavsiyasida ham shunday
+izohlangan edi).
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: (1) `url_intel.py`ning har bir funksiyasi
+foydalanuvchining O'ZI keltirgan aniq misollar bilan (userinfo tuzog'i,
+punycode, "notevil.com" regressiya himoyasi, "microsoft-login-
+security.xyz" vs "microsoft.com"); (2) `engine.parser_engine.run_once()`
+orqali REAL DB bilan - domen ierarxiyasi bo'yicha blacklist mosligi
+(`cdn.login.evil.com` -> `evil.com`), noto'g'ri moslik YO'QLIGI
+("notevil.com" hech qanday alert yaratmasligi), leksik fishing alert
+yaratilishi VA takroriy so'rovda QAYTA yaratilmasligi (dedup), va
+zararsiz domen (google.com) uchun alert yaratilmasligi. Butun
+`run_full_test.py` (88 test): baseline (71/78)dan YANGI hech qanday
+regressiyasiz.
+
+## Chuqur arxitektura tahlili, 2-bosqich: Suricata `file-store` -> `stored_path` haqiqiy bog'lanishi (②-band)
+
+Tekshiruv tasdiqladi: `collectors/suricata_reader.py::process_
+fileinfo_event()` `FileEvent.stored_path`ni HECH QACHON to'ldirmasdi
+(faqat `sha256`/`filename`/`magic`/`size` kabi metadata yozardi).
+`engine/deep_scan_engine.py` esa YARA/ClamAV/Office makro/ZIP arxiv
+tekshiruvlarining BARCHASINI `if fe.stored_path and os.path.isfile(fe.
+stored_path):` sharti bilan himoyalagan - shart yolg'on bo'lsa,
+`findings.append("stored_path mavjud emas - chuqur tekshiruv
+o'tkazib yuborildi...")` deb, HECH NARSA qilinmasdan o'tib ketardi.
+Natija: `stored_path` doim `None` bo'lgani uchun, Suricata orqali
+kelgan HAR BIR fayl uchun bu 4 ta tekshiruvning barchasi har doim
+o'tkazib yuborilardi - hatto fayl HAQIQATAN Suricata `file-store`ga
+saqlangan bo'lsa ham (faqat hash-asosli VT/MalwareBazaar tekshiruvi
+ishlardi, `deep_scan_engine.py`ning o'z docstring'i buni "MUHIM
+CHEKLOV" sifatida ilgari ham to'g'ri, lekin "nega har doim shunday"
+sababini bilmasdan hujjatlashtirgan edi).
+
+**Tuzatish**: Suricata eve.json `fileinfo` obyektidagi `stored` (bool)
+maydoni - bu aniq fayl `filestore;` qoidasiga mos kelib HAQIQATAN
+diskka yozilganmi - endi o'qiladi. `stored=true` bo'lsa, `stored_path`
+`SURICATA_FILESTORE_DIR` (yangi, standart: `/var/log/suricata/files` -
+`docs_SURICATA_SETUP.md`dagi `file-store: dir:` bilan BIR XIL) + SHA256
+sifatida hisoblanadi - bu Suricata `file-store: version: 2`ning
+HAQIQIY fayl nomlash konvensiyasi (`<dir>/<sha256>`, rasmiy hujjatlar
+orqali tasdiqlangan - ichki papkalarsiz, eskirgan `version: 1`dan
+farqli). `stored=false`/yo'q bo'lsa, `stored_path` ATAYLAB bo'sh
+qoldiriladi (`force-hash` HAR BIR ko'rilgan fayl uchun hash hisoblaydi,
+lekin bu ularning BARCHASI saqlangani degani EMAS).
+
+**Halol cheklov**: FAQAT `file-store: version: 2` bilan ishlaydi
+(loyihaning o'z hujjati aynan shuni tavsiya qiladi); kichik, nazariy
+poyga holati ham bor (agar `eve.json` qatori fayl to'liq diskka
+yozilishidan OLDINROQ o'qilsa) - amalda hash-tekshiruv bilan deep-scan
+orasidagi tabiiy kechikish buni deyarli har doim oldini oladi
+(batafsil: `docs_SURICATA_SETUP.md`).
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker PostgreSQL
+konteynerida)**: (1) `stored=true` + HAQIQIY diskdagi fayl bilan
+`stored_path` to'g'ri hisoblanishi VA `os.path.isfile()` orqali ham
+tasdiqlanishi; (2) `stored=false` bilan `stored_path` bo'sh qolishi;
+(3) `deep_scan_engine.deep_scan_one()` endi shu yo'ldan HAQIQIY faylni
+ochib, (mock qilingan) YARA topilmasini qabul qilib, `verdict=
+"malicious"`ga o'tkazishi va `deep_scan_findings`ga yozishi - avval bu
+bosqichga HECH QACHON yetib bormasdi. Bu sandbox'da `yara` moduli
+o'rnatilmagani sababli (kompilyator yo'q, oldindan hujjatlashtirilgan
+muhit cheklovi) to'liq YARA-qismi bosqichma-bosqich o'tkazib
+yuborilgan holda ishladi (mavjud `stored_path`-mustaqil qismlar to'liq
+tasdiqlandi) - bu GitHub Actions CI'da (yara o'rnatilgan) to'liq
+ishlashi kutiladi. Butun `run_full_test.py` (86 test): baseline
+(71/78)dan YANGI hech qanday regressiyasiz.
+
+## O'N OLTINCHI marta topilgan xato: heartbeat thread bitta kutilmagan xatodan keyin ABADIY o'lib qolgan (real "Isobek" - foydalanuvchining o'z kompyuteri)
+
+Foydalanuvchi Dashboard'da o'zi ishlatayotgan kompyuterni ("Isobek",
+172.16.0.51) ko'rsatib, nega u Endpoint Agent ustunida "OFFLINE"
+ko'rinishini so'radi. Tekshiruv: `Device.last_seen` (tarmoq darajasida)
+juda yangi edi - qurilmaning o'zi ONLAYN. Lekin `agent_last_heartbeat`
+~16 soat eski (kecha kechqurun 18:37:54) edi - shuning uchun Endpoint
+Agent ustuni OFFLINE ko'rsatgan (`AGENT_ONLINE_THRESHOLD_MINUTES` - 15
+daqiqadan oshib ketgan).
+
+**Hal qiluvchi dalil**: "Fayllar" sahifasida AYNAN SHU agent orqali
+(`channel=endpoint_agent`) tekshirilgan fayllar bugun ertalab, hattoki
+`Device` sahifasi ochilishidan bir necha daqiqa oldin (10:06-10:13)
+ko'rinib turardi - ya'ni agent jarayoni HAQIQATAN ishlab turibdi va
+serverga muvaffaqiyatli ulanmoqda, faqat heartbeat aynan bitta
+vaqtdan keyin butunlay to'xtab qolgan (16+ soat davomida tarmoq aniq
+ishlagan bo'lsa ham, birorta ham heartbeat o'tmagan).
+
+**TUB SABAB**: `agent_core/agent.py`ning `_heartbeat_loop()`sida
+`send_heartbeat()` chaqiruvi hech qanday try/except bilan o'ralmagan
+edi. `send_heartbeat()`ning o'zi FAQAT `requests.RequestException`ni
+ushlaydi - agar biror urinishda BOSHQA turdagi kutilmagan xato (masalan
+tarmoq/DNS'ning g'alati holatidagi, `RequestException`ga o'ralmagan
+xatosi) yuz bersa, bu xato to'g'ridan-to'g'ri `_heartbeat_loop()`ning
+o'ziga chiqib ketib, BUTUN heartbeat thread'ini ABADIY o'ldirar edi -
+fayl kuzatish (butunlay ALOHIDA thread, `start_background()`
+arxitekturasida) esa hech narsa sezmasdan normal davom etaverardi.
+Bu aynan kuzatilgan simptomni tushuntiradi: "agent ishlayapti va fayl
+tekshiryapti, lekin heartbeat bir marta to'xtagandan keyin hech qachon
+qaytmagan".
+
+**Tuzatish**: yangi `_safe_send_heartbeat()` metodi - har bir heartbeat
+urinishi endi alohida himoyalangan (`try/except Exception`, keng
+tutish ATAYLAB - bu yerda "qaysi xato turi" muhim emas, MUHIMI thread
+hech qachon o'lmasligi). Endi HAR QANDAY kutilmagan xato faqat O'SHA
+BITTA tsiklni o'tkazib yuboradi (log'ga ogohlantirish bilan yoziladi),
+thread esa TIRIK qolib, keyingi intervalda (standart 5 daqiqa) qayta
+urinib ko'radi.
+
+**Real test qilingan**: `agent_mod.send_heartbeat`ni real HTTP
+o'rniga, BIRINCHI chaqiruvda `RequestException` BO'LMAGAN (`ValueError`)
+xato beradigan, keyingi chaqiruvlarda muvaffaqiyatli bo'ladigan soxta
+funksiya bilan almashtirib - `HEARTBEAT_INTERVAL_SECONDS=1` bilan
+real `threading.Thread` ishga tushirilib, (1) birinchi (xato beruvchi)
+urinishdan KEYIN ham thread TIRIK qolishi, (2) ikkinchi intervalda
+funksiya QAYTA chaqirilishi (demak tsikl haqiqatan davom etgani, "bir
+marta o'lib, abadiy to'xtab qolmagani") tasdiqlandi.
+
+**MUHIM**: `agent_core/agent.py` - Windows/Linux/Mac agentlarning
+barchasi ishlatadigan UMUMIY yadro (`windows_agent/service_wrapper.py`
+buni faqat chaqiradi) - shuning uchun bu tuzatish HAQIQIY ishlashi
+uchun Windows Agent `.exe`si qayta qurilishi/joylashtirilishi kerak.
+VERSION 1.0.9 -> 1.0.10.
+
+**O'N OLTINCHI MARTA TASDIQLANGAN SABOQ**: bu safar xato foydalanuvchi
+tomonidan tasodifan, o'z ishlatayotgan kompyuterini ko'rsatib berish
+orqali ochilib qoldi - "ONLAYN (tarmoq) lekin OFFLINE (agent)" holati
+o'zi normal (ikkalasi mustaqil o'lchov), lekin ikkinchi bir dalil
+(Fayllar sahifasidagi YANGI faoliyat) bilan solishtirilganda, bu
+oddiy "agent to'xtagan" emas, balki "agentning FAQAT bitta qismi
+(heartbeat thread) o'lgan" ekanligi ochildi - bu farqni faqat ikkita
+mustaqil ma'lumot manbasini (Devices + Files sahifalari) yonma-yon
+solishtirib ko'rish orqali payqash mumkin edi.
 
 ## Dashboard: "chizilgan oynalarni barchasiga filtr qo'yib ber" - barcha asosiy sahifalarga ustun-bo'yicha filtr
 

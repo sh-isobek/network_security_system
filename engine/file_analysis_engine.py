@@ -17,6 +17,15 @@ Vazifasi:
   ustuniga "5-bosqichda ulanadigan" bloklash choralari yoziladi (hozircha
   TODO, chunki bloklash backend hali tanlanmagan).
 
+  MUHIM (verdict taksonomiyasi - real production xatosi tuzatilgan):
+  "hech qanday manba bu haqda ma'lumot bermadi" (masalan yangi, VT/
+  MalwareBazaar hali ko'rmagan fayl) ilgari "clean" deb noto'g'ri
+  belgilanardi. Endi 4 xil verdict qo'llaniladi - "malicious"
+  (tasdiqlangan), "suspicious" (zaif signal, tasdiqlanmagan),
+  "clean" (VT hashni HAQIQATAN tekshirib, toza deb topgan), "unknown"
+  (hech qanday manba ishonchli ma'lumot bermadi - batafsil:
+  `analyze_one()` docstring'i).
+
 Ishga tushirish:
     python -m engine.file_analysis_engine --once
     python -m engine.file_analysis_engine --loop
@@ -60,7 +69,35 @@ def _upsert_device_for_file(session, ip: str) -> "Device":
 
 
 def analyze_one(session, fe: FileEvent):
+    """
+    MUHIM (real production xatosi tuzatilgan - "clean" har doim
+    "xavfsiz" degani emas edi): avval, agar local/VT/MalwareBazaar
+    uchtasi ham "malicious" demasa (shu jumladan ular hech narsa
+    TOPMAGAN - masalan VT bu hash haqida umuman ma'lumotga ega
+    bo'lmagan - holat ham), fayl darhol `verdict="clean"` deb
+    belgilanardi. Bu noto'g'ri: "hech qanday manba bu haqda ma'lumot
+    bermadi" bilan "biror manba buni tekshirib, zararli emas deb
+    tasdiqladi" - IKKI BUTUNLAY BOSHQA holat. Masalan yangi
+    (VT/MalwareBazaar hali ko'rmagan) ransomware namunasi ilgari
+    "clean" deb belgilanardi.
+
+    Endi 4 xil verdict qo'llaniladi:
+        "malicious"  - tasdiqlangan (local blacklist / MalwareBazaar /
+                        VT'da kamida 3 dvigatel VA >=5%)
+        "suspicious" - zaif, tasdiqlanmagan signal (masalan VT'da 1-2
+                        dvigatel) - avtomatik karantin YO'Q, lekin
+                        Alert yaratiladi
+        "clean"      - FAQAT VirusTotal bu hash'ni HAQIQATAN tekshirib
+                        (`check_virustotal()` `None` emas, `malicious=
+                        False` qaytarganda) hech qaysi dvigatel
+                        belgilamagani tasdiqlanganda
+        "unknown"    - hech qanday manba (local/VT/MalwareBazaar)
+                        bu hash haqida ishonchli ma'lumot bermadi -
+                        SUD emas, "hali klassifikatsiya qilinmagan"
+    """
     sources_checked = []
+    result = None
+    scanned_clean = False  # True FAQAT VT hashni haqiqatan tekshirib, "toza" deb topganda
 
     # 1) Mahalliy blacklist (har doim "tasdiqlangan" - aniq, deterministik moslik)
     result = check_local(session, fe.sha256)
@@ -72,18 +109,29 @@ def analyze_one(session, fe: FileEvent):
     if result is None:
         vt_result = check_virustotal(fe.sha256)
         sources_checked.append("virustotal")
-        if vt_result and vt_result.get("malicious"):
-            # MUHIM: bitta antivirus dvigateli signal bergani hali
-            # "tasdiqlangan" degani emas (soxta-pozitiv xavfi) - avtomatik
-            # karantin uchun kamida 3 ta dvigatel VA hisobot beruvchilarning
-            # kamida 5% signal berishi talab qilinadi.
-            positives = int(vt_result.get("positives") or 0)
-            total = int(vt_result.get("total") or 0)
-            confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
-            result = {"malicious": True, "confirmed": confirmed, "threat_name": vt_result.get("threat_name") or "Malicious (VirusTotal)"}
+        if vt_result is not None:
+            if vt_result.get("malicious"):
+                # MUHIM: bitta antivirus dvigateli signal bergani hali
+                # "tasdiqlangan" degani emas (soxta-pozitiv xavfi) -
+                # avtomatik karantin uchun kamida 3 ta dvigatel VA
+                # hisobot beruvchilarning kamida 5% signal berishi
+                # talab qilinadi.
+                positives = int(vt_result.get("positives") or 0)
+                total = int(vt_result.get("total") or 0)
+                confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
+                result = {"malicious": True, "confirmed": confirmed, "threat_name": vt_result.get("threat_name") or "Malicious (VirusTotal)"}
+            else:
+                # VT hashni HAQIQATAN tekshirdi va hech qaysi dvigatel
+                # belgilamadi - bu haqiqiy "toza" signali (VT hash
+                # haqida umuman ma'lumotga ega bo'lmagani - 404/None -
+                # bu yerga UMUMAN yetib kelmaydi, chunki `check_virustotal()`
+                # bunday holatda `None` qaytaradi).
+                scanned_clean = True
 
     # 3) MalwareBazaar (agar hali topilmasa) - kurallangan zararli dastur
-    # bazasi, har doim "tasdiqlangan" hisoblanadi
+    # bazasi, har doim "tasdiqlangan" hisoblanadi (bu manba HECH QACHON
+    # "toza" deb tasdiqlay olmaydi - faqat "ma'lum zararli" yoki
+    # "ma'lumot yo'q" qaytaradi, `check_malwarebazaar()`ga qarang)
     if result is None:
         mb_result = check_malwarebazaar(fe.sha256)
         sources_checked.append("malwarebazaar")
@@ -95,7 +143,7 @@ def analyze_one(session, fe: FileEvent):
 
     if result and result.get("malicious"):
         confirmed = bool(result.get("confirmed", False))
-        fe.verdict = "malicious" if confirmed else "unknown"
+        fe.verdict = "malicious" if confirmed else "suspicious"
         fe.threat_score = 100 if confirmed else 60
         _add_to_local_blacklist(session, fe.sha256, result.get("threat_name"), source="auto")
 
@@ -125,8 +173,11 @@ def analyze_one(session, fe: FileEvent):
         )
         session.add(alert)
         logger.warning(f"{'TASDIQLANGAN ZARARLI FAYL' if confirmed else 'SHUBHALI FAYL'}: {fe.filename} ({fe.src_ip} -> {fe.dest_ip}) - {result.get('threat_name')}")
-    else:
+    elif scanned_clean:
         fe.verdict = "clean"
+        fe.threat_score = 0
+    else:
+        fe.verdict = "unknown"
         fe.threat_score = 0
 
 

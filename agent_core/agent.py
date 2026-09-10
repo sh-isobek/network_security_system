@@ -380,11 +380,32 @@ class EndpointAgent:
             process_name=kill_result.process_name,
         )
 
+    def _safe_send_heartbeat(self):
+        """
+        MUHIM (real production'da topilgan xato): `send_heartbeat()`ning
+        o'zi faqat `requests.RequestException`ni ushlaydi - agar biror
+        chaqiruvda BOSHQA turdagi kutilmagan xato (masalan tarmoq/DNS'ning
+        g'alati holatidagi, `RequestException`ga o'ralmagan xatosi) yuz
+        bersa, bu xato `_heartbeat_loop()`ning o'ziga chiqib ketib,
+        BUTUN heartbeat thread'ini ABADIY o'ldirar edi - garchi fayl
+        kuzatish (alohida thread) va `check_hash` normal davom etaversa
+        ham (aynan shu holat "agent ishlayapti, lekin heartbeat bir
+        marta to'xtab qolgandan keyin hech qachon qaytmagan" ko'rinishida
+        production'da kuzatildi). Endi har bir urinish alohida
+        himoyalangan - bitta kutilmagan xato faqat O'SHA tsiklni
+        o'tkazib yuboradi, thread'ning o'zi TIRIK qoladi va keyingi
+        intervalda qayta urinadi.
+        """
+        try:
+            send_heartbeat(self.hostname, self.ip_address)
+        except Exception as exc:
+            logger.warning(f"Heartbeat tsiklida kutilmagan xato (thread davom etadi): {exc}")
+
     def _heartbeat_loop(self):
         # Send one heartbeat immediately, then periodically.
-        send_heartbeat(self.hostname, self.ip_address)
+        self._safe_send_heartbeat()
         while not self._heartbeat_stop.wait(HEARTBEAT_INTERVAL_SECONDS):
-            send_heartbeat(self.hostname, self.ip_address)
+            self._safe_send_heartbeat()
 
     def start_background(self, stop_event=None):
         """Start monitoring + heartbeat without blocking Windows SCM startup."""
