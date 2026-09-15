@@ -5843,6 +5843,100 @@ def _test_device_mac_identity_merges_ip_collision():
 check("Device MAC-asosli identifikatsiya: IP kolliziyasida Event/Alert tarixi ko'chiriladi, yo'qotilmaydi", _test_device_mac_identity_merges_ip_collision)
 
 # ---------------------------------------------------------------------------
+print("\n=== 79b) Device identity: ikkita jarayon BIR VAQTDA QARAMA-QARSHI yo'nalishda birlashtirsa deadlock/FK xatosi bo'lmasligi ===")
+
+
+def _test_device_identity_concurrent_merge_no_deadlock():
+    """
+    PRODUKSIYADA HAQIQATAN TOPILGAN XATO (bu test aynan shu voqeani qayta
+    hosil qiladi): birinchi deploy'dan darhol keyin `parser_engine` va
+    boshqa mustaqil jarayon (`network_discovery`/UEBA - ular ham
+    `find_or_create_device()` orqali BIR XIL qurilma juftligini
+    birlashtirishga urinishi mumkin) BIR VAQTDA, QARAMA-QARSHI yo'nalishda
+    (biri A->B, ikkinchisi B->A) "events" jadvalini yangilashga urinib,
+    `psycopg2.errors.DeadlockDetected` xatosiga uchragan, keyingi
+    tsiklda esa xuddi shu poyga holati `ForeignKeyViolation`ga
+    (device_baselines - merge tugamasdan turib eski qatorga yangi yozuv
+    qo'shilgani) olib kelgan.
+
+    Tuzatish: `_lock_devices_in_order()` - ikkala qurilma qatorini har
+    doim bir xil (kichik ID'dan kattaga) tartibda `SELECT ... FOR
+    UPDATE` bilan qulflaydi, bu HAM aylanma kutishni (deadlock)
+    oldini oladi, HAM `remove` qatorga ishora qiluvchi yangi yozuv
+    qo'shilishini (FK orqali) tranzaksiya tugagunча to'xtatib turadi.
+
+    Faqat PostgreSQL'da ma'noli (haqiqiy qator qulflash/tranzaksiya
+    izolyatsiyasi kerak) - SQLite'da `FOR UPDATE` jimgina e'tiborsiz
+    qoldiriladi, haqiqiy poyga holati yuzaga kelmaydi.
+    """
+    from config.settings import DATABASE_URL as CURRENT_DB_URL
+    if not CURRENT_DB_URL.startswith("postgresql://"):
+        print("   (haqiqiy poyga holati faqat PostgreSQL'da ma'noli - SQLite'da o'tkazib yuborildi)")
+        return
+
+    import threading
+    from db.device_identity import _merge_device
+
+    mac_a, mac_b = "AA:11:22:33:44:66", "BB:11:22:33:44:66"
+    ip_a, ip_b = "172.16.9.252", "172.16.9.253"
+
+    s0 = get_session()
+    s0.query(Device).filter(Device.mac_address.in_([mac_a, mac_b])).delete(synchronize_session=False)
+    s0.query(Device).filter(Device.ip_address.in_([ip_a, ip_b])).delete(synchronize_session=False)
+    s0.commit()
+
+    device_a = Device(ip_address=ip_a, mac_address=mac_a, source="test")
+    device_b = Device(ip_address=ip_b, mac_address=mac_b, source="test")
+    s0.add_all([device_a, device_b])
+    s0.commit()
+    device_a_id, device_b_id = device_a.id, device_b.id
+
+    s0.add(Event(device_id=device_a_id, source_ip=ip_a, dest_ip="1.1.1.1", protocol="DNS"))
+    s0.add(Event(device_id=device_b_id, source_ip=ip_b, dest_ip="2.2.2.2", protocol="DNS"))
+    s0.commit()
+    s0.close()
+
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def worker(keep_id, remove_id):
+        try:
+            barrier.wait(timeout=5)
+            s = get_session()
+            keep = s.get(Device, keep_id)
+            remove = s.get(Device, remove_id)
+            if keep is not None and remove is not None:
+                _merge_device(s, keep=keep, remove=remove)
+                s.commit()
+            s.close()
+        except Exception as e:
+            errors.append(e)
+
+    # Qarama-qarshi yo'nalish - aynan production'da kuzatilgan naqsh:
+    # Thread1: keep=A, remove=B (A<-B); Thread2: keep=B, remove=A (B<-A)
+    t1 = threading.Thread(target=worker, args=(device_a_id, device_b_id))
+    t2 = threading.Thread(target=worker, args=(device_b_id, device_a_id))
+    t1.start()
+    t2.start()
+    t1.join(timeout=15)
+    t2.join(timeout=15)
+
+    assert not errors, f"Bir vaqtda, qarama-qarshi yo'nalishda ishlagan merge'larda xato kutilmagan edi (deadlock/FK): {errors}"
+
+    s = get_session()
+    remaining = s.query(Device).filter(Device.id.in_([device_a_id, device_b_id])).all()
+    assert len(remaining) == 1, f"Ikkala tomon ham birlashtirgandan keyin FAQAT bitta qator qolishi kerak edi, {len(remaining)} ta qoldi"
+    survivor = remaining[0]
+
+    # Ikkala tomonning ham tarixi saqlanib qolgan bo'lishi kerak (birortasi ham yo'qolmagan)
+    assert s.query(Event).filter(Event.device_id == survivor.id, Event.dest_ip == "1.1.1.1").count() == 1, "1-qurilmaning Event tarixi yo'qolgan"
+    assert s.query(Event).filter(Event.device_id == survivor.id, Event.dest_ip == "2.2.2.2").count() == 1, "2-qurilmaning Event tarixi yo'qolgan"
+    s.close()
+
+
+check("Device identity: bir vaqtda ikki jarayon QARAMA-QARSHI yo'nalishda birlashtirsa deadlock/FK xatosi bo'lmasligi (real production xatosi tuzatilgan)", _test_device_identity_concurrent_merge_no_deadlock)
+
+# ---------------------------------------------------------------------------
 print("\n=== 80) Dashboard /devices: sahifalash (200+ qurilma bo'lganda ham barchasi ko'rinadi) ===")
 
 

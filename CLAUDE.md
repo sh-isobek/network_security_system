@@ -104,6 +104,7 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Kerio "connection" hodisalari endi blacklist'ga qarshi tekshiriladi + Web Activity'ga yoziladi | ✅✅ Avval faqat `dns_query` tekshirilar/yozilardi - yagona real oqim (Kerio Connection) uchun bunday tekshiruv/yozuv UMUMAN yo'q edi (Alertlar/Saytlar tarixi bo'sh qolishining ikkinchi sababi) |
 | — | Kerio parser: `hostname (ip):port` formatida domen nomi tashlab yuborilardi (TO'RTINCHI marta tuzatilgan Kerio xatosi) | ✅✅ `_parse_endpoint()` IP topilganda hostname'ni butunlay `None` qilib qaytarardi - "Saytlar tarixi" xom IP'lardan boshqa narsa ko'rsata olmasdi |
 | — | Device identifikatsiyasi - IP emas, MAC orqali (`db/device_identity.py`, yangi) | ✅✅ `devices` avval FAQAT IP orqali aniqlanardi - DHCP IP o'zgarsa (qurilma oflaynga chiqib qayta ulanganda) "yangi qurilma" deb duplikat qator yaratilardi. Endi avval MAC bo'yicha qidiriladi (batafsil quyida) |
+| — | Device identifikatsiyasi: `_merge_device` poyga holati (deadlock/FK) - deploy'dan keyin production'da darhol topilgan | ✅✅ Bir nechta mustaqil jarayon (parser_engine/network_discovery/ueba_engine) BIR XIL qurilma juftligini QARAMA-QARSHI yo'nalishda birlashtirganda haqiqiy `DeadlockDetected`/`ForeignKeyViolation` kuzatildi - `_lock_devices_in_order()` (batafsil quyida) |
 | — | Dashboard `/devices` sahifalash (200+ qurilma bo'lganda ham hammasi ko'rinadi) | ✅ Sarlavha haqiqiy jami sonni ko'rsatsa-da, jadval `.limit(200)` bilan qattiq cheklangan, sahifalash YO'Q edi - foydalanuvchi "724" o'qib, faqat 200 tasini ko'rardi |
 | — | Dashboard: barcha asosiy sahifalarga ustun-bo'yicha filtr (Qurilmalar/Alertlar/Asset Inventory/Fayllar/Foydalanuvchilar/Audit Log/API Tokenlar/Agent Coverage/Live Map) | ✅ Foydalanuvchi ekran-suratida deyarli barcha sahifa/ustunni belgilab so'ragan - avval faqat bir nechta sahifada (severity/verdict/channel/action kabi) oddiy kategoriya-filtr bor edi, ko'pchilik ustunda (IP/MAC/hostname/vendor/username/MITRE va h.k.) UMUMAN yo'q edi |
 | — | Fayl verdict taksonomiyasi: "topilmadi" endi "toza" bilan aralashtirilmaydi (`threat_intel/*_checker.py`, `engine/file_analysis_engine.py`, `api/server.py`) | ✅✅ Foydalanuvchining chuqur arxitektura tahlilidagi ①-band (eng muhim topilma). VT 404/MalwareBazaar "hash_not_found" avval `malicious=False` ("toza" bilan bir xil) qaytarardi - endi `None` ("ma'lumot yo'q"), va yangi `unknown`/`suspicious` verdict qo'shildi |
@@ -250,6 +251,121 @@ health-check orqali tasdiqlandi), yagona kutilmagan muammo
 o'zgarishlarimdan MUSTAQIL, oldindan mavjud, root huquqi talab
 qiladigan muammo, halol ravishda foydalanuvchiga alohida xabar
 qilindi (o'zim hal qila olmadim - permission denied).
+
+## Ikkinchi production deploy: barcha bosqichlarni (1-5 + qurilma tuzatishi + filtrlar) serverga joylashtirish, va deploy paytida topilgan YANGI real xato (device merge poyga holati)
+
+Foydalanuvchi "barchasini serverga joylashtir" deb so'radi - stage
+4/5 (fayl turi aniqlash, PDF tahlil) va Telegram tuzatishini o'z
+ichiga olgan branch hali `main`ga birlashtirilmagan edi (ikkalasi
+alohida yo'nalishda ilgarilagan: `main`ga boshqa (mustaqil) TZ
+o'zgaruvchilari tuzatishi kelgan, mening branch'im esa 3 ta yangi
+commit bilan oldinga ketgan edi).
+
+**Birlashtirish**: `git merge origin/main` konfliktsiz o'tdi (3 ta
+fayl: `docker-compose.yml`, `engine/notification_engine.py`,
+`run_full_test.py`). To'liq `run_full_test.py` (94 test) SQLite'da
+(87/94) VA vaqtinchalik, alohida Docker PostgreSQL konteynerida
+(86/94) qayta ishga tushirilib, baseline'dan YANGI hech qanday
+regressiyasiz ekanligi tasdiqlangach, SSH orqali (avvalgi sessiyada
+sozlangan Deploy Key bilan - bu safar ENDI blokланmadi) `main`ga
+push qilindi, production checkout'da `git pull` (fast-forward),
+`docker compose build && docker compose up -d` bilan barcha 16
+xizmat qayta qurilib/ko'tarildi. `dashboard`/`agent_api` health-check
+orqali sog'lom ekanligi tasdiqlandi.
+
+**Deploy'dan DARHOL keyin, real production'da YANGI, mustaqil xato
+topildi (bu safar `parser_engine` loglarida)**: `docker compose logs`
+orqali kuzatilganda, `parser_engine` konteyneri har ~10 soniyada
+ikkita real xato bilan tsiklni buzayotgani ko'rindi:
+
+1. `psycopg2.errors.DeadlockDetected` - "events" jadvalini QARAMA-
+   QARSHI tartibda yangilashga urinib (`UPDATE events SET device_id=25
+   WHERE device_id=741` vs `UPDATE events SET device_id=741 WHERE
+   device_id=25`).
+2. `ForeignKeyViolation` - `device_baselines_device_id_fkey` -
+   "Key (id)=(741) is still referenced from table device_baselines" -
+   `DELETE FROM devices WHERE id=741` muvaffaqiyatsiz.
+
+**TUB SABAB**: bu - device MAC identifikatsiyasi tuzatishi (yuqoriga
+qarang, "Device ro'yxati" bo'limi)ning `_merge_device()` funksiyasida
+HECH QACHON hisobga OLINMAGAN poyga holati. `find_or_create_device()`ni
+BIR NECHTA MUSTAQIL jarayon (`parser_engine`, `network_discovery`/
+`asset_inventory`, va bilvosita `ueba_engine` - u har tsiklda BARCHA
+qurilmalar uchun `DeviceBaseline` yaratadi/yangilaydi) bir vaqtning
+o'zida chaqiradi. Ikkita jarayon BIR XIL IP-kolliziya juftligini
+(masalan qurilma A va B TASODIFAN bir vaqtda IP almashtirsa) QARAMA-
+QARSHI yo'nalishda (A<-B va B<-A) birlashtirmoqchi bo'lganda:
+  - Ikkalasi ham "events" jadvalini teskari tartibda yangilaydi ->
+    PostgreSQL deadlock'ni aniqlab, bittasini bekor qiladi.
+  - Hatto deadlock bo'lmasa ham: `_merge_device` tarixni ko'chirib,
+    `remove` qatorni o'chirishga ulguradi, lekin XUDDI SHU ORALIQDA
+    boshqa jarayon (UEBA) ESKI (hali o'chirilmagan) `remove.id`ga
+    ishora qiluvchi YANGI `DeviceBaseline` yozib ulguradi - o'chirish
+    "hali ham foydalanilmoqda" xatosi bilan muvaffaqiyatsiz bo'ladi.
+
+Bu xato **hech qachon avvalgi testlarda ko'rinmagan edi**, chunki
+`run_full_test.py` bitta jarayonda, ketma-ket ishlaydi - haqiqiy
+production'dagi kabi bir necha mustaqil Docker konteyner BIR XIL
+bazaga BIR VAQTDA yozayotgan sharoit sinalmagan edi.
+
+**Tuzatish** (`db/device_identity.py`): yangi `_lock_devices_in_order()`
+- ikkala qurilma qatorini har doim BIR XIL (kichik ID'dan kattaga)
+tartibda `SELECT ... FOR UPDATE` bilan qulflaydi. Bu ikki narsani
+ta'minlaydi: (1) bir xil tartib - ikkita jarayon hech qachon "aylanma
+kutish"ga tushmaydi, deadlock butunlay yo'qoladi; (2) `remove` qatorni
+qulflash - PostgreSQL'ning o'zi FK orqali boshqa jarayonning shu
+qatorga ishora qiluvchi INSERT'ini (`FOR KEY SHARE` `FOR UPDATE`ga
+zid) avtomatik to'xtatib turadi, shu bilan ForeignKeyViolation ham
+yo'qoladi. SQLite'da `FOR UPDATE` jimgina e'tiborsiz qoldiriladi
+(tekshirilgan) - ikkala bazada ham xavfsiz.
+
+**IKKINCHI QATLAM (birinchi tuzatishni yozgandan KEYIN, aynan shu
+tuzatish uchun yozilgan YANGI concurrency-testi orqali darhol
+topilgan, real bo'shliq)**: qulf o'zi deadlock/FK'ni yopadi, lekin
+QARAMA-QARSHI yo'nalishdagi ikkita chaqiruv bo'lganda, ikkinchi bo'lib
+navbatga yetgan chaqiruvning `keep`/`remove` Python obyektlari ESKI
+(qulfdan OLDIN, hali kolliziya hal qilinmagan paytda yuklangan)
+bo'lib qoladi - agar birinchi chaqiruv allaqachon shu juftlikni hal
+qilib ulgurgan bo'lsa, ikkinchisi ESKIRGAN (endi bazada mavjud
+bo'lmagan) ID'ga `device_id` o'rnatishga urinib, XUDDI SHU
+ForeignKeyViolation'ni QAYTA hosil qiladi. Tuzatildi: `_merge_device`
+endi qulflangandan KEYIN ikkala qator ham HALI MAVJUDLIGINI qayta
+tekshiradi - agar biri yo'q bo'lsa (demak kolliziya ALLAQACHON boshqa
+jarayon tomonidan hal qilingan), hech narsa qilmasdan xavfsiz chiqib
+ketadi. `find_or_create_device()`ning o'zida ham: agar bizning
+`device`imiz aynan shu poygada (boshqa jarayon TESKARI yo'nalishda
+uni "remove" deb hisoblagani sabab) o'chirilgan bo'lsa - MAC orqali
+qayta topib olinadi (yoki, deyarli imkonsiz zaxira holatda, yangi
+qator yaratiladi) - jarayon hech qachon qulamaydi.
+
+**Halol cheklov**: agar ikkita qurilma AYNAN BIR VAQTDA bir-birining
+IP'ini "almashtirsa" (ikki tomonlama kolliziya - nazariy jihatdan
+mumkin, amalda deyarli uchramaydi), tarix ikki qatorga bo'linib
+qolishi mumkin (ma'lumot YO'QOLMAYDI, faqat ikkita qatorga bo'linadi)
+- bu xavfsiz (qulamaydigan, xato bermaydigan) yo'lni tanlashning
+narxi, to'liq atomik "ikki tomonlama svop" yechimi alohida, ancha
+murakkab ish talab qiladi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida - production bazasi UMUMAN ishlatilmadi)**:
+yangi maxsus test - ikkita `threading.Thread` orqali, real PostgreSQL
+DB'ga qarshi, `threading.Barrier` bilan bir vaqtda ishga tushirilib,
+XUDDI production'da kuzatilgan naqshda (A<-B va B<-A, bir xil
+juftlik, qarama-qarshi yo'nalish) `_merge_device()`ni chaqiradi -
+(1) hech qanday deadlock/FK xatosi chiqmasligi, (2) aynan BITTA qator
+qolishi, (3) IKKALA tomonning ham Event tarixi saqlanib qolishi
+tasdiqlandi. Qo'shimcha, alohida 20 martalik stress-tsikl orqali ham
+(bir martalik testda yashiringan bo'lishi mumkin bo'lgan flake'ni
+istisno qilish uchun) 20/20 muvaffaqiyatli o'tishi tasdiqlandi. Butun
+`run_full_test.py` (95 test, +1 yangi): SQLite 88/95, PostgreSQL
+87/95 - baseline (87/94, 86/94)dan YANGI hech qanday regressiyasiz
+(farq faqat +1 yangi, o'tgan test).
+
+**Deploy'dan keyin darhol production'da tasdiqlash**: tuzatish
+`docker compose build parser_engine ... && docker compose up -d`
+bilan joylashtirilgach, `parser_engine` loglarida deadlock/
+ForeignKeyViolation xatolari BUTUNLAY to'xtadi (oldin har ~10
+soniyada takrorlanardi).
 
 ## Chuqur arxitektura tahlili, 5-bosqich: PDF chuqur tahlil (⑲-band)
 
