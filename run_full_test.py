@@ -5843,6 +5843,87 @@ def _test_device_mac_identity_merges_ip_collision():
 check("Device MAC-asosli identifikatsiya: IP kolliziyasida Event/Alert tarixi ko'chiriladi, yo'qotilmaydi", _test_device_mac_identity_merges_ip_collision)
 
 # ---------------------------------------------------------------------------
+print("\n=== 79a) Device identity: IP kolliziyasida DeviceBaseline mavjud bo'lsa, merge (o'chirish tartibi) muvaffaqiyatsiz bo'lmasligi ===")
+
+
+def _test_device_mac_identity_merge_with_baseline():
+    """
+    PRODUKSIYADA HAQIQATAN TOPILGAN, TAKRORLANUVCHI XATO (concurrency
+    tuzatishidan KEYIN ham davom etgan, keyin real diagnostika orqali
+    ochilgan HAQIQIY tub sabab): birinchi qarashda bu "poyga holati"
+    (parser_engine vs ueba_engine) deb o'ylangan edi (yuqoridagi 79b-test
+    shuni tuzatadi) - lekin production'da tuzatishdan KEYIN ham xato
+    davom etganda, `docker exec`orqali to'g'ridan-to'g'ri bazaga
+    qarashda aniqlandi: bu aslida hech qanday poyga holati EMAS, balki
+    DETERMINISTIK, har doim takrorlanadigan xato edi.
+
+    TUB SABAB: `DeviceBaseline` modelida `Device`ga `relationship()`
+    E'LON QILINMAGAN (`Event`/`Alert`dan farqli - ularda bor). Bunday
+    holda, BITTA `session.flush()` ichida ikkita mustaqil `session.
+    delete(...)` chaqirilganda (avval baseline, keyin device - kod
+    aynan shu tartibda yozilgan bo'lsa ham), SQLAlchemy'ning avtomatik
+    dependency-sorting mexanizmi FK bog'liqlikni ISHONCHLI aniqlay
+    olmasligi (qo'lda, to'g'ridan-to'g'ri PostgreSQL'ga qarshi
+    tasdiqlangan xatti-harakat) sabab, "devices" qatori "device_
+    baselines"dan OLDIN o'chirilishga urinishi mumkin - bu HAR DOIM
+    (concurrency'siz, bitta oddiy `_merge_device()` chaqiruvida ham)
+    `ForeignKeyViolation` bilan tugaydi, agar `remove` qurilmaning
+    baseline'i bo'lsa.
+
+    Tuzatish: baseline bilan bog'liq o'zgarish (reassign YOKI delete)
+    darhol, alohida `session.flush()` bilan bazaga yuboriladi - `remove`
+    qurilmaning o'zi o'chirilishidan OLDIN. Bu SQLAlchemy'ning
+    relationship()-siz FK tartiblash noaniqligini butunlay chetlab
+    o'tadi (endi vaqt/navbatga bog'liq emas - HAR DOIM to'g'ri ishlaydi).
+    """
+    from db.device_identity import find_or_create_device
+    from db.models import DeviceBaseline
+
+    old_mac, new_mac = "11:22:33:AA:BB:DD", "DD:BB:AA:33:22:11"
+    shared_ip, other_ip = "172.16.9.242", "172.16.9.243"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
+    s.query(Device).filter(Device.ip_address.in_([shared_ip, other_ip])).delete(synchronize_session=False)
+    s.commit()
+
+    old_device = Device(ip_address=shared_ip, mac_address=old_mac, hostname="OLD-BASELINE-PC", source="test")
+    s.add(old_device)
+    s.flush()
+    # MUHIM: "remove" bo'ladigan (eski) qurilmaning DeviceBaseline'i bor -
+    # bu aynan production'da kuzatilgan holat (UEBA barcha qurilmalar
+    # uchun baseline hisoblab qo'ygan, keyin shu qurilma IP kolliziyasiga
+    # uchraydi).
+    s.add(DeviceBaseline(
+        device_id=old_device.id,
+        mean_events_per_hour=5, stddev_events_per_hour=2,
+        typical_active_hours="9,10,11", lookback_days=30, sample_size=50,
+    ))
+    s.commit()
+    old_device_id = old_device.id
+
+    new_device = Device(ip_address=other_ip, mac_address=new_mac, hostname="NEW-BASELINE-PC", source="test")
+    s.add(new_device)
+    s.commit()
+    new_device_id = new_device.id
+
+    # Yangi MAC endi O'SHA (baseline'li) IP'ni oladi - kolliziya + merge
+    result = find_or_create_device(s, shared_ip, mac=new_mac, source="test")
+    s.commit()  # MUHIM: aynan shu commit production'da ForeignKeyViolation bilan qulagan edi
+
+    assert result.id == new_device_id
+    assert s.query(Device).filter(Device.id == old_device_id).first() is None, (
+        "Eski (baseline'li) qurilma o'chirilishi kerak edi"
+    )
+    assert s.query(DeviceBaseline).filter(DeviceBaseline.device_id == new_device_id).count() == 1, (
+        "Eski qurilmaning baseline'i yangi qatorga ko'chirilishi kerak edi"
+    )
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: DeviceBaseline mavjud bo'lganda merge (relationship()siz FK tartiblash) muvaffaqiyatsiz bo'lmasligi", _test_device_mac_identity_merge_with_baseline)
+
+# ---------------------------------------------------------------------------
 print("\n=== 79b) Device identity: ikkita jarayon BIR VAQTDA QARAMA-QARSHI yo'nalishda birlashtirsa deadlock/FK xatosi bo'lmasligi ===")
 
 

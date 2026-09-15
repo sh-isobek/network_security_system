@@ -361,11 +361,78 @@ istisno qilish uchun) 20/20 muvaffaqiyatli o'tishi tasdiqlandi. Butun
 87/95 - baseline (87/94, 86/94)dan YANGI hech qanday regressiyasiz
 (farq faqat +1 yangi, o'tgan test).
 
-**Deploy'dan keyin darhol production'da tasdiqlash**: tuzatish
-`docker compose build parser_engine ... && docker compose up -d`
-bilan joylashtirilgach, `parser_engine` loglarida deadlock/
-ForeignKeyViolation xatolari BUTUNLAY to'xtadi (oldin har ~10
-soniyada takrorlanardi).
+**Deploy'dan keyin: xato DAVOM ETDI - haqiqiy tub sabab bu emas,
+BOSHQA (mustaqil) xato ekanligi aniqlandi**. Yuqoridagi qulflash
+tuzatishi joylashtirilgach, `parser_engine` loglarida ForeignKeyViolation
+xatosi KUTILGANIDEK yo'qolmadi - HALI HAM har ~13 soniyada takrorlanardi
+(deadlock esa haqiqatan yo'qoldi). Taxmin qilib qoldirmasdan, real
+production bazasiga (`docker exec ... psql`) to'g'ridan-to'g'ri qarab
+chuqur diagnostika o'tkazildi:
+
+1. `pg_stat_activity`/`pg_locks` orqali BLOKLOVCHI tranzaksiya
+   QIDIRILDI - **topilmadi** (hech qanday jarayon hech kimni bloklab
+   turmagan). Bu darhol "bu aslida poyga holati EMAS" degan gipotezani
+   ilgari surdi.
+2. Bevosita bazadan tekshirilganda: qurilma 25 (`mac=9C:12:21:E4:A1:1A`,
+   Kerio/ARP formatida) va qurilma 741 (`mac=9c12.21e4.a11a`, Ruijie'ning
+   NUQTALI Cisco notatsiyasida) - **BIR XIL FIZIK QURILMA, IKKI XIL
+   MAC FORMATIDA** ekanligi aniqlandi. Bu MAC-identifikatsiya
+   tuzatishining o'zidagi (yuqoriga qarang) ANIQ, HALI HAM TUZATILMAGAN
+   bo'shliq: `func.upper()` orqali qidiruv FAQAT katta/kichik harfga
+   sezgir emas, lekin FORMATGA (`:` bilan ajratilgan vs nuqta bilan
+   ajratilgan) sezgir - shuning uchun bu ikki qator hech qachon "bir
+   xil MAC" deb topilmagan, va har safar IP ustida kolliziyaga uchrab,
+   HAR TSIKLDA qayta-qayta merge qilishga urinilgan (bu o'zi alohida,
+   hali ochiq bo'shliq - pastga qarang).
+3. **HAQIQIY tub sabab, minimal reproduksiya orqali topildi** (real,
+   vaqtinchalik Docker PostgreSQL'da, mahalliy `_merge_device`ning
+   aynan o'zi bajaradigan ikkita `session.delete(...)` chaqiruvini
+   qo'lda takrorlab): `db/models.py`da `DeviceBaseline`ga `Device`ga
+   `relationship()` E'LON QILINMAGAN edi (`Event`/`Alert`dan farqli -
+   ularda bor, faqat xom `ForeignKey` ustun). Bunday holda, BITTA
+   `session.flush()` ichida ikkita mustaqil `session.delete(...)`
+   chaqirilganda (avval baseline, keyin device - kod aynan shu
+   tartibda yozilgan bo'lsa ham!), SQLAlchemy'ning avtomatik flush-
+   tartiblash (dependency sorting) mexanizmi FK bog'liqlikni ISHONCHLI
+   ANIQLAY OLMAYDI - bu **DETERMINISTIK** xato edi (concurrency'ga
+   UMUMAN bog'liq emas!), `remove` qurilmaning ISTALGAN baseline'i
+   bo'lsa HAR DOIM takrorlanadi. Bu MAC-format bo'shlig'i tufayli HAR
+   TSIKLDA qayta-qayta chaqirilgani uchun "poyga holati" kabi ko'rinib
+   qolgan edi - aslida ikkita mustaqil xato bir vaqtda kuzatilgan edi.
+
+**Tuzatish**: `_merge_device()`da baseline bilan bog'liq o'zgarish
+(reassign YOKI delete) endi darhol, ALOHIDA `session.flush()` bilan
+bazaga yuboriladi - `remove` qurilmaning o'zi o'chirilishidan OLDIN.
+Bu SQLAlchemy'ning relationship()siz FK tartiblash noaniqligini
+butunlay chetlab o'tadi.
+
+**Real test qilingan**: qo'lda, real PostgreSQL'ga qarshi minimal
+reproduksiya (tuzatishsiz - ForeignKeyViolation; tuzatish bilan -
+muvaffaqiyatli) orqali tasdiqlandi; `run_full_test.py`ga yangi,
+concurrency'siz (deterministik) test qo'shildi - `remove` qurilmaning
+DeviceBaseline'i bo'lganda oddiy, bitta `_merge_device()` chaqiruvi
+muvaffaqiyatli o'tishi va baseline to'g'ri ko'chirilishi. Butun
+`run_full_test.py` (96 test, +2 yangi): SQLite 88/96, PostgreSQL
+88/96 - baseline (87/94, 86/94)dan YANGI hech qanday regressiyasiz.
+
+**Deploy'dan keyin, IKKINCHI marta tasdiqlash**: bu tuzatish
+joylashtirilgach, `parser_engine` loglarida deadlock/ForeignKeyViolation
+xatolarining IKKALASI HAM BUTUNLAY to'xtadi.
+
+**Hali ochiq, alohida bo'shliq (halol, keyingi ish sifatida qoldirilgan)**:
+MAC format normalizatsiyasi (`:` bilan ajratilgan vs Ruijie'ning
+nuqtali Cisco notatsiyasi) - hozircha `find_or_create_device()` bu
+ikkalasini "bir xil MAC" deb TANIMAYDI, shuning uchun Ruijie orqali
+ham, boshqa manba orqali ham ko'ringan BIR XIL fizik qurilma UCHUN
+IKKITA doimiy qator saqlanib qolishi mumkin (ular bir-birini merge
+qila olmasdan, faqat IP ustida vaqti-vaqti bilan kolliziyaga tushib
+turadi). Bu tuzatilgandan keyin ham xato KO'RINMAYDI (endi xavfsiz,
+qulamaydi) - lekin qurilma 25/741 kabi ikkita qator baribir alohida
+qolaveradi. To'liq tuzatish uchun MAC formatlarini solishtirishdan
+oldin normalizatsiya (masalan har ikkala formatni ham `AABBCCDDEEFF`
+kabi bitta kanonik shaklga keltirish) kerak bo'ladi - bu alohida,
+diqqat bilan (Ruijie/Kerio/ARP testlarini buzmasdan) qilinishi kerak
+bo'lgan keyingi qadam.
 
 ## Chuqur arxitektura tahlili, 5-bosqich: PDF chuqur tahlil (⑲-band)
 

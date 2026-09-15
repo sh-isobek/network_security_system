@@ -143,6 +143,23 @@ def _merge_device(session, keep: Device, remove: Device):
         else:
             session.delete(remove_baseline)
 
+        # MUHIM (production'da HAQIQATAN takrorlangan xato, real diagnostika
+        # orqali topilgan - AYNAN SHU narsa deadlock-tuzatishidan KEYIN ham
+        # xatoni davom ettirgan edi): `DeviceBaseline`da `Device`ga
+        # `relationship()` E'LON QILINMAGAN (faqat xom `ForeignKey` ustun) -
+        # `Event`/`Alert`dan farqli. Bunday holda SQLAlchemy'ning avtomatik
+        # flush-tartiblash (dependency sorting) mexanizmi ikkala mustaqil
+        # `session.delete(...)` chaqiruvi orasidagi FK bog'liqlikni ISHONCHLI
+        # ANIQLAY OLMAYDI (bu haqiqiy, PostgreSQL'ga qarshi qo'lda
+        # tasdiqlangan SQLAlchemy xatti-harakati) - natijada bitta
+        # `session.flush()`da "devices" qatori "device_baselines"dan OLDIN
+        # o'chirilishga urinishi mumkin, garchi kod "avval baseline, keyin
+        # device" tartibida yozilgan bo'lsa ham. Aniq oraliq `flush()` -
+        # baseline o'zgarishini (reassign YOKI delete) DARHOL, `remove`
+        # o'chirilishidan OLDIN bazaga yuboradi - shu bilan tartib
+        # KAFOLATLANADI (endi navbatga/vaqtga bog'liq emas).
+        session.flush()
+
     # Boy ma'lumotni saqlab qolish (keep'da hali bo'sh bo'lgan maydonlar uchun)
     for attr in ("hostname", "vendor", "device_type", "os_guess", "open_ports", "discovery_source"):
         if not getattr(keep, attr, None) and getattr(remove, attr, None):
