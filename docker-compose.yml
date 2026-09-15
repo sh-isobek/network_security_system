@@ -20,6 +20,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-security_system}
       POSTGRES_USER: ${POSTGRES_USER:-security_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env faylida majburiy}
+      # MUHIM: bu xizmat (rasmiy postgres image) `env_file: .env`
+      # ishlatmaydi (faqat shu yerda aniq ko'rsatilgan o'zgaruvchilarni
+      # oladi) - shuning uchun boshqa xizmatlarga qo'shilgan TZ o'zgaruvchisi
+      # bu yerga avtomatik yetib bormaydi, alohida qo'shish kerak edi.
+      TZ: ${TZ:-Asia/Tashkent}
     ports:
       # Faqat 127.0.0.1'ga bog'langan (tashqi tarmoqqa OCHIQ EMAS) -
       # bu `network_discovery` xizmati kabi `network_mode: host`
@@ -50,6 +55,7 @@ services:
       # majburiy, kuchli login/parol talab qilinadi.
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER .env faylida majburiy}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD .env faylida majburiy}
+      TZ: ${TZ:-Asia/Tashkent}
     ports:
       # XAVFSIZLIK: 5672 (AMQP) endi TASHQARIGA UMUMAN OCHILMAYDI - faqat
       # Docker'ning ichki tarmog'idagi boshqa xizmatlar (`rabbitmq:5672`
@@ -216,6 +222,8 @@ services:
   clamav_updater:
     image: clamav/clamav:stable
     restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Tashkent}
     volumes:
       - clamav_db:/var/lib/clamav
     entrypoint: >
@@ -317,6 +325,16 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    # MUHIM (real production'da aniqlangan xato): bu xizmat profilsiz
+    # bo'lgani uchun har bir oddiy `docker compose up -d`da ishga
+    # tushishga urinardi - lekin foydalanuvchi ATAYLAB oddiy http://
+    # (TLS'siz) qolishni tanlagan (agent_api/dashboard 8443/8080 portlarini
+    # to'g'ridan-to'g'ri LAN'ga ochadi), shuning uchun nginx HAR DOIM
+    # xuddi shu 8443 portini band qilishga urinib, "port is already
+    # allocated" xatosi bilan muvaffaqiyatsiz bo'lardi (zararsiz, lekin
+    # har safar chalg'ituvchi xato). Endi TLS'ga (docs_TLS_SETUP.md)
+    # o'tishga tayyor bo'lganingizda: `docker compose --profile tls up -d`.
+    profiles: ["tls"]
     volumes:
       - ./deploy/nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
       - ./deploy/nginx/entrypoint.sh:/entrypoint.sh:ro
