@@ -34,6 +34,15 @@ logger = logging.getLogger("notification_engine")
 BATCH_SIZE = 50
 NOTIFY_CHANNELS = [c.strip() for c in os.getenv("NOTIFY_CHANNELS", "email,telegram").split(",") if c.strip()]
 
+# Foydalanuvchi so'rovi: Email/Telegram FAQAT critical/high darajali
+# alertlar uchun yuborilsin - past darajalilar (medium/low) shovqin
+# hosil qilmasligi uchun faqat logga yoziladi (baribir `notified=True`
+# qilib belgilanadi - Dashboard'da ko'rinishda davom etadi, faqat
+# tashqi kanal orqali xabar qilinmaydi).
+NOTIFY_MIN_SEVERITIES = {
+    s.strip().lower() for s in os.getenv("NOTIFY_MIN_SEVERITIES", "critical,high").split(",") if s.strip()
+}
+
 
 def _build_alert_data(session, alert: Alert) -> dict:
     device = session.query(Device).filter(Device.id == alert.device_id).first() if alert.device_id else None
@@ -63,7 +72,23 @@ def _build_alert_data(session, alert: Alert) -> dict:
 
 def notify_one(session, alert: Alert) -> bool:
     """Bitta alert uchun barcha sozlangan kanallar orqali yuboradi.
-    Kamida bitta kanal muvaffaqiyatli bo'lsa True qaytaradi."""
+    Kamida bitta kanal muvaffaqiyatli bo'lsa True qaytaradi.
+
+    MUHIM: severity `NOTIFY_MIN_SEVERITIES`da (standart critical/high)
+    bo'lmasa, Email/Telegram UMUMAN chaqirilmaydi - alert faqat logga
+    yoziladi va baribir `True` qaytariladi (ya'ni `notified=True` qilib
+    belgilanadi - qayta-qayta urinib, tsiklni band qilib turmaydi).
+    """
+    severity = (alert.severity or "").strip().lower()
+
+    if severity not in NOTIFY_MIN_SEVERITIES:
+        logger.info(
+            f"Alert {alert.id} (severity={severity or 'nomalum'}): Email/Telegram "
+            f"yuborilmadi - faqat {sorted(NOTIFY_MIN_SEVERITIES)} darajalar uchun yuboriladi. "
+            f"Sabab: {alert.reason or ''}"
+        )
+        return True
+
     alert_data = _build_alert_data(session, alert)
     any_success = False
 

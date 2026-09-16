@@ -7226,6 +7226,99 @@ def _test_devices_stale_hide():
 check("Dashboard /devices: 72+ soat oflayn qurilmalar ro'yxatdan yashiriladi (tarix saqlanadi)", _test_devices_stale_hide)
 
 # ---------------------------------------------------------------------------
+print("\n=== 96) Notification Engine: Email/Telegram FAQAT critical/high uchun yuboriladi, qolgani faqat logga ===")
+
+
+def _test_notification_severity_filter():
+    """
+    Foydalanuvchi so'rovi: 'telegram va email orqali xabar faqat
+    Critical yoki High bo'lsa yuborsin aks holda faqat log ga yozsin'.
+
+    Bu test real send_alert_email/send_alert_telegram funksiyalarini
+    Mock bilan almashtirib (SMTP/Telegram serverga chiqmasdan, faqat
+    "chaqirildimi/yo'qmi"ni kuzatib) tekshiradi: (1) critical/high
+    alertlar uchun IKKALA kanal ham chaqiriladi, (2) medium/low
+    alertlar uchun HECH QAYSI kanal chaqirilmaydi, (3) barcha 4
+    alert baribir `notified=True` bo'lib qoladi (chaqirilmaganlari
+    ham - aks holda tsikl ularni abadiy qayta-qayta ko'rib chiqaveradi),
+    (4) `NOTIFY_MIN_SEVERITIES` orqali chegara sozlanishi mumkinligi.
+    """
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    s = get_session()
+    d = Device(ip_address="172.16.96.1", mac_address="AA:BB:CC:96:00:01",
+               hostname="SEVERITY-FILTER-PC", connection_type="wifi", source="test")
+    s.add(d)
+    s.flush()
+    alerts = {}
+    for sev in ["critical", "high", "medium", "low"]:
+        a = Alert(device_id=d.id, severity=sev, reason=f"Test {sev} alert",
+                   action_taken="", notified=False)
+        s.add(a)
+        s.flush()
+        alerts[sev] = a.id
+    s.commit()
+    s.close()
+
+    os.environ["NOTIFY_CHANNELS"] = "email,telegram"
+    os.environ.pop("NOTIFY_MIN_SEVERITIES", None)  # standart: critical,high
+
+    import engine.notification_engine as notif_engine
+    importlib.reload(notif_engine)
+
+    try:
+        with patch.object(notif_engine, "send_alert_email", return_value=True) as mock_email, \
+             patch.object(notif_engine, "send_alert_telegram", return_value=True) as mock_tg:
+            n = notif_engine.run_once()
+            assert n == 4, f"Barcha 4 alert 'ishlangan' deb sanalishi kerak edi, {n} ta sanaldi"
+
+            sent_reasons = {c.args[0]["reason"] for c in mock_email.call_args_list}
+            assert "Test critical alert" in sent_reasons, "critical uchun email chaqirilmadi"
+            assert "Test high alert" in sent_reasons, "high uchun email chaqirilmadi"
+            assert "Test medium alert" not in sent_reasons, "medium uchun email XATO ravishda chaqirildi"
+            assert "Test low alert" not in sent_reasons, "low uchun email XATO ravishda chaqirildi"
+            assert mock_email.call_count == 2, f"Faqat 2 marta (critical+high) chaqirilishi kerak edi, {mock_email.call_count}"
+            assert mock_tg.call_count == 2, f"Telegram ham faqat 2 marta chaqirilishi kerak edi, {mock_tg.call_count}"
+
+        # Barcha 4 alert - hatto chaqirilmaganlari ham - notified=True bo'lishi kerak
+        s = get_session()
+        for sev, aid in alerts.items():
+            a = s.query(Alert).filter(Alert.id == aid).first()
+            assert a.notified is True, f"{sev} alert notified=True bo'lishi kerak edi (qayta urinib turmasligi uchun)"
+        s.close()
+
+        # NOTIFY_MIN_SEVERITIES orqali chegara qattiqlashtirilsa (faqat critical)
+        os.environ["NOTIFY_MIN_SEVERITIES"] = "critical"
+        importlib.reload(notif_engine)
+        s = get_session()
+        d2 = Device(ip_address="172.16.96.2", mac_address="AA:BB:CC:96:00:02",
+                    hostname="SEVERITY-FILTER-PC-2", connection_type="wifi", source="test")
+        s.add(d2)
+        s.flush()
+        high_alert2 = Alert(device_id=d2.id, severity="high", reason="Ikkinchi high alert",
+                             action_taken="", notified=False)
+        s.add(high_alert2)
+        s.commit()
+        s.close()
+
+        with patch.object(notif_engine, "send_alert_email", return_value=True) as mock_email2, \
+             patch.object(notif_engine, "send_alert_telegram", return_value=True) as mock_tg2:
+            notif_engine.run_once()
+            assert mock_email2.call_count == 0, (
+                "NOTIFY_MIN_SEVERITIES='critical' bo'lganda 'high' alert uchun ham "
+                "email XATO ravishda yuborildi"
+            )
+            assert mock_tg2.call_count == 0
+    finally:
+        for k in ["NOTIFY_CHANNELS", "NOTIFY_MIN_SEVERITIES"]:
+            os.environ.pop(k, None)
+        importlib.reload(notif_engine)
+
+
+check("Notification Engine: Email/Telegram faqat critical/high uchun, qolgani faqat log", _test_notification_severity_filter)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
