@@ -83,6 +83,33 @@ BU SESSIYADA BAJARILMADI (real production ma'lumot bazasiga tegish -
 hatto faqat metadata yozish bo'lsa ham - alohida, ongli tasdiq talab
 qiladi).
 
+## Katta jadvalga indeks qo'shish (`CREATE INDEX CONCURRENTLY`)
+
+Production'dagi `events`/`raw_logs`/`web_access_logs` millionlab
+qatorga ega (masalan `events` - 7.6 million+). Bunday jadvalga oddiy
+`op.create_index()` PostgreSQL'da butun jadvalni YOZISH uchun
+BLOKLAB qo'yadi (parser_engine kabi doimiy yozuvchi jarayonlar
+sekundlar-daqiqalar davomida to'xtab qoladi). Buning o'rniga:
+
+```python
+def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        with op.get_context().autocommit_block():
+            op.create_index(
+                "ix_...", "jadval", ["ustun"],
+                postgresql_concurrently=True,
+            )
+    else:
+        op.create_index("ix_...", "jadval", ["ustun"])  # SQLite: CONCURRENTLY yo'q, kerak ham emas
+```
+
+`CONCURRENTLY` tranzaksiya ICHIDA ishlay olmaydi - shuning uchun
+`op.get_context().autocommit_block()` orqali Alembic'ning odatiy
+tranzaksiyasidan chetga chiqariladi. Misol: `alembic/versions/
+60a696c5452e_add_alert_and_event_performance_indexes.py`
+(`ix_events_device_id_timestamp`).
+
 ## Halol cheklovlar
 
 - `_sync_missing_columns()` hali ham `init_db()` ichida ishlaydi -

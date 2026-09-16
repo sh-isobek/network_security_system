@@ -7319,6 +7319,72 @@ def _test_notification_severity_filter():
 check("Notification Engine: Email/Telegram faqat critical/high uchun, qolgani faqat log", _test_notification_severity_filter)
 
 # ---------------------------------------------------------------------------
+print("\n=== 97) PostgreSQL indexing: alerts/events'ga ishlash unumdorligi indekslari (real production drift topilgan+tuzatilgan) ===")
+
+
+def _test_performance_indexes_migration():
+    """
+    BOSQICH 0 (Enterprise hardening audit): `alerts` (~10 000 qator,
+    HECH QANDAY ustun indekslanmagan edi - faqat PK) va `events`
+    (production'da 7.6 million+ qator) jadvallariga real so'rov
+    naqshlariga (notification_engine'ning `notified=False` har 10
+    soniyalik so'rovi, UEBA'ning `device_id+timestamp` so'rovi,
+    Dashboard'ning `severity`/`acknowledged`/sana-oralig'i filtri)
+    mos indekslar qo'shildi (`alembic/versions/
+    60a696c5452e_add_alert_and_event_performance_indexes.py`).
+
+    BONUS - shu ishni tekshirish jarayonida topilgan va tuzatilgan
+    REAL xato: oldingi migratsiya (`79ad4a5404a6`, api_tokens indeksi
+    uchun) idempotent EMAS edi - BO'SH (yangi) bazada baseline
+    migratsiya bu indeksni ALLAQACHON yaratadi (chunki model'da
+    `index=True` bor), shuning uchun ikkinchi migratsiya "index
+    already exists" xatosi bilan MUVAFFAQIYATSIZ bo'lardi. Bu -
+    aynan shu migratsiyani ishlab chiqish jarayonida (yangi, bo'sh
+    baza bilan 3 ta migratsiyani ketma-ket sinaganda) DARHOL
+    ochilib qolgan, hech qachon avval sinalmagan bo'shliq edi -
+    tuzatildi (indeks avval mavjudligini tekshirib, faqat yo'q
+    bo'lsa yaratadi).
+
+    Bu test uchta narsani tasdiqlaydi: (1) bo'sh bazadan boshlab
+    BARCHA (hozircha 3 ta) migratsiya ketma-ket muvaffaqiyatli
+    qo'llanishi (aynan yuqoridagi bo'shliqni ushlaydigan regressiya
+    himoyasi), (2) yakuniy sxemada kutilgan barcha yangi indekslar
+    borligi, (3) drift yo'qligi.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    db_path = "/tmp/_alembic_test_perf_indexes.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    db_url = f"sqlite:///{db_path}"
+    try:
+        _run_alembic(["upgrade", "head"], db_url)  # BO'SH bazadan - barcha migratsiyalar ketma-ket
+
+        engine = create_engine(db_url)
+        inspector = inspect(engine)
+        alert_indexes = {ix["name"] for ix in inspector.get_indexes("alerts")}
+        event_indexes = {ix["name"] for ix in inspector.get_indexes("events")}
+
+        expected_alert_indexes = {
+            "ix_alerts_device_id_timestamp", "ix_alerts_severity",
+            "ix_alerts_acknowledged", "ix_alerts_notified", "ix_alerts_timestamp",
+        }
+        missing_alert = expected_alert_indexes - alert_indexes
+        assert not missing_alert, f"'alerts'da kutilgan indekslar yo'q: {missing_alert}"
+        assert "ix_events_device_id_timestamp" in event_indexes, \
+            "'events'da device_id+timestamp indeksi yo'q"
+
+        _assert_alembic_schema_matches_models(engine, "PerfIndexes/upgrade-head")
+        _assert_alembic_no_drift(engine, "PerfIndexes/upgrade-head")
+        engine.dispose()
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+check("PostgreSQL indexing: alerts/events performance indekslari (bo'sh bazadan barcha migratsiya ketma-ket)", _test_performance_indexes_migration)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

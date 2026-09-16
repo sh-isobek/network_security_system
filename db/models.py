@@ -102,6 +102,11 @@ class Event(Base):
     __table_args__ = (
         Index("ix_events_timestamp", "timestamp"),
         Index("ix_events_dest_ip", "dest_ip"),
+        # `device_id` FK'ning o'zi indekslanmagan edi - UEBA engine har
+        # soatda, har bir qurilma uchun `WHERE device_id=? AND timestamp
+        # >= ?` so'rovini bajaradi (production'da `events` 7.6 million+
+        # qatorga yetgan - indekssiz bu to'liq jadval skaneri edi).
+        Index("ix_events_device_id_timestamp", "device_id", "timestamp"),
     )
 
 
@@ -130,6 +135,20 @@ class Alert(Base):
     acknowledged_at = Column(DateTime)
 
     event = relationship("Event")
+
+    __table_args__ = (
+        # `alerts`da avval FAQAT birlamchi kalit indekslangan edi.
+        # `notification_engine` har 10 soniyada `notified=False`ni,
+        # Dashboard esa `severity`/`acknowledged` bo'yicha tenglik va
+        # `timestamp` bo'yicha sana-oralig'i filtrini har sahifa
+        # yuklanishida so'raydi - hajmi o'sgan sari (hozircha 10 000+
+        # qator) bular indekssiz to'liq jadval skaneriga aylanadi.
+        Index("ix_alerts_device_id_timestamp", "device_id", "timestamp"),
+        Index("ix_alerts_severity", "severity"),
+        Index("ix_alerts_acknowledged", "acknowledged"),
+        Index("ix_alerts_notified", "notified"),
+        Index("ix_alerts_timestamp", "timestamp"),
+    )
 
 
 class WhitelistEntry(Base):

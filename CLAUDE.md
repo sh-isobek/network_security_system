@@ -113,7 +113,9 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Telegram xabarnomasi: Markdown parslash xatosi (production'da birinchi marta topilgan) | ✅✅ `parse_mode: "Markdown"` bilan `reason` matni escape qilinmasdi - `[...]` qavsli threat nomi/yorliq HAR SAFAR "can't parse entities"ga olib kelardi. Sandbox `api.telegram.org`ni bloklagani uchun avval HECH QACHON sinalmagan edi. `parse_mode` butunlay olib tashlandi |
 | — | Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (`scanners/file_type_detector.py`, yangi) | ✅✅ ⑳-band. `file_ext` HAR DOIM fayl NOMIdan olinardi (hujumchi nazorat qiladi) - Suricata'ning haqiqiy `magic` ma'lumoti bazaga yozilardi-yu, HECH QAYERDA solishtirilmasdi. Endi `invoice.pdf` (aslida PE32) kabi holatlar `malicious`ga avtomatik ko'tariladi; ZIP-kengaytmasiz-bypass ham yopildi |
 | — | PDF chuqur tahlil (`scanners/pdf_analyzer.py`, yangi) | ✅✅ ⑲-band. Avval YARA faqat XOM baytlarda qidirardi - zamonaviy PDF'lar `/OpenAction`/`/JavaScript`ni ko'pincha FlateDecode (zlib) bilan SIQIB saqlaydi, bu holatda xom-bayt qidiruvi HECH NARSA topmasdi. `zlib` (tashqi kutubxonasiz) orqali stream'lar ochiladi; PDF ichidagi URL'lar `url_intel.py` orqali fishing balliga tekshiriladi |
-| — | Alembic migratsiya tizimi (`alembic/`, `alembic.ini`, `docs_ALEMBIC_MIGRATIONS.md`) | ✅✅ "Enterprise SIEM/NDR/EDR" audit natijasidagi P0 band, BOSQICH 0 (Foundation Hardening)ning birinchi qadami. `_sync_missing_columns()` OLIB TASHLANMADI (backward-compat sifatida saqlandi) - Alembic ENDI yangi sxema o'zgarishlari uchun RASMIY, versiyalanadigan yo'l. Production bazasini bir martalik `alembic stamp head`ga o'tkazish ATAYLAB bu sessiyada bajarilmadi (real production DB'ga tegish - hatto faqat metadata bo'lsa ham - alohida tasdiq talab qiladi) |
+| — | Alembic migratsiya tizimi (`alembic/`, `alembic.ini`, `docs_ALEMBIC_MIGRATIONS.md`) | ✅✅ "Enterprise SIEM/NDR/EDR" audit natijasidagi P0 band, BOSQICH 0 (Foundation Hardening)ning birinchi qadami. `_sync_missing_columns()` OLIB TASHLANMADI (backward-compat sifatida saqlandi) - Alembic ENDI yangi sxema o'zgarishlari uchun RASMIY, versiyalanadigan yo'l. Production baza foydalanuvchi tomonidan `alembic stamp head` bilan Alembic nazoratiga o'tkazildi |
+| — | Notification Engine: Email/Telegram FAQAT critical/high uchun, qolgani faqat logga (`engine/notification_engine.py`) | ✅ Yangi `NOTIFY_MIN_SEVERITIES` (standart `critical,high`) - past darajali alertlar shovqin qilmasdan, Dashboard'da to'liq ko'rinishda qoladi |
+| — | PostgreSQL indexing/production hardening - BOSQICH 0 davomi (`db/models.py`, yangi Alembic migratsiya) | ✅✅ Real production'da `alerts` (PK'dan boshqa indekssiz) va `events` (7.6 million qator, `device_id` indekssiz) real bo'shliqlari topildi va yopildi. `events`ga `CREATE INDEX CONCURRENTLY` (yozishlarni bloklamaslik uchun). BONUS: shu jarayonda oldingi migratsiyaning fresh-install'da MUVAFFAQIYATSIZ bo'lishiga olib keladigan idempotentlik xatosi topilib tuzatildi |
 
 ## Enterprise SIEM/NDR/EDR audit va bosqichma-bosqich hardening rejasi (BOSQICH 0 boshlandi: Alembic)
 
@@ -187,17 +189,113 @@ production baza (745 qurilma) BUTUNLAY tegilmagani alohida tasdiqlandi.
    (`finally` orqali, muvaffaqiyatli/muvaffaqiyatsiz bo'lishidan
    qat'iy nazar) darhol o'chiriladi.
 
-**ATAYLAB BU SESSIYADA BAJARILMAGAN (halol, keyingi tasdiq talab
-qiladi)**: haqiqiy production PostgreSQL bazasiga qarshi
-`alembic stamp head`ni ishga tushirish - garchi bu operatsiya
-HECH QANDAY DDL bajarmasa ham (faqat bitta metadata yozuvi), real
-production ma'lumot bazasiga tegish har doim ongli, alohida tasdiq
-talab qiladi ("Executing actions with care" qoidasi).
+**YANGILANDI (keyingi navbatda bajarildi)**: `alembic stamp head`
+production PostgreSQL bazasiga qarshi foydalanuvchi tomonidan
+bevosita ishga tushirildi (auto-mode classifier "Production Deploy"
+sifatida bloklagani uchun, men buyruqni faqat TAVSIYA qildim -
+foydalanuvchining o'zi bajardi). Shundan so'ng drift-tekshiruv
+orqali real, oldindan noma'lum bo'shliq topildi va yopildi - pastga,
+"PostgreSQL indexing" bo'limiga qarang.
 
-**Keyingi navbatdagi (foydalanuvchi audit rejasidan, BOSQICH 0
-davomida)**: PostgreSQL indexing/production hardening, Docker/
-container xavfsizligi (non-root, read-only fs), config/secrets
-audit - foydalanuvchi keyingi sessiyada tanlaydi.
+## Notification Engine: Email/Telegram FAQAT critical/high uchun, qolgani faqat logga
+
+Foydalanuvchi so'radi: "telegram va email orqali xabar faqat Critical
+yoki High bo'lsa yuborsin aks holda faqat log ga yozsin". Avval HAR
+BIR alert (severity'siga qaramasdan) Email/Telegram orqali yuborilar
+edi - bu past darajali topilmalar (masalan UEBA statistik anomaliya,
+zaif VT signali) uchun ortiqcha shovqin edi.
+
+**Qurilgan** (`engine/notification_engine.py`): yangi
+`NOTIFY_MIN_SEVERITIES` (standart `critical,high`, `.env` orqali
+sozlanadi). `notify_one()` endi severity shu to'plamda bo'lmasa,
+Email/Telegram funksiyalarini UMUMAN chaqirmaydi - faqat `logger.info()`
+orqali yozadi va baribir `notified=True` deb belgilaydi (aks holda
+tsikl bu alertni abadiy qayta-qayta ko'rib chiqaveradi). Dashboard'da
+bu alertlar TO'LIQ ko'rinishda qoladi - faqat tashqi kanal orqali
+xabar qilinmaydi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: `run_full_test.py` #96 - `send_alert_email`/
+`send_alert_telegram`ni Mock bilan almashtirib, critical/high uchun
+ikkala kanal ham aynan 1 martadan chaqirilishi, medium/low uchun
+UMUMAN chaqirilmasligi, barcha 4 alert baribir `notified=True` bo'lib
+qolishi, va `NOTIFY_MIN_SEVERITIES="critical"` kabi qattiqroq sozlash
+ham to'g'ri qo'llanishi tasdiqlandi. Production'da `notification_engine`
+konteyneri qayta qurilib/ko'tarilib, sog'lom ishlayotgani tasdiqlandi.
+
+## PostgreSQL indexing/production hardening (BOSQICH 0 davomi) - real production drift topilgan va tuzatilgan
+
+Foydalanuvchi BOSQICH 0'ning qolgan bandlaridan (PostgreSQL indexing,
+Docker xavfsizligi, config/secrets audit) qaysi birini boshlashni
+so'raganda, "PostgreSQL indexing/production hardening" tanlandi - bu
+yangi qurilgan Alembic infratuzilmasidan bevosita foydalanadigan
+tabiiy davom, va Docker xavfsizligidan (Dockerfile qayta qurish,
+ruxsatlarni o'zgartirish - ancha invaziv) farqli past xavfli ish.
+
+**Production bazasini (`docker exec ... psql`, faqat O'QISH) tekshirganda
+kutilganidan KATTAROQ real muammo topildi**: `raw_logs` - 8.8 million
+qator (4.7 GB), `events` - 7.6 million qator (1.2 GB), `web_access_logs`
+- 6.9 million qator (2.4 GB). `web_access_logs` allaqachon yaxshi
+indekslangan edi, lekin:
+
+1. **`alerts` (~10 000 qator) - PK'dan boshqa HECH QANDAY indeks
+   YO'Q EDI.** `notification_engine` har 10 soniyada `notified=False`
+   bo'yicha, Dashboard har sahifa yuklanishida `severity`/`acknowledged`/
+   sana-oralig'i bo'yicha, UEBA esa `device_id+timestamp` bo'yicha
+   so'raydi - bularning barchasi indekssiz to'liq jadval skaneri edi.
+2. **`events` (7.6 million qator) - `device_id` (FK) UMUMAN
+   indekslanmagan edi.** UEBA engine har soatda, HAR BIR qurilma uchun
+   `WHERE device_id=? AND timestamp>=?` so'rovini bajaradi - bu
+   millionlab qatorli jadvalda indekssiz JUDA og'ir so'rov edi.
+
+**Qurilgan** (`db/models.py` + yangi Alembic migratsiya
+`60a696c5452e_add_alert_and_event_performance_indexes.py`):
+`alerts`ga `(device_id, timestamp)`, `severity`, `acknowledged`,
+`notified`, `timestamp` indekslari; `events`ga `(device_id, timestamp)`
+composite indeksi. **Muhim ishlab chiqish qarori**: `events` production'da
+7.6 million qator bo'lgani uchun oddiy `CREATE INDEX` butun jadvalni
+YOZISH uchun bloklab qo'yardi (parser_engine doimiy yozadi) - shuning
+uchun PostgreSQL'da `CREATE INDEX CONCURRENTLY` (Alembic'ning
+`autocommit_block()` konteksti orqali, chunki `CONCURRENTLY`
+tranzaksiya ichida ishlamaydi) ishlatildi; SQLite'da (dev/test) oddiy
+yo'l qoladi. Batafsil: `docs_ALEMBIC_MIGRATIONS.md`ning yangi
+"Katta jadvalga indeks qo'shish" bo'limi.
+
+**BONUS - shu ishni sinash jarayonida topilgan va tuzatilgan REAL
+xato (aynan shu Alembic ishlab chiqish jarayonida, hech qachon avval
+sinalmagan)**: oldingi migratsiya (`79ad4a5404a6`, production'dagi
+yetishmayotgan `api_tokens` indeksini yopish uchun yozilgan edi)
+**idempotent EMAS** ekanligi aniqlandi - BO'SH (yangi) bazada baseline
+migratsiya bu indeksni ALLAQACHON yaratadi (model'da `index=True` bor),
+shuning uchun ikkinchi migratsiya "index already exists" xatosi bilan
+MUVAFFAQIYATSIZ bo'lardi. Bu - fresh install/yangi dev muhitida
+`alembic upgrade head` BUTUNLAY ishlamay qolishiga olib kelardi, lekin
+avvalgi sessiyada FAQAT production'ga (u yerda indeks haqiqatan
+yo'q edi) qarshi sinalgani uchun yashiringan edi. Tuzatildi: migratsiya
+endi indeks avval mavjudligini (`inspect().get_indexes()`) tekshirib,
+faqat yo'q bo'lsa yaratadi - ikkala holatda ham (fresh install VA
+production drift) to'g'ri ishlaydi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: (1) BO'SH bazadan boshlab BARCHA (3 ta)
+migratsiya ketma-ket muvaffaqiyatli qo'llanishi (aynan yuqoridagi
+bo'shliqni ushlaydigan yangi regressiya testi, `run_full_test.py` #97);
+(2) PostgreSQL'da `CREATE INDEX CONCURRENTLY` orqali yaratilgan
+`ix_events_device_id_timestamp`ning `pg_index.indisvalid=true` ekanligi
+(CONCURRENTLY qurilish muvaffaqiyatsiz bo'lsa INVALID indeks qolib
+ketishi mumkin - buni aniq tekshirish orqali) alohida tasdiqlandi;
+(3) yakuniy sxemada drift yo'qligi (`compare_metadata`); (4) mavjud
+Alembic testlari (#92-94) ham qayta ishga tushirilib, regressiyasiz
+ekanligi tasdiqlandi. Production bazasiga (real, 7.65 million+ qatorli
+`events` jadvaliga) migratsiya foydalanuvchi tomonidan qo'lda
+qo'llanishi kutilmoqda (auto-mode classifier "Production Deploy"
+amallarini avtomatik bloklaydi).
+
+**Ataylab bu ishda QILINMAGAN (halol, keyingi ish)**: retention
+siyosati (8.8 million qatorli `raw_logs`ni qancha vaqt saqlash) - bu
+ma'lumot o'chirish siyosati bo'lgani uchun foydalanuvchining o'zi
+qaror qilishi kerak bo'lgan alohida masala, faqat indeksing (so'rov
+tezligi) doirasida ish qilindi.
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
