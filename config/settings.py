@@ -73,3 +73,17 @@ DEVICE_OFFLINE_THRESHOLD_MINUTES = int(os.getenv("DEVICE_OFFLINE_THRESHOLD_MINUT
 # belgilab qo'ymasligi uchun bir oz zaxira bilan).
 AGENT_ONLINE_THRESHOLD_MINUTES = int(os.getenv("AGENT_ONLINE_THRESHOLD_MINUTES", "15"))
 
+# ---- Dashboard: "eski" (uzoq vaqt ko'rinmagan) qurilmalarni ro'yxatdan yashirish ----
+# Bu YUQORIDAGI DEVICE_OFFLINE_THRESHOLD_MINUTES'dan FARQLI - o'sha faqat
+# "ONLAYN"/"OFFLAYN" belgisini qo'yadi, qurilma baribir `/devices`
+# ro'yxatida ko'rinaveradi. Bu sozlama esa shundan HAM ko'proq vaqt
+# (standart 72 soat = 3 kun) davomida umuman ko'rinmagan qurilmalarni
+# ro'yxatdan (default holatda) YASHIRADI - DHCP muhitida uzoq vaqt
+# oflayn qurilmalar (masalan xizmatdan chiqarilgan/olib ketilgan)
+# ro'yxatni "arvoh" yozuvlar bilan to'ldirib yubormasligi uchun.
+# MUHIM: bu FAQAT ko'rinishni yashiradi - qurilma qatori, va unga bog'liq
+# Event/Alert/FileEvent tarixi, bazada TO'LIQ saqlanib qoladi (xavfsizlik
+# audit tarixi hech qachon yo'qotilmaydi). Dashboard'da "Eski qurilmalarni
+# ham ko'rsatish" belgisini qo'yib, istalgan vaqtda qayta ko'rish mumkin.
+DEVICE_STALE_HIDE_HOURS = int(os.getenv("DEVICE_STALE_HIDE_HOURS", "72"))
+

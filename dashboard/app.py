@@ -357,12 +357,15 @@ def devices():
     onlayn/offlayn filtriga mos) yetish mumkin.
     """
     from datetime import timedelta
-    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES
+    from sqlalchemy import or_
+    from config.settings import AGENT_ONLINE_THRESHOLD_MINUTES, DEVICE_STALE_HIDE_HOURS
 
     session = get_session()
     try:
         online_cutoff = _device_online_cutoff()
         agent_cutoff = utcnow() - timedelta(minutes=AGENT_ONLINE_THRESHOLD_MINUTES)
+        stale_cutoff = utcnow() - timedelta(hours=DEVICE_STALE_HIDE_HOURS)
+        show_stale = request.args.get("show_stale", "") == "1"
         status_filter = request.args.get("status", "")
         ip_filter = request.args.get("ip", "").strip()
         mac_filter = request.args.get("mac", "").strip()
@@ -378,8 +381,13 @@ def devices():
         total_count = session.query(Device).count()
         online_count = session.query(Device).filter(Device.last_seen >= online_cutoff).count()
         offline_count = total_count - online_count
+        stale_count = session.query(Device).filter(
+            or_(Device.last_seen.is_(None), Device.last_seen < stale_cutoff)
+        ).count()
 
         query = session.query(Device)
+        if not show_stale:
+            query = query.filter(Device.last_seen.isnot(None), Device.last_seen >= stale_cutoff)
         if status_filter == "online":
             query = query.filter(Device.last_seen >= online_cutoff)
         elif status_filter == "offline":
@@ -437,6 +445,7 @@ def devices():
             connection_filter=connection_filter, source_filter=source_filter,
             agent_status_filter=agent_status_filter, min_risk_filter=min_risk_filter,
             has_alerts_filter=has_alerts_filter,
+            show_stale=show_stale, stale_count=stale_count, stale_hide_hours=DEVICE_STALE_HIDE_HOURS,
         )
     finally:
         session.close()

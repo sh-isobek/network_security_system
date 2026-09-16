@@ -67,9 +67,23 @@
             <option value="1" {% if has_alerts_filter == '1' %}selected{% endif %}>Faqat alertli</option>
         </select>
     </label>
+    <label>
+        <input type="checkbox" name="show_stale" value="1" {% if show_stale %}checked{% endif %}>
+        Eski qurilmalarni ham ko'rsatish ({{ stale_hide_hours }}+ soat oflayn)
+    </label>
     <button type="submit">Filtrlash</button>
     <a href="/devices" class="clear-link">Tozalash</a>
 </form>
+
+{% if stale_count > 0 and not show_stale %}
+{% set sargs = request.args.to_dict() %}
+{% set _ = sargs.update({'show_stale': '1'}) %}
+<div style="background: #fdf6e3; border: 1px solid #f1c40f; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px;">
+    {{ stale_count }} ta qurilma {{ stale_hide_hours }}+ soatdan beri ko'rinmagani uchun ro'yxatdan yashirilgan
+    (tarixi bazada saqlanmoqda).
+    <a href="{{ url_for('devices', **sargs) }}">Ularni ham ko'rsatish</a>
+</div>
+{% endif %}
 
 {% if devices %}
 <table>

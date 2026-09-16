@@ -7159,6 +7159,73 @@ def _test_alembic_postgres_upgrade_head():
 check("Alembic: HAQIQIY, vaqtinchalik/alohida Docker PostgreSQL konteynerida 'upgrade head'", _test_alembic_postgres_upgrade_head)
 
 # ---------------------------------------------------------------------------
+print("\n=== 95) Dashboard /devices: 72+ soat ko'rinmagan ('eski') qurilmalar ro'yxatdan yashiriladi (tarixi yo'qolmaydi) ===")
+
+
+def _test_devices_stale_hide():
+    """
+    Foydalanuvchi so'rovi: '72 soat online bo'lmagan qurilmani
+    qurilmalar ro'yxatidan chiqarsin'. Tanlangan yechim (foydalanuvchi
+    bilan kelishilgan): FAQAT ro'yxatdan yashirish, bazadan
+    o'chirmaslik - qurilmaga bog'liq Event/Alert/tarix xavfsizlik
+    audit maqsadida saqlanib qolishi kerak. Bu test uchta narsani
+    tasdiqlaydi: (1) standart holatda 72+ soat oflayn qurilma
+    ro'yxatda ko'rinmaydi, (2) `show_stale=1` bilan qayta ko'rinadi,
+    (3) shu qurilmaga bog'liq Alert bazada YO'QOLMAGAN.
+    """
+    from datetime import timedelta
+    from db.models import Device, Alert, utcnow
+    from config.settings import DEVICE_STALE_HIDE_HOURS
+
+    s = get_session()
+    fresh = Device(
+        ip_address="172.16.72.1", mac_address="AA:BB:CC:72:00:01", hostname="FRESH-DEVICE-72H",
+        connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(),
+    )
+    stale = Device(
+        ip_address="172.16.72.2", mac_address="AA:BB:CC:72:00:02", hostname="STALE-DEVICE-72H",
+        connection_type="wifi", source="kerio_dhcp",
+        last_seen=utcnow() - timedelta(hours=DEVICE_STALE_HIDE_HOURS + 1),
+    )
+    s.add_all([fresh, stale])
+    s.commit()
+    stale_alert = Alert(severity="medium", reason="STALE-DEVICE-72H uchun eski alert (tarix)", device_id=stale.id)
+    s.add(stale_alert)
+    s.commit()
+    stale_device_id = stale.id
+    stale_alert_id = stale_alert.id
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("stalehide_admin", "stalehidepass123", "admin")
+    dashboard_app.secret_key = "test-secret-stale-hide"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "stalehide_admin", "password": "stalehidepass123"})
+
+    # 1) Standart holatda: yangi qurilma ko'rinadi, eski (72+ soat) ko'rinmaydi
+    html = client.get("/devices").get_data(as_text=True)
+    assert "FRESH-DEVICE-72H" in html, "Yangi qurilma standart holatda ko'rinishi kerak edi"
+    assert "STALE-DEVICE-72H" not in html, "72+ soat oflayn qurilma standart holatda YASHIRILISHI kerak edi"
+    assert "yashirilgan" in html, "Yashirilgan qurilmalar haqida ogohlantirish ko'rinmadi"
+
+    # 2) `show_stale=1` bilan qayta ko'rinishi kerak
+    html = client.get("/devices?show_stale=1").get_data(as_text=True)
+    assert "FRESH-DEVICE-72H" in html and "STALE-DEVICE-72H" in html, \
+        "show_stale=1 bilan eski qurilma ham ko'rinishi kerak edi"
+
+    # 3) Bazada Device/Alert tarixi YO'QOLMAGAN (faqat ko'rinish yashirilgan)
+    s2 = get_session()
+    assert s2.query(Device).filter(Device.id == stale_device_id).first() is not None, \
+        "Eski qurilma bazadan o'chib ketmasligi kerak edi"
+    assert s2.query(Alert).filter(Alert.id == stale_alert_id).first() is not None, \
+        "Eski qurilmaga bog'liq Alert tarixi yo'qolmasligi kerak edi"
+    s2.close()
+
+
+check("Dashboard /devices: 72+ soat oflayn qurilmalar ro'yxatdan yashiriladi (tarix saqlanadi)", _test_devices_stale_hide)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
