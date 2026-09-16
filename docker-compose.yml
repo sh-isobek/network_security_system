@@ -16,6 +16,8 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-security_system}
       POSTGRES_USER: ${POSTGRES_USER:-security_admin}
@@ -47,6 +49,8 @@ services:
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       # XAVFSIZLIK: standart RabbitMQ o'zi bilan keladigan "guest:guest"
       # foydalanuvchisi FAQAT localhost'dan kirishga ruxsat beradi -
@@ -75,6 +79,9 @@ services:
   syslog_collector_queued:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m collectors.syslog_server_queued
     env_file: .env
     environment:
@@ -92,6 +99,9 @@ services:
   queue_ingest_worker:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.queue_ingest_worker --loop
     env_file: .env
     environment:
@@ -110,6 +120,9 @@ services:
   syslog_collector:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m collectors.syslog_server
     env_file: .env
     environment:
@@ -128,6 +141,9 @@ services:
   parser_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.parser_engine --loop --interval 5
     env_file: .env
     environment:
@@ -150,6 +166,9 @@ services:
   ueba_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.ueba_engine --loop --interval 300
     env_file: .env
     environment:
@@ -164,6 +183,9 @@ services:
   file_analysis_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.file_analysis_engine --loop --interval 10
     env_file: .env
     environment:
@@ -185,6 +207,9 @@ services:
   suricata_reader:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m collectors.suricata_reader --file /var/log/suricata/eve.json
     env_file: .env
     environment:
@@ -201,6 +226,9 @@ services:
   deep_scan_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.deep_scan_engine --loop --interval 10
     env_file: .env
     environment:
@@ -222,6 +250,8 @@ services:
   clamav_updater:
     image: clamav/clamav:stable
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       TZ: ${TZ:-Asia/Tashkent}
     volumes:
@@ -236,6 +266,9 @@ services:
   response_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.response_engine --loop --interval 5
     env_file: .env
     environment:
@@ -250,6 +283,9 @@ services:
   agent_api:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
     command: gunicorn -w 4 -b 0.0.0.0:8443 api.server:app
     env_file: .env
     environment:
@@ -271,6 +307,9 @@ services:
   notification_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.notification_engine --loop --interval 10
     env_file: .env
     environment:
@@ -285,6 +324,9 @@ services:
   mitre_tagging_engine:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m engine.mitre_tagging_engine --loop --interval 15
     env_file: .env
     environment:
@@ -299,6 +341,9 @@ services:
   dashboard:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
     command: gunicorn -w 2 -b 0.0.0.0:8080 dashboard.app:app
     env_file: .env
     environment:
@@ -325,6 +370,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     # MUHIM (real production'da aniqlangan xato): bu xizmat profilsiz
     # bo'lgani uchun har bir oddiy `docker compose up -d`da ishga
     # tushishga urinardi - lekin foydalanuvchi ATAYLAB oddiy http://
@@ -363,6 +410,8 @@ services:
   grafana:
     image: grafana/grafana-oss:11.2.0
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     profiles: ["grafana"]
     ports:
       - "127.0.0.1:3000:3000"
@@ -393,6 +442,9 @@ services:
   unifi_sync:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m network_discovery.unifi_sync_loop --loop --interval ${UNIFI_POLL_INTERVAL:-300}
     env_file: .env
     environment:
@@ -408,6 +460,9 @@ services:
   ruijie_sync:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
     command: python -m network_discovery.ruijie_sync_loop --loop --interval ${RUIJIE_POLL_INTERVAL:-300}
     env_file: .env
     environment:
@@ -419,6 +474,16 @@ services:
   network_discovery:
     build: .
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    # XAVFSIZLIK ISTISNOSI: Dockerfile standart holatda non-root
+    # (appuser, uid 1000)ga o'tkazildi, lekin bu xizmat ARP scan/
+    # LLDP-CDP capture uchun NET_ADMIN/NET_RAW capability'ga
+    # tayanadi - bu amalda root kontekstida ishonchli ishlaydi.
+    # Shuning uchun ANIQ ravishda root'ga qaytariladi. Allaqachon
+    # `--profile discovery` ortida, standart holatda o'chiq.
+    user: "0:0"
     profiles: ["discovery"]
     # MUHIM: standart Docker tarmoq rejimida konteyner FAQAT Docker'ning
     # ichki bridge tarmog'ini (172.17.x/172.18.x) ko'radi, sizning

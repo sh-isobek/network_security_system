@@ -116,6 +116,8 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Alembic migratsiya tizimi (`alembic/`, `alembic.ini`, `docs_ALEMBIC_MIGRATIONS.md`) | ✅✅ "Enterprise SIEM/NDR/EDR" audit natijasidagi P0 band, BOSQICH 0 (Foundation Hardening)ning birinchi qadami. `_sync_missing_columns()` OLIB TASHLANMADI (backward-compat sifatida saqlandi) - Alembic ENDI yangi sxema o'zgarishlari uchun RASMIY, versiyalanadigan yo'l. Production baza foydalanuvchi tomonidan `alembic stamp head` bilan Alembic nazoratiga o'tkazildi |
 | — | Notification Engine: Email/Telegram FAQAT critical/high uchun, qolgani faqat logga (`engine/notification_engine.py`) | ✅ Yangi `NOTIFY_MIN_SEVERITIES` (standart `critical,high`) - past darajali alertlar shovqin qilmasdan, Dashboard'da to'liq ko'rinishda qoladi |
 | — | PostgreSQL indexing/production hardening - BOSQICH 0 davomi (`db/models.py`, yangi Alembic migratsiya) | ✅✅ Real production'da `alerts` (PK'dan boshqa indekssiz) va `events` (7.6 million qator, `device_id` indekssiz) real bo'shliqlari topildi va yopildi. `events`ga `CREATE INDEX CONCURRENTLY` (yozishlarni bloklamaslik uchun). BONUS: shu jarayonda oldingi migratsiyaning fresh-install'da MUVAFFAQIYATSIZ bo'lishiga olib keladigan idempotentlik xatosi topilib tuzatildi |
+| — | Config/Secrets audit - BOSQICH 0 davomi (`.env`, production `users` jadvali) | ✅✅ 4 ta real muammo: bo'sh `ENCRYPTION_KEY` (MFA siri ochiq matnda), `GRAFANA_ADMIN_PASSWORD=CHANGE_ME`, buzilgan `DATABASE_URL` formati, va production'da 14 ta test hisob (bir kunlik `run_full_test.py` production konteynerida ishga tushirilganining isboti). Foydalanuvchi tomonidan bajarildi (auto-mode classifier `.env`/DB yozuvlarini bloklagani uchun men faqat aniq buyruqlar berdim) |
+| — | Docker container xavfsizligi - BOSQICH 0 YAKUNI (`Dockerfile`, `docker-compose.yml`) | ✅✅ Barcha 21 xizmat endi non-root (`appuser`, uid 1000) + `no-new-privileges` + resurs chegaralari bilan ishlaydi (`network_discovery` ANIQ istisno - NET_ADMIN/NET_RAW uchun root). Production'ga tegishdan OLDIN izolyatsiyalangan muhitda to'liq test qilindi; `quarantine_data`/`raw_syslog.log` egaligi oldindan tuzatildi (avvalgi "karantin root-huquqsiz ishlamadi" xatosini oldini olish uchun) |
 
 ## Enterprise SIEM/NDR/EDR audit va bosqichma-bosqich hardening rejasi (BOSQICH 0 boshlandi: Alembic)
 
@@ -296,6 +298,149 @@ siyosati (8.8 million qatorli `raw_logs`ni qancha vaqt saqlash) - bu
 ma'lumot o'chirish siyosati bo'lgani uchun foydalanuvchining o'zi
 qaror qilishi kerak bo'lgan alohida masala, faqat indeksing (so'rov
 tezligi) doirasida ish qilindi.
+
+## Config/Secrets Audit (BOSQICH 0 davomi) - production'da 4 ta real muammo topildi va tuzatildi
+
+Faqat O'QISH orqali `.env`/production bazani tekshirish - 4 ta real,
+mustaqil muammo topildi:
+
+1. **`ENCRYPTION_KEY` bo'sh edi** - "Encryption at Rest" xususiyati
+   (`crypto/field_encryption.py`) amalda O'CHIQ turgan: `encrypt_if_
+   configured()` kalit yo'qligida shunchaki ochiq matnni qaytaradi
+   (faqat log ogohlantirishi bilan). Tekshiruv tasdiqladi: production
+   bazada haqiqatan HAM bitta test hisobning MFA siri ochiq matnda
+   yotgan edi (real faol foydalanuvchilarda - `admin`/`zafar` - MFA
+   umuman yoqilmagani uchun faol xavf yo'q edi, lekin kimdir yoqsa
+   darhol xavf ostida qolar edi).
+2. **`GRAFANA_ADMIN_PASSWORD=CHANGE_ME`** - avvalgi xavfsizlik auditi
+   standart qiymatni OLIB TASHLAGAN edi (`:?majburiy` sintaksisi), lekin
+   bu majburiylik FAQAT "bo'sh emasligini" tekshiradi - haqiqiy qiymat
+   literal placeholder bo'lib qolishi mumkin ekan. Grafana hozircha
+   ishga tushirilmagani uchun faol xavf yo'q edi.
+3. **`DATABASE_URL` `.env`da buzilgan formatda** (`@host` yetishmaydi -
+   `postgresql://user:parol:5432/db`) - `sqlalchemy.engine.make_url()`
+   bilan tasdiqlandi, bu string UMUMAN parse qilinmaydi. Amalda xavfsiz
+   (jim ravishda noto'g'ri joyga ulanmaydi, DARHOL aniq xato beradi),
+   chunki `docker-compose.yml` HAR BIR konteyner uchun bu qiymatni
+   `POSTGRES_USER`/`PASSWORD` orqali ustidan yozib qo'yadi - lekin
+   host'da to'g'ridan-to'g'ri skript (masalan `alembic`, `create_user.py`)
+   ishga tushirilsa darhol ishlamay qoladi.
+4. **Production `users` jadvalida 14 ta test hisob** (`dashtest_admin`,
+   `mfatest_admin`, `enc_ci_test`, `token_*_ci` va h.k.) - barchasi
+   2026-08-12 soat 11:39da, BIR DAQIQA ICHIDA yaratilgan - bu `run_full_
+   test.py`ning (yoki shunga o'xshash) TO'G'RIDAN-TO'G'RI production
+   konteyner ichida (`docker exec ... python3 run_full_test.py` kabi,
+   host'dagi buzilgan `DATABASE_URL` filtridan chetlab o'tib) ishga
+   tushirilganining aniq dalili - bu holat CLAUDE.md'da oldindan
+   ogohlantirilgan xavfning ("kimdir DATABASE_URL'ni aniq belgilamasdan
+   run_full_test.py ishga tushirsa...") HAQIQATAN yuz berganini
+   isbotlaydi. Barchasi `is_active=false` edi (login qila olmasdi -
+   `dashboard/app.py`ning login oqimi `is_active` tekshiruvini to'g'ri
+   qo'llaydi), lekin bittasi (`mfatest_admin`) yuqoridagi ①-bandning
+   REAL isboti edi.
+
+**Tuzatish**: foydalanuvchi "o'zing bajar" deb aniq ruxsat berdi, lekin
+`.env`ga yozish ("Secret-Store Writes") va production DB'ga `docker
+exec` orqali yozish/o'qish ("Remote Shell Writes"/"Modify Shared
+Resources") auto-mode classifier tomonidan BLOKLANDI - bu foydalanuvchi
+ruxsatidan MUSTAQIL, host darajasidagi xavfsizlik cheklovi, men buni
+chetlab o'tishga urinmadim. Aniq buyruqlar (yangi `ENCRYPTION_KEY`/
+`GRAFANA_ADMIN_PASSWORD` generatsiya qilib, `DATABASE_URL`ni to'g'irlab,
+14 ta test hisobni `DELETE`) foydalanuvchiga berildi - **foydalanuvchi
+o'zi bajardi**, men keyin (o'qish orqali) natijani tasdiqladim: `.env`
+uchtala qiymat to'g'ri o'zgargan, `dashboard`/`agent_api` qayta ko'tarilib
+sog'lom, `users` jadvalida endi faqat 2 ta haqiqiy hisob (`admin`,
+`zafar`) qoldi.
+
+## Docker container xavfsizligi (BOSQICH 0 yakuni) - non-root, no-new-privileges, resurs chegaralari
+
+BOSQICH 0'ning oxirgi bandi. Avval BARCHA 21 xizmat (shu jumladan
+o'zimizning `build: .` custom image'imizdan foydalanadigan ~15 tasi)
+ROOT sifatida ishlardi - konteyner RCE orqali buzilsa, hujumchi darhol
+root huquqiga ega bo'lar edi.
+
+**Chuqur tekshiruv (kod yozishdan OLDIN, taxmin qilmasdan)** - har bir
+custom xizmatning HAQIQIY lokal fayl yozish ehtiyojini aniqlash uchun
+butun kod bazasi (`open(...'w')`, `os.makedirs`, `shutil.copy/move`,
+`tempfile`) grep qilindi. Ikkita REAL, jiddiy xavf topildi:
+
+1. **`quarantine_data` named volume** - `root:root`, `755` - `engine/
+   quarantine.py` `os.makedirs(..., exist_ok=True)` ishlatgani uchun
+   MAVJUD (root-owned) papkani chownlamaydi - non-root'ga o'tish
+   avvalgi "karantin papkasi root-huquqsiz ishlamadi" (GitHub CI, avval
+   hujjatlashtirilgan) xatosini QAYTA hosil qilar edi.
+2. **`logs/raw_syslog.log`** (host bind-mount ichidagi MAVJUD fayl) -
+   `root:root`, `644` - `./logs` papkaning o'zi host foydalanuvchisiga
+   tegishli bo'lsa-da, bu SPETSIFIK, oldin root sifatida yaratilgan
+   fayl non-root uchun yozib bo'lmas edi.
+
+`clamav_db` (ClamAV rasmiy image tomonidan yaratilgan) esa BUTUNLAY
+xavfsiz bo'lib chiqdi - fayllar `644` (dunyoga o'qish uchun ochiq),
+faqat YOZISH kerak emas (deep_scan_engine faqat `clamscan` orqali
+o'qiydi) - hech qanday tuzatish talab qilinmadi.
+
+**Qurilgan**:
+- `Dockerfile`: yangi `appuser` (uid/gid 1000 - production host
+  foydalanuvchisi bilan BIR XIL, shuning uchun `./logs` kabi bind-
+  mount'lar qo'shimcha sozlamasiz ishlaydi), `HOME=/home/appuser`
+  (gunicorn 26.x'ning yangi control socket xususiyati `$HOME/.gunicorn/`
+  ga yozadi - buni sinamasdan qoldirilganida root bo'lmagan holatda
+  buzilib qolishi mumkin edi), `USER appuser` standart holat sifatida.
+- `docker-compose.yml`: barcha 21 xizmatga `security_opt: [no-new-
+  privileges:true]` (imtiyoz oshirish MUTLAQO mumkin emas), 15 ta
+  custom Python xizmatga `mem_limit` (512m odatiy, dashboard/agent_api
+  uchun 1g - joriy haqiqiy `docker stats` iste'moliga (15-200MB
+  oralig'ida) nisbatan keng zaxira bilan). `network_discovery` ANIQ
+  `user: "0:0"` bilan ROOT'da qoldirildi - u ARP scan/LLDP-CDP capture
+  uchun NET_ADMIN/NET_RAW'ga tayanadi, bu amalda root kontekstida
+  ishonchli ishlaydi (allaqachon `--profile discovery` ortida, standart
+  o'chiq).
+
+**Real test qilingan (production'ga tegishdan OLDIN, izolyatsiyalangan
+muhitda)**: (1) yangi image qurilib, `id` - `uid=1000(appuser)`
+tasdiqlandi; (2) `clamscan` haqiqiy `clamav_db` volume nusxasiga qarshi
+non-root sifatida muvaffaqiyatli ishga tushishi (3.6M+ virus imzosini
+yuklab); (3) `gunicorn` (dashboard/agent_api uslubida) `$HOME/.gunicorn/`
+control socket bilan xatosiz ishga tushishi; (4) `engine.quarantine.
+quarantine_file()` yangi (root tomonidan uid 1000ga chownlangan) test
+volume'ga muvaffaqiyatli yozishi (fayl + metadata.json, to'g'ri 700/600
+ruxsatlar bilan); (5) `parser_engine` alohida, vaqtinchalik Docker
+PostgreSQL konteyneriga qarshi to'liq `no-new-privileges`+`mem_limit`+
+non-root bilan muvaffaqiyatli ishlashi.
+
+**Production'ga bosqichma-bosqich joylashtirildi** (bitta katta
+"hammasini birdan qayta ko'tarish" o'rniga, guruh-guruh, har guruhdan
+keyin sog'liqni tekshirib): avval `quarantine_data` volume va
+`raw_syslog.log` fayli mos UID'ga (1000) `chown` qilindi (production
+ma'lumoti YO'QOTILMADI - faqat egalik metama'lumoti o'zgardi), so'ng
+5 ta bosqichda barcha faol xizmatlar qayta qurilib/ko'tarildi.
+
+**Kutilmagan, lekin zararsiz yon ta'sir**: `postgres`ning o'ziga ham
+`security_opt` qo'shilgani sabab, birinchi bosqichdagi `docker compose
+up -d <5 xizmat>` buyrug'i Compose'ning o'z konfiguratsiya-farq
+aniqlash mexanizmi orqali `postgres`ni HAM qayta ko'tarib yubordi
+(men buni ANIQ so'ramagan edim) - ma'lumot (`postgres_data` named
+volume'da) butunlay saqlanib qoldi, konteyner sog'lom qayta ko'tarildi,
+hech qanday yo'qotish bo'lmadi (o'qish orqali darhol tasdiqlandi).
+
+**Shu bosqichda kuzatilgan, MUSTAQIL, o'zini-o'zi tuzatuvchi hodisa**:
+5 ta qurilma-yozuvchi xizmatni (unifi_sync/ruijie_sync/response_engine/
+va h.k.) bir vaqtda qayta ishga tushirish natijasida `unifi_sync` va
+`ruijie_sync` BIR MARTA `DeadlockDetected` xatosiga uchradi (`devices`
+jadvalini bir vaqtda yangilashga urinib) - bu Docker xavfsizlik
+o'zgarishlariga ALOQASI YO'Q (permission emas, oddiy SQL kontensiya),
+avval ham hujjatlashtirilgan umumiy "bir nechta mustaqil jarayon bir
+xil qurilma qatorini yangilaydi" naqshining yana bir, kichik
+ko'rinishi - jarayon xatoni tutib, keyingi tsiklda (5 daqiqadan keyin)
+muvaffaqiyatli davom etdi, konteyner qulamadi.
+
+**ATAYLAB BU BOSQICHDA QILINMAGAN (halol, keyingi ish)**: `read_only:
+true` (butun konteyner fayl tizimini faqat-o'qish qilish) - bu
+qo'shimcha murakkablik (har bir `/tmp` yozuvchi joy uchun aniq `tmpfs`,
+Python bytecode keshi va h.k.) keltiradi, va joriy non-root+no-new-
+privileges+mem_limit o'zi allaqachon asosiy xavf yuzasini (root
+huquqiga ega bo'lish, imtiyoz oshirish) yopadi - qolgan qattiqlashtirish
+alohida, ehtiyotkorlik bilan qilinishi kerak bo'lgan keyingi qadam.
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
