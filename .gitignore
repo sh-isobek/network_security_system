@@ -22,6 +22,14 @@ deploy/pki/certs/
 # Muhit sozlamalari (maxfiy ma'lumot - .env.example commit qilinadi, .env emas)
 .env
 .env.local
+# MUHIM (config/secrets audit orqali topilgan real bo'shliq): vaqtinchalik
+# qo'lda yaratilgan zaxira nusxalar (masalan `.env.bak_20260907_134206`)
+# yuqoridagi aniq `.env` qoidasi bilan QAMRAB OLINMAYDI (fayl nomi
+# boshqacha) - bunday fayl `git add -A` orqali TASODIFAN commit qilinib,
+# real parollar GitHub'ga chiqib ketishi mumkin edi. `.env.save`/`.env.bak`
+# `*.save`/`*.bak` orqali allaqachon qamrab olingan, lekin timestamp
+# qo'shilgan variant (`.env.bak_...`) uchun alohida qoida kerak edi.
+.env.bak*
 # Vim/editor almashtirish (swap) fayllari - .env'ni tahrirlaganda
 # yaratiladigan "..env.swp" kabi fayllar HAM maxfiy ma'lumot bo'lishi
 # mumkin (.env'ning vaqtinchalik nusxasi), lekin yuqoridagi ".env"
