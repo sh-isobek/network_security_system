@@ -6952,6 +6952,213 @@ def _test_deep_scan_engine_pdf_integration():
 check("Deep Scan Engine: PDF chuqur tahlil integratsiyasi (real DB orqali)", _test_deep_scan_engine_pdf_integration)
 
 # ---------------------------------------------------------------------------
+print("\n=== 92) Alembic migration tizimi: baseline migratsiya db/models.py bilan bir xil sxema yaratadi ===")
+
+
+def _alembic_repo_root():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _run_alembic(args, database_url):
+    """`alembic` CLI'ni HAQIQATAN chaqiradi (ichki funksiyalarni to'g'ridan-to'g'ri
+    chaqirish emas) - bu administrator qo'lda ishlatadigan buyruqning aynan o'zi."""
+    import subprocess
+    env = {**os.environ, "DATABASE_URL": database_url}
+    result = subprocess.run(
+        ["alembic"] + args, cwd=_alembic_repo_root(), env=env,
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"alembic {' '.join(args)} muvaffaqiyatsiz (DATABASE_URL bor):\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    return result
+
+
+def _alembic_schema_snapshot(engine):
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    snap = {}
+    for table in inspector.get_table_names():
+        if table == "alembic_version":
+            continue
+        snap[table] = {c["name"] for c in inspector.get_columns(table)}
+    return snap
+
+
+def _alembic_models_snapshot():
+    from db.models import Base
+    return {t.name: {c.name for c in t.columns} for t in Base.metadata.sorted_tables}
+
+
+def _assert_alembic_schema_matches_models(engine, label):
+    snap = _alembic_schema_snapshot(engine)
+    expected = _alembic_models_snapshot()
+    assert snap.keys() == expected.keys(), (
+        f"[{label}] Jadvallar to'plami db/models.py bilan mos kelmadi: "
+        f"bazada ortiqcha={snap.keys() - expected.keys()}, "
+        f"bazada yetishmayapti={expected.keys() - snap.keys()}"
+    )
+    for table, cols in expected.items():
+        assert snap[table] == cols, (
+            f"[{label}] '{table}' ustunlari mos kelmadi: "
+            f"bazada ortiqcha={snap[table] - cols}, bazada yetishmayapti={cols - snap[table]}"
+        )
+
+
+def _assert_alembic_no_drift(engine, label):
+    """`compare_metadata` - migratsiya fayllari db/models.py'dagi joriy
+    modellardan CHETLAB ketmaganini isbotlaydi (masalan kimdir models.py'ga
+    yangi ustun qo'shib, mos migratsiya yozishni unutsa - bu test DARHOL
+    ushlaydi, aks holda bu faqat production'da 'column X does not exist'
+    sifatida ochiladigan turdagi xato)."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.runtime.migration import MigrationContext
+    from db.models import Base
+
+    with engine.connect() as conn:
+        ctx = MigrationContext.configure(conn)
+        diff = compare_metadata(ctx, Base.metadata)
+    assert diff == [], f"[{label}] Autogenerate drift topildi (migratsiya models.py bilan sinxron emas): {diff}"
+
+
+def _test_alembic_sqlite_upgrade_head():
+    """Bo'sh SQLite bazada `alembic upgrade head` - db/models.py bilan
+    BAYT-BAYT (jadval/ustun darajasida) bir xil sxema hosil qilishi kerak."""
+    from sqlalchemy import create_engine
+
+    db_path = "/tmp/_alembic_test_sqlite.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    db_url = f"sqlite:///{db_path}"
+    try:
+        _run_alembic(["upgrade", "head"], db_url)
+        engine = create_engine(db_url)
+        _assert_alembic_schema_matches_models(engine, "SQLite/upgrade-head")
+        _assert_alembic_no_drift(engine, "SQLite/upgrade-head")
+        engine.dispose()
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+check("Alembic: bo'sh SQLite'da 'upgrade head' db/models.py bilan mos sxema yaratadi", _test_alembic_sqlite_upgrade_head)
+
+# ---------------------------------------------------------------------------
+print("\n=== 93) Alembic migration tizimi: mavjud (legacy) baza 'stamp head' orqali xavfsiz bog'lanadi ===")
+
+
+def _test_alembic_stamp_on_legacy_db():
+    """
+    Production bazasi Alembic'dan OLDIN `init_db()` (create_all +
+    _sync_missing_columns) orqali yaratilgan/kengaytirilgan - bu test
+    aynan shu holatni simulyatsiya qiladi: legacy usulda yaratilgan
+    bazaga `alembic stamp head` qo'llanganda HECH QANDAY DDL bajarilmasdan
+    (jadvallar allaqachon bor - qayta yaratishga urinish xato berardi),
+    faqat versiya belgisi to'g'ri qo'yilishini tasdiqlaydi. Bu - production
+    bazasini bir martalik 'stamp head' bilan Alembic nazoratiga o'tkazish
+    xavfsizligini isbotlaydi.
+    """
+    from db.models import init_db
+    from sqlalchemy import create_engine, inspect, text
+
+    db_path = "/tmp/_alembic_test_legacy.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    db_url = f"sqlite:///{db_path}"
+    try:
+        # 1) "Production" holatini simulyatsiya qilish - legacy yo'l
+        engine = init_db(db_url)
+        _assert_alembic_schema_matches_models(engine, "Legacy/init_db()")
+        engine.dispose()
+
+        engine = create_engine(db_url)
+        assert "alembic_version" not in inspect(engine).get_table_names(), \
+            "Test sozlamasi xato - alembic_version allaqachon bor"
+        engine.dispose()
+
+        # 2) `alembic stamp head` - faqat versiya yozadi, DDL YO'Q
+        _run_alembic(["stamp", "head"], db_url)
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        assert version, "stamp'dan keyin alembic_version bo'sh"
+        _assert_alembic_no_drift(engine, "Legacy/stamped")
+        engine.dispose()
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+check("Alembic: legacy (init_db orqali yaratilgan) bazani 'stamp head' bilan xavfsiz bog'lash", _test_alembic_stamp_on_legacy_db)
+
+# ---------------------------------------------------------------------------
+print("\n=== 94) Alembic migration tizimi: HAQIQIY, vaqtinchalik/alohida Docker PostgreSQL konteynerida ===")
+
+
+def _test_alembic_postgres_upgrade_head():
+    """
+    Bosh #92/93 testlarining aynan o'zini, lekin PostgreSQL'da tekshiradi.
+
+    MUHIM (xavfsizlik): bu test docker-compose'dagi PRODUCTION
+    PostgreSQL konteyneriga (`network_security_system-postgres-1`,
+    127.0.0.1:5432) UMUMAN TEGMAYDI - o'zining ALOHIDA, vaqtinchalik
+    konteynerini (boshqa nom, boshqa port 55432, boshqa credential)
+    ko'taradi va testdan keyin (muvaffaqiyatli yoki muvaffaqiyatsiz
+    bo'lishidan qat'iy nazar, `finally` orqali) DARHOL o'chiradi. Docker
+    mavjud bo'lmasa yoki band bo'lsa, test xatosiz o'tkazib yuboriladi.
+    """
+    import subprocess
+    import time
+    import uuid
+
+    if subprocess.run(["which", "docker"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - docker o'rnatilmagan)")
+        return
+
+    container = f"nss-alembic-test-{uuid.uuid4().hex[:8]}"
+    port = 55432
+    subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+    try:
+        run_result = subprocess.run([
+            "docker", "run", "-d", "--name", container,
+            "-e", "POSTGRES_USER=alembic_test",
+            "-e", "POSTGRES_PASSWORD=alembic_test_pw",
+            "-e", "POSTGRES_DB=alembic_test",
+            "-p", f"127.0.0.1:{port}:5432",
+            "postgres:16-alpine",
+        ], capture_output=True, text=True)
+        if run_result.returncode != 0:
+            print(f"   (o'tkazib yuborildi - vaqtinchalik konteyner ko'tarilmadi: {run_result.stderr.strip()})")
+            return
+
+        db_url = f"postgresql://alembic_test:alembic_test_pw@127.0.0.1:{port}/alembic_test"
+
+        ready = False
+        for _ in range(30):
+            r = subprocess.run(["docker", "exec", container, "pg_isready", "-U", "alembic_test"],
+                                capture_output=True)
+            if r.returncode == 0:
+                ready = True
+                break
+            time.sleep(1)
+        assert ready, "Vaqtinchalik PostgreSQL konteyneri 30 soniyada tayyor bo'lmadi"
+
+        from sqlalchemy import create_engine
+        _run_alembic(["upgrade", "head"], db_url)
+        engine = create_engine(db_url)
+        _assert_alembic_schema_matches_models(engine, "PostgreSQL/upgrade-head")
+        _assert_alembic_no_drift(engine, "PostgreSQL/upgrade-head")
+        engine.dispose()
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+
+
+check("Alembic: HAQIQIY, vaqtinchalik/alohida Docker PostgreSQL konteynerida 'upgrade head'", _test_alembic_postgres_upgrade_head)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

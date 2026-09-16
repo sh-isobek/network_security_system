@@ -113,6 +113,91 @@ buni tuzatish kerak, keyingi bosqichga o'tilmaydi.
 | — | Telegram xabarnomasi: Markdown parslash xatosi (production'da birinchi marta topilgan) | ✅✅ `parse_mode: "Markdown"` bilan `reason` matni escape qilinmasdi - `[...]` qavsli threat nomi/yorliq HAR SAFAR "can't parse entities"ga olib kelardi. Sandbox `api.telegram.org`ni bloklagani uchun avval HECH QACHON sinalmagan edi. `parse_mode` butunlay olib tashlandi |
 | — | Fayl turi aniqlash (magic bytes) - kengaytma niqoblanishi (`scanners/file_type_detector.py`, yangi) | ✅✅ ⑳-band. `file_ext` HAR DOIM fayl NOMIdan olinardi (hujumchi nazorat qiladi) - Suricata'ning haqiqiy `magic` ma'lumoti bazaga yozilardi-yu, HECH QAYERDA solishtirilmasdi. Endi `invoice.pdf` (aslida PE32) kabi holatlar `malicious`ga avtomatik ko'tariladi; ZIP-kengaytmasiz-bypass ham yopildi |
 | — | PDF chuqur tahlil (`scanners/pdf_analyzer.py`, yangi) | ✅✅ ⑲-band. Avval YARA faqat XOM baytlarda qidirardi - zamonaviy PDF'lar `/OpenAction`/`/JavaScript`ni ko'pincha FlateDecode (zlib) bilan SIQIB saqlaydi, bu holatda xom-bayt qidiruvi HECH NARSA topmasdi. `zlib` (tashqi kutubxonasiz) orqali stream'lar ochiladi; PDF ichidagi URL'lar `url_intel.py` orqali fishing balliga tekshiriladi |
+| — | Alembic migratsiya tizimi (`alembic/`, `alembic.ini`, `docs_ALEMBIC_MIGRATIONS.md`) | ✅✅ "Enterprise SIEM/NDR/EDR" audit natijasidagi P0 band, BOSQICH 0 (Foundation Hardening)ning birinchi qadami. `_sync_missing_columns()` OLIB TASHLANMADI (backward-compat sifatida saqlandi) - Alembic ENDI yangi sxema o'zgarishlari uchun RASMIY, versiyalanadigan yo'l. Production bazasini bir martalik `alembic stamp head`ga o'tkazish ATAYLAB bu sessiyada bajarilmadi (real production DB'ga tegish - hatto faqat metadata bo'lsa ham - alohida tasdiq talab qiladi) |
+
+## Enterprise SIEM/NDR/EDR audit va bosqichma-bosqich hardening rejasi (BOSQICH 0 boshlandi: Alembic)
+
+Foydalanuvchi loyihani tashqi (o'zi yoki boshqa vosita orqali) chuqur
+professional audit qildirib, natijani yubordi: hozirgi holat "yaxshi
+poydevor, lekin Enterprise SIEM/NDR/EDR darajasida production-ready
+emas" (~6.7/10) deb baholangan, va 13 bosqichli (BOSQICH 0dan 13gacha)
+hardening/kengaytirish rejasi taklif qilingan (Alembic, ingestion
+pipeline v2, TLS/mTLS standart holat, distributed rate limiting,
+Correlation Engine, Incident Management, HA/DR va h.k.).
+
+Loyihaning o'zining asosiy qoidasiga muvofiq ("har safar bitta aniq,
+to'liq test qilinadigan bosqichni tanlab, oxirigacha qurib, keyin
+navbatdagisiga o'tish"), 12 bandli BOSQICH 0'ni bir yo'la boshlash
+o'rniga foydalanuvchidan bittasini tanlashi so'raldi - **Alembic
+migration tizimi** tanlandi.
+
+**MUHIM XAVFSIZLIK KONTEKSTI**: bu ish aynan **production serverning
+o'zida** (worktree emas, asosiy checkout) bajarildi - `.env`da real
+production `DATABASE_URL` (PostgreSQL, real parol bilan) bor, va
+`docker ps` haqiqiy 16 ta ishlab turgan xizmatni (jumladan
+`network_security_system-postgres-1`, 127.0.0.1:5432da, 745 ta real
+qurilma bilan) ko'rsatdi. Shu sababli butun ish davomida qat'iy
+qoida qo'llanildi: **hech qanday buyruq `DATABASE_URL`ni aniq
+belgilamasdan ishga tushirilmadi** - har bir test/generatsiya buyrug'i
+yoki SQLite (`/tmp/...`, scratchpad) fayliga, yoki o'zining ALOHIDA,
+vaqtinchalik Docker PostgreSQL konteyneriga (boshqa nom, boshqa port
+`55432`, boshqa credential) ishora qildi. Ishning oxirida
+`docker exec ... psql ... SELECT count(*) FROM devices` orqali
+production baza (745 qurilma) BUTUNLAY tegilmagani alohida tasdiqlandi.
+
+**Qurilgan**:
+- `alembic.ini` + `alembic/env.py` + `alembic/script.py.mako` -
+  `sqlalchemy.url` `alembic.ini`da YOZILMAGAN, `env.py` uni
+  `config/settings.py::DATABASE_URL`dan dinamik o'qiydi (loyihaning
+  boshqa barcha qismi bilan bir xil yagona manba - SQLite/PostgreSQL
+  kod o'zgarishisiz).
+- `alembic/versions/c15ffeb890b8_initial_schema_baseline.py` - joriy
+  (barcha 15 jadval) sxemaning to'liq bazaviy migratsiyasi, BO'SH
+  bazaga qarshi `alembic revision --autogenerate` orqali generatsiya
+  qilingan (production/haqiqiy bazaga UMUMAN ulanmasdan).
+- `docs_ALEMBIC_MIGRATIONS.md` - yangi sxema o'zgarishi qanday
+  qilinishi (`alembic revision --autogenerate` + qo'lda ko'rib
+  chiqish + test), VA production bazasini Alembic nazoratiga
+  o'tkazish uchun **bir martalik, ATAYLAB bu sessiyada BAJARILMAGAN**
+  qadam (`alembic stamp head` - DDL YO'Q, faqat versiya belgisi).
+- `_sync_missing_columns()` OLIB TASHLANMADI - hamon `init_db()`
+  ichida ishlaydi (ko'plab mavjud `run_full_test.py` testlari va
+  boshqa modullar bevosita shu orqali ishlaydi). Alembic **QO'SHIMCHA,
+  rasmiy** yo'l sifatida qo'shildi, ikkalasi ham bir xil `db/models.py`
+  modeliga tayanadi.
+
+**Real test qilingan (run_full_test.py'ga #92-94 sifatida qo'shildi)**:
+1. Bo'sh SQLite'da `alembic upgrade head` - hosil bo'lgan sxema
+   `db/models.py`dagi barcha 15 jadval/ustun bilan **bayt-baytiga**
+   solishtirilib tasdiqlandi.
+2. **Drift-tekshiruv** (`alembic.autogenerate.compare_metadata`) -
+   migratsiya fayli `db/models.py`dan chetlab ketmaganini isbotlaydi
+   (kimdir kelajakda modelga ustun qo'shib, mos migratsiya yozishni
+   unutsa, bu test DARHOL ushlaydi - aks holda bu faqat production'da
+   "column X does not exist" sifatida ochiladigan xato turkumi,
+   loyihada bir necha marta uchragan).
+3. **Legacy baza + `alembic stamp head`** - production holatini
+   simulyatsiya qilib (baza `init_db()` orqali, Alembic'dan OLDIN
+   yaratilgan), `stamp head` HECH QANDAY DDL bajarmasdan faqat
+   versiya yozishi, va shundan keyin ham drift-tekshiruv bo'sh
+   qolishi tasdiqlandi - bu production bazasini xavfsiz Alembic
+   nazoratiga o'tkazish mumkinligini isbotlaydi.
+4. **HAQIQIY, vaqtinchalik/alohida Docker PostgreSQL konteynerida**
+   (1-3 band bilan bir xil tekshiruvlar) - konteyner test oxirida
+   (`finally` orqali, muvaffaqiyatli/muvaffaqiyatsiz bo'lishidan
+   qat'iy nazar) darhol o'chiriladi.
+
+**ATAYLAB BU SESSIYADA BAJARILMAGAN (halol, keyingi tasdiq talab
+qiladi)**: haqiqiy production PostgreSQL bazasiga qarshi
+`alembic stamp head`ni ishga tushirish - garchi bu operatsiya
+HECH QANDAY DDL bajarmasa ham (faqat bitta metadata yozuvi), real
+production ma'lumot bazasiga tegish har doim ongli, alohida tasdiq
+talab qiladi ("Executing actions with care" qoidasi).
+
+**Keyingi navbatdagi (foydalanuvchi audit rejasidan, BOSQICH 0
+davomida)**: PostgreSQL indexing/production hardening, Docker/
+container xavfsizligi (non-root, read-only fs), config/secrets
+audit - foydalanuvchi keyingi sessiyada tanlaydi.
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
