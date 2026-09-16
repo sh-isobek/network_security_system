@@ -7385,6 +7385,132 @@ def _test_performance_indexes_migration():
 check("PostgreSQL indexing: alerts/events performance indekslari (bo'sh bazadan barcha migratsiya ketma-ket)", _test_performance_indexes_migration)
 
 # ---------------------------------------------------------------------------
+print("\n=== 98) Correlation Engine: alohida alertlarni bitta Incident'ga birlashtirish ===")
+
+
+def _test_correlation_engine():
+    """
+    Yangi bosqich (13-bosqichli enterprise rejadagi 'Detection+
+    Correlation'): bir xil qurilmada, `CORRELATION_WINDOW_MINUTES`
+    (standart 30 daqiqa) ichida ketma-ket kelgan alertlar bitta
+    Incident'ga birlashtiriladi - alohida ko'rish o'rniga, tahlilchi
+    BITTA hodisani ko'radi.
+
+    Bu test 5 stsenariyni tekshiradi: (1) bir xil qurilma, oyna ichida -
+    BIR Incident, (2) Incident severity guruhdagi ENG YUQORI darajaga
+    ko'tarilishi, (3) oynadan TASHQARIDA - YANGI Incident, (4) boshqa
+    qurilma - alohida Incident, (5) device_id yo'q alert ham (standalone)
+    Incident olishi (hech qachon abadiy `incident_id=NULL` bo'lib
+    qolmasligi kerak - aks holda `run_once()` uni HAR TSIKLDA qayta-qayta
+    ko'rib chiqaveradi).
+    """
+    from datetime import timedelta
+    from db.models import Device, Alert, Incident, utcnow
+    import engine.correlation_engine as ce
+
+    s = get_session()
+    d1 = Device(ip_address="172.16.97.1", mac_address="AA:BB:CC:97:00:01", hostname="CORR-TEST-D1",
+                connection_type="wifi", source="test")
+    d2 = Device(ip_address="172.16.97.2", mac_address="AA:BB:CC:97:00:02", hostname="CORR-TEST-D2",
+                connection_type="wifi", source="test")
+    s.add_all([d1, d2])
+    s.flush()
+    now = utcnow()
+    a1 = Alert(device_id=d1.id, severity="low", reason="Test 1: past darajali alert", timestamp=now)
+    a2 = Alert(device_id=d1.id, severity="critical", reason="Test 2: yuqori darajali alert", timestamp=now + timedelta(minutes=5))
+    a3 = Alert(device_id=d1.id, severity="medium", reason="Test 3: oynadan tashqari", timestamp=now + timedelta(minutes=65))
+    a4 = Alert(device_id=d2.id, severity="high", reason="Test 4: boshqa qurilma", timestamp=now)
+    a5 = Alert(device_id=None, severity="medium", reason="Test 5: qurilmasiz alert", timestamp=now)
+    s.add_all([a1, a2, a3, a4, a5])
+    s.commit()
+    ids = {"a1": a1.id, "a2": a2.id, "a3": a3.id, "a4": a4.id, "a5": a5.id}
+    s.close()
+
+    n = ce.run_once()
+    assert n == 5, f"5 ta alert qayta ishlanishi kerak edi, {n} ta ishlandi"
+
+    s2 = get_session()
+    a = {k: s2.query(Alert).filter(Alert.id == v).first() for k, v in ids.items()}
+
+    assert a["a1"].incident_id == a["a2"].incident_id, "Bir xil qurilma, oyna ichidagi alertlar BIR XIL Incident'da bo'lishi kerak edi"
+    assert a["a3"].incident_id != a["a1"].incident_id, "Oynadan tashqaridagi alert YANGI Incident olishi kerak edi"
+    assert a["a4"].incident_id != a["a1"].incident_id, "Boshqa qurilmadagi alert alohida Incident olishi kerak edi"
+    assert a["a5"].incident_id is not None, "device_id'siz alert ham Incident olishi kerak edi"
+
+    inc1 = s2.query(Incident).filter(Incident.id == a["a1"].incident_id).first()
+    assert inc1.severity == "critical", f"Incident severity ENG YUQORIga ko'tarilishi kerak edi, bor: {inc1.severity}"
+    assert inc1.alert_count == 2, f"alert_count=2 bo'lishi kerak edi, bor: {inc1.alert_count}"
+    assert inc1.status == "open"
+    s2.close()
+
+
+check("Correlation Engine: bir xil qurilmadagi alertlar bitta Incident'ga birlashadi, severity ko'tariladi", _test_correlation_engine)
+
+# ---------------------------------------------------------------------------
+print("\n=== 99) Dashboard: /incidents ro'yxati, tafsilot sahifasi va holat yangilash (RBAC bilan) ===")
+
+
+def _test_incidents_dashboard():
+    """
+    `/incidents` (ro'yxat), `/incidents/<id>` (tafsilot - bog'liq
+    alertlar bilan) va `/incidents/<id>/status` (analyst/admin huquqi
+    bilan holat yangilash - resolved/false_positive belgilanganda
+    `resolved_by`/`resolved_at` to'ldirilishi) real HTTP orqali
+    tekshiriladi.
+    """
+    from db.models import Device, Alert, Incident, utcnow
+    import engine.correlation_engine as ce
+
+    s = get_session()
+    d = Device(ip_address="172.16.97.3", mac_address="AA:BB:CC:97:00:03", hostname="INCIDENT-DASH-TEST",
+               connection_type="wifi", source="test")
+    s.add(d)
+    s.flush()
+    device_id = d.id
+    alert = Alert(device_id=device_id, severity="high", reason="Shubhali PowerShell ijrosi (test)", timestamp=utcnow())
+    s.add(alert)
+    s.commit()
+    s.close()
+
+    ce.run_once()
+
+    s2 = get_session()
+    incident_id = s2.query(Incident).filter(Incident.device_id == device_id).first().id
+    s2.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("incidenttest_admin", "incidenttestpass123", "admin")
+    dashboard_app.secret_key = "test-secret-incidents-dashboard"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "incidenttest_admin", "password": "incidenttestpass123"})
+
+    html = client.get("/incidents").get_data(as_text=True)
+    assert "INCIDENT-DASH-TEST" in html, "/incidents ro'yxatida qurilma ko'rinmadi"
+
+    html = client.get(f"/incidents/{incident_id}").get_data(as_text=True)
+    assert "Shubhali PowerShell ijrosi (test)" in html, "Tafsilot sahifasida bog'liq alert ko'rinmadi"
+
+    resp = client.post(f"/incidents/{incident_id}/status", data={"status": "resolved"})
+    assert resp.status_code in (200, 302)
+
+    s3 = get_session()
+    inc = s3.query(Incident).filter(Incident.id == incident_id).first()
+    assert inc.status == "resolved", f"status='resolved' bo'lishi kerak edi, bor: {inc.status}"
+    assert inc.resolved_by == "incidenttest_admin", "resolved_by to'g'ri o'rnatilmadi"
+    assert inc.resolved_at is not None, "resolved_at to'g'ri o'rnatilmadi"
+    s3.close()
+
+    # Ro'yxat sahifasida standart (status=open) filtr endi bu Incident'ni yashirishi kerak
+    html = client.get("/incidents?status=open").get_data(as_text=True)
+    assert "INCIDENT-DASH-TEST" not in html, "Yechilgan Incident 'Ochiq' filtrida ko'rinmasligi kerak edi"
+    html = client.get("/incidents?status=resolved").get_data(as_text=True)
+    assert "INCIDENT-DASH-TEST" in html, "Yechilgan Incident 'Yechildi' filtrida ko'rinishi kerak edi"
+
+
+check("Dashboard: /incidents ro'yxati/tafsilot/holat yangilash real HTTP orqali", _test_incidents_dashboard)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

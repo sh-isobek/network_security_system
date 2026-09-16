@@ -442,6 +442,78 @@ privileges+mem_limit o'zi allaqachon asosiy xavf yuzasini (root
 huquqiga ega bo'lish, imtiyoz oshirish) yopadi - qolgan qattiqlashtirish
 alohida, ehtiyotkorlik bilan qilinishi kerak bo'lgan keyingi qadam.
 
+## Correlation/Incident Engine (BOSQICH 0'dan keyingi, asl 13-bosqichli rejaning "Detection+Correlation" bandi)
+
+BOSQICH 0 to'liq yakunlangach, foydalanuvchi "davom et" deb so'raganda,
+ikkita variant taklif qilindi (Docker xavfsizligi allaqachon qilingan
+edi): (1) yana bir BOSQICH 0-yondosh ish yo'q edi, (2) **Correlation/
+Incident Engine** - mavjud ingestion pipeline'ga tegmaydigan, faqat
+qo'shimcha (yangi jadval+engine) past-xavfli yangi imkoniyat sifatida
+tanlandi.
+
+**Muammo**: har bir Alert alohida-alohida ko'rinardi - masalan "10:01
+muvaffaqiyatsiz login, 10:02 muvaffaqiyatsiz login, ..., 10:07 shubhali
+tashqi ulanish" tahlilchiga 7 ta ALOHIDA qator sifatida ko'rinardi,
+bitta "ehtimoliy hisob buzilishi" hodisasi o'rniga.
+
+**Qurilgan** (ATAYLAB ODDIY, boshlang'ich versiya - faqat bitta qurilma
+doirasida, vaqt-oynasi bo'yicha guruhlash; qurilmalar-orasidagi yoki
+qoida-asosidagi (Detection Rule) korrelyatsiya - alohida, keyingi
+bosqich):
+- `db/models.py`: yangi `Incident` jadvali (title/severity/status/
+  device_id/alert_count/first_seen/last_seen/resolved_by/resolved_at),
+  `Alert`ga yangi `incident_id` FK (nullable).
+- `engine/correlation_engine.py` (`run_once()`/`run_loop()` - loyihaning
+  standart pattern'i, `mitre_tagging_engine.py`dan andoza olingan):
+  `incident_id IS NULL` bo'lgan alertlarni oladi, har biri uchun - agar
+  o'sha QURILMADA `CORRELATION_WINDOW_MINUTES` (standart 30 daqiqa)
+  ichida oxirgi faollik ko'rsatgan OCHIQ Incident bo'lsa, unga
+  qo'shadi (`last_seen` yangilanadi - oyna "qayta boshlanadi", uzoq
+  hujum zanjiri butunicha BITTA Incident bo'lib qoladi), aks holda
+  YANGI Incident yaratadi. Incident severity guruhdagi ENG YUQORI
+  alert darajasiga ko'tariladi. `device_id`siz alertlar ham
+  (standalone Incident sifatida) qamrab olinadi - aks holda ular
+  abadiy `incident_id=NULL` qolib, HAR TSIKLDA qayta-qayta ko'rib
+  chiqilaverardi.
+- `docker-compose.yml`: yangi `correlation_engine` xizmati -
+  `mitre_tagging_engine` bilan bir xil naqsh (profilsiz, standart
+  `docker compose up -d` bilan ishga tushadi, `security_opt`/
+  `mem_limit` bilan - Docker xavfsizlik ishi bilan izchil).
+- Dashboard: yangi `/incidents` (ro'yxat, status/severity/hostname
+  filtri bilan), `/incidents/<id>` (tafsilot - bog'liq BARCHA alertlar
+  bilan), `/incidents/<id>/status` (analyst/admin RBAC - open/
+  investigating/resolved/false_positive, audit log'ga yoziladi). Bosh
+  sahifaga "Ochiq hodisalar" statistika kartochkasi qo'shildi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker
+PostgreSQL konteynerida)**: (1) bir xil qurilma, oyna ichidagi ikkita
+(low+critical) alert BITTA Incident'ga birlashishi VA Incident severity
+"critical"ga ko'tarilishi; (2) oynadan TASHQARIDAgi alert YANGI Incident
+olishi; (3) boshqa qurilmadagi alert alohida Incident olishi;
+(4) `device_id`siz alert ham standalone Incident olishi; (5) Dashboard
+`/incidents`/`/incidents/<id>`/`/incidents/<id>/status` real HTTP
+orqali - ro'yxatda ko'rinishi, tafsilotda bog'liq alertlar ko'rinishi,
+holat "resolved"ga o'zgartirilganda `resolved_by`/`resolved_at`
+to'g'ri to'ldirilishi VA standart "Ochiq" filtrida endi ko'rinmasligi.
+
+**Alembic migratsiyasida topilgan va tuzatilgan real bo'shliq**:
+autogenerate `alerts.incident_id` FK constraint'ini SQLite'da oddiy
+`op.add_column`/`op.create_foreign_key` orqali yaratdi - lekin SQLite
+ALTER TABLE orqali constraint QO'SHISHNI UMUMAN QO'LLAB-QUVVATLAMAYDI
+("No support for ALTER of constraints in SQLite dialect"). Bu SQLite
+dev/test muhitida (production PostgreSQL'da muammo bo'lmasdi) `alembic
+upgrade head`ni butunlay ishlamay qoldirar edi. Tuzatildi:
+`op.batch_alter_table()` orqali (SQLite'da nusxa-va-almashtirish
+strategiyasi, PostgreSQL'da oddiy ALTER - ikkala dialektda ham to'g'ri
+ishlaydigan yagona kod yo'li). Shuningdek autogenerate FK constraint'iga
+aniq nom bermagani (`None`) uchun downgrade() ishlamay qolar edi - aniq
+`fk_alerts_incident_id` nomi qo'shildi. Downgrade/upgrade round-trip
+ham SQLite'da, ham PostgreSQL'da alohida tasdiqlandi.
+
+**Production'ga hali JOYLASHTIRILMADI** - foydalanuvchi bilan
+kelishilib, keyingi qadamda amalga oshiriladi (Alembic migratsiya +
+docker-compose build/up).
+
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
 Foydalanuvchi File Intelligence/URL Intelligence/Risk Engine bo'yicha

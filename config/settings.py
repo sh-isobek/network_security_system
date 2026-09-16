@@ -87,3 +87,14 @@ AGENT_ONLINE_THRESHOLD_MINUTES = int(os.getenv("AGENT_ONLINE_THRESHOLD_MINUTES",
 # ham ko'rsatish" belgisini qo'yib, istalgan vaqtda qayta ko'rish mumkin.
 DEVICE_STALE_HIDE_HOURS = int(os.getenv("DEVICE_STALE_HIDE_HOURS", "72"))
 
+# ---- Correlation Engine: alertlarni Incident'ga birlashtirish vaqt oynasi ----
+# Bir xil qurilmada ketma-ket kelgan alertlar, agar ORASIDAGI VAQT
+# (oxirgi alert bilan) shu qiymatdan kam bo'lsa, BITTA Incident'ga
+# birlashtiriladi (yangi alert kelganda oyna "qayta boshlanadi" - ya'ni
+# uzoq davom etadigan hujum zanjiri butun davomida bitta Incident bo'lib
+# qoladi). Standart 30 daqiqa - odatiy "hujum zanjiri" (masalan
+# ketma-ket muvaffaqiyatsiz login -> muvaffaqiyatli login -> shubhali
+# tashqi ulanish) shu oralikda sodir bo'ladi, lekin butunlay aloqasiz,
+# kunlar orasidagi alertlarni noto'g'ri ravishda birlashtirmaydi.
+CORRELATION_WINDOW_MINUTES = int(os.getenv("CORRELATION_WINDOW_MINUTES", "30"))
+

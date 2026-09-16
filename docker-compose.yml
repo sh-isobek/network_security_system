@@ -336,6 +336,23 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------
+  # Correlation Engine - alohida alertlarni bitta Incident'ga birlashtiradi
+  # ---------------------------------------------------------------------
+  correlation_engine:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    command: python -m engine.correlation_engine --loop --interval 15
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
   # Web Dashboard
   # ---------------------------------------------------------------------
   dashboard:

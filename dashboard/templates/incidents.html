@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Hodisalar - Xavfsizlik Dashboard{% endblock %}
+{% block content %}
+<h1>Hodisalar (Incidents) ({{ incidents | length }})</h1>
+<p style="color:#5a6673; font-size:13px; margin-top:-8px;">
+    Bir xil qurilmada, qisqa vaqt oralig'ida kelgan alohida alertlar avtomatik bitta hodisaga birlashtiriladi.
+</p>
+
+<div class="filters">
+    <a href="/incidents?status=open" class="{% if status_filter == 'open' %}active{% endif %}">Ochiq</a>
+    <a href="/incidents?status=investigating" class="{% if status_filter == 'investigating' %}active{% endif %}">Tekshirilmoqda</a>
+    <a href="/incidents?status=resolved" class="{% if status_filter == 'resolved' %}active{% endif %}">Yechildi</a>
+    <a href="/incidents?status=false_positive" class="{% if status_filter == 'false_positive' %}active{% endif %}">Soxta-pozitiv</a>
+    <a href="/incidents?status=" class="{% if not status_filter %}active{% endif %}">Hammasi</a>
+</div>
+
+<form method="GET" action="/incidents" class="filter-form">
+    <input type="hidden" name="status" value="{{ status_filter }}">
+    <label>Hostname
+        <input type="text" name="hostname" value="{{ hostname_filter }}">
+    </label>
+    <label>Daraja
+        <select name="severity">
+            <option value="" {% if not severity_filter %}selected{% endif %}>Hammasi</option>
+            <option value="critical" {% if severity_filter == 'critical' %}selected{% endif %}>Critical</option>
+            <option value="high" {% if severity_filter == 'high' %}selected{% endif %}>High</option>
+            <option value="medium" {% if severity_filter == 'medium' %}selected{% endif %}>Medium</option>
+            <option value="low" {% if severity_filter == 'low' %}selected{% endif %}>Low</option>
+        </select>
+    </label>
+    <button type="submit">Filtrlash</button>
+    <a href="/incidents" class="clear-link">Tozalash</a>
+</form>
+
+{% if incidents %}
+<table>
+    <tr>
+        <th>Daraja</th><th>Sarlavha</th><th>Qurilma</th><th>Alertlar</th>
+        <th>Birinchi ko'rilgan</th><th>Oxirgi faollik</th><th>Holat</th>
+    </tr>
+    {% for inc in incidents %}
+    <tr>
+        <td><span class="badge" style="background: {{ inc.severity | severity_color }}">{{ inc.severity | upper }}</span></td>
+        <td><a href="/incidents/{{ inc.id }}">{{ inc.title }}</a></td>
+        <td>{{ inc.hostname or inc.ip_address or "Noma'lum" }}</td>
+        <td>{{ inc.alert_count }}</td>
+        <td class="mono">{{ inc.first_seen | local_dt(fallback='') }}</td>
+        <td class="mono">{{ inc.last_seen | local_dt(fallback='') }}</td>
+        <td>
+            {% if inc.status == 'open' %}<span style="color:#c0392b;">Ochiq</span>
+            {% elif inc.status == 'investigating' %}<span style="color:#e67e22;">Tekshirilmoqda</span>
+            {% elif inc.status == 'resolved' %}<span style="color:#27ae60;">Yechildi</span>
+            {% else %}<span style="color:#95a5a6;">Soxta-pozitiv</span>{% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<div class="empty">Hech qanday hodisa topilmadi</div>
+{% endif %}
+{% endblock %}

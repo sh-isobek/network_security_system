@@ -134,6 +134,9 @@ class Alert(Base):
     acknowledged_by = Column(String(100))                        # username
     acknowledged_at = Column(DateTime)
 
+    # --- Correlation/Incident Engine: alert qaysi Incident'ga birlashtirilgan ---
+    incident_id = Column(Integer, ForeignKey("incidents.id"))
+
     event = relationship("Event")
 
     __table_args__ = (
@@ -148,6 +151,45 @@ class Alert(Base):
         Index("ix_alerts_acknowledged", "acknowledged"),
         Index("ix_alerts_notified", "notified"),
         Index("ix_alerts_timestamp", "timestamp"),
+        Index("ix_alerts_incident_id", "incident_id"),
+    )
+
+
+class Incident(Base):
+    """
+    Correlation Engine (SIEM audit rejasi, Detection+Correlation bosqichi):
+    bir xil qurilmada, qisqa vaqt oralig'ida ketma-ket kelgan alohida
+    Alert'larni BITTA hodisaga (Incident) birlashtiradi - masalan
+    "10:01 muvaffaqiyatsiz login, 10:02 muvaffaqiyatsiz login, ...,
+    10:07 shubhali tashqi ulanish" alohida-alohida ko'rish o'rniga,
+    tahlilchi BITTA "ehtimoliy hisob buzilishi" hodisasini ko'radi.
+
+    ATAYLAB BOSHLANG'ICH, ODDIY versiya: faqat bitta qurilma doirasida,
+    vaqt oynasi bo'yicha guruhlash (`engine/correlation_engine.py`).
+    Qurilmalar orasidagi (masalan lateral movement) yoki qoida-asosidagi
+    (Detection Rule) korrelyatsiya - alohida, keyingi bosqich.
+    """
+    __tablename__ = "incidents"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(255), nullable=False)
+    severity = Column(String(20), nullable=False)              # guruhdagi ENG YUQORI alert severity
+    status = Column(String(20), nullable=False, default="open")  # open / investigating / resolved / false_positive
+    device_id = Column(Integer, ForeignKey("devices.id"))
+    alert_count = Column(Integer, default=0, nullable=False)
+    first_seen = Column(DateTime, nullable=False)
+    last_seen = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    resolved_by = Column(String(100))
+    resolved_at = Column(DateTime)
+
+    device = relationship("Device")
+
+    __table_args__ = (
+        Index("ix_incidents_device_id_last_seen", "device_id", "last_seen"),
+        Index("ix_incidents_status", "status"),
+        Index("ix_incidents_severity", "severity"),
     )
 
 
