@@ -146,7 +146,7 @@ def detect_anomalies(reference_time: datetime = None) -> int:
                     device_id=bl.device_id,
                     severity="medium",
                     reason=f"UEBA[{hour_start.strftime('%Y-%m-%d %H')}:00]: {result.reason}",
-                    action_taken="TODO: qo'lda tekshirish tavsiya etiladi (xatti-harakat anomaliyasi)",
+                    action_taken="Qo'lda tekshirish tavsiya etiladi (xatti-harakat anomaliyasi)",
                     notified=False,
                 )
                 session.add(alert)

@@ -251,7 +251,6 @@ def process_one(session, raw_log: RawLog):
                     device_id=device.id,
                     severity="high",
                     reason=f"Blacklist'dagi domenga so'rov: {target} (manba: {bl_hit.source})",
-                    action_taken="TODO: bloklash backend hali ulanmagan (5-bosqich)",
                     notified=False,
                 )
                 session.add(alert)
@@ -280,7 +279,6 @@ def process_one(session, raw_log: RawLog):
                     device_id=device.id,
                     severity="high",
                     reason=f"Blacklist'dagi manzilga ulanish: {target} (manba: {bl_hit.source})",
-                    action_taken="TODO: bloklash backend hali ulanmagan (5-bosqich)",
                     notified=False,
                 )
                 session.add(alert)

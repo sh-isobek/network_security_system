@@ -202,6 +202,7 @@ def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_sc
         src_ip=ip_address,
         filename=filename,
         file_ext=file_ext,
+        device_file_path=data.get("filepath") or None,
         sha256=sha256,
         protocol="endpoint",
         channel="endpoint_agent",
@@ -223,7 +224,8 @@ def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_sc
 @require_api_key
 def check_hash():
     """
-    So'rov: {"sha256": "...", "filename": "invoice.exe", "hostname": "...", "ip_address": "..."}
+    So'rov: {"sha256": "...", "filename": "invoice.exe", "filepath": "C:\\Users\\jsmith\\Downloads\\invoice.exe",
+             "hostname": "...", "ip_address": "..."}
     Javob:  {"malicious": bool, "confirmed": bool, "threat_name": str|null, "source": str}
 
     MUHIM: `confirmed` maydoni - Endpoint Agent avtomatik karantin/
@@ -249,7 +251,7 @@ def check_hash():
     haqiqatan tekshirilib toza topilgan" bilan "bu fayl haqida
     umuman ma'lumot yo'q"ni farqlay oladi).
 
-    `hostname`/`ip_address`/`filename` ixtiyoriy - berilsa, tekshiruv
+    `hostname`/`ip_address`/`filename`/`filepath` ixtiyoriy - berilsa, tekshiruv
     Dashboard'ning "Fayllar" sahifasida ko'rish uchun qayd etiladi
     (pastdagi `_log_endpoint_scan` orqali).
     """
@@ -369,12 +371,14 @@ def report_incident():
         action_summary = "Endpoint Agent: " + (", ".join(action_parts) if action_parts else "chora ko'rilmadi")
 
         threat_name = data.get("threat_name", "nomalum")
+        filepath = data.get("filepath")
+        path_note = f" | Yo'l: {filepath}" if filepath else ""
         alert = Alert(
             device_id=device.id,
             severity="critical",
             reason=(
                 f"Endpoint Agent TASDIQLANGAN zararli faylni aniqladi: {data['filename']} "
-                f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}"
+                f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"
             ),
             action_taken=action_summary,
             notified=False,

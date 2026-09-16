@@ -290,15 +290,24 @@ print("\n=== 6) RESPONSE ENGINE (avtomatik javob choralari) ===")
 
 
 def _test_response_engine():
+    """
+    `network_response_done` bayrog'iga asoslangan navbat mantig'ini
+    tekshiradi (o'zi topilgan bug'dan keyin `action_taken.like("TODO%")`
+    matn-qidiruvi o'rniga). `action_taken`ga oldindan (masalan Endpoint
+    Agent'ning "fayl o'chirildi" xabari) biror narsa yozilgan bo'lsa,
+    response_engine buni USTIDAN YOZMASLIGI, faqat QO'SHIB yozishi ham
+    tekshiriladi.
+    """
     s = get_session()
     d_wifi = Device(ip_address="172.16.3.1", mac_address="AA:11:22:33:44:55", connection_type="wifi", source="test")
     d_unknown = Device(ip_address="172.16.3.2", mac_address="BB:11:22:33:44:55", connection_type="unknown", source="test")
     s.add_all([d_wifi, d_unknown])
     s.flush()
 
-    a1 = Alert(device_id=d_wifi.id, severity="critical", reason="test", action_taken="TODO: bloklash backend hali ulanmagan")
-    a2 = Alert(device_id=d_unknown.id, severity="critical", reason="test", action_taken="TODO: bloklash backend hali ulanmagan")
-    a3 = Alert(device_id=None, severity="high", reason="device yo'q", action_taken="TODO: bloklash backend hali ulanmagan")
+    a1 = Alert(device_id=d_wifi.id, severity="critical", reason="test",
+               action_taken="Endpoint Agent: fayl o'chirildi")  # oldindan yozilgan matn - YO'QOLMASLIGI kerak
+    a2 = Alert(device_id=d_unknown.id, severity="critical", reason="test")
+    a3 = Alert(device_id=None, severity="high", reason="device yo'q")
     s.add_all([a1, a2, a3])
     s.commit()
     ids = [a1.id, a2.id, a3.id]
@@ -307,15 +316,23 @@ def _test_response_engine():
     from engine.response_engine import run_once
     n = run_once()
     # Diqqat: response_engine FAQAT shu 3 tasini emas, balki bazadagi barcha
-    # "TODO" holatidagi alertlarni (2 va 3-bosqichlarda yaratilganlarni ham)
-    # qayta ishlaydi - bu to'g'ri xatti-harakat (hech qanday alert e'tibordan
+    # `network_response_done=False` alertlarni (2 va 3-bosqichlarda
+    # yaratilganlarni ham, masalan minglab UEBA "medium" alertlari) qayta
+    # ishlaydi - bu to'g'ri xatti-harakat (hech qanday alert e'tibordan
     # chetda qolmasligi kerak). Shuning uchun n >= 3 tekshiramiz.
     assert n >= 3, f"Kamida 3 ta alert qayta ishlanishi kerak edi, {n} ta ishlandi"
 
     s = get_session()
     for aid in ids:
         a = s.query(Alert).filter(Alert.id == aid).first()
-        assert not a.action_taken.startswith("TODO"), f"Alert {aid} hali TODO holatida qoldi: {a.action_taken}"
+        assert a.network_response_done is True, f"Alert {aid}: network_response_done True bo'lishi kerak edi"
+    a1_after = s.query(Alert).filter(Alert.id == ids[0]).first()
+    assert "Endpoint Agent: fayl o'chirildi" in a1_after.action_taken, (
+        f"Oldindan yozilgan (fayl darajasidagi) xabar YO'QOLGAN: {a1_after.action_taken}"
+    )
+    assert "AVTOMATIK TARMOQ CHORASI" in a1_after.action_taken or "TARMOQ CHORASI MUVAFFAQIYATSIZ" in a1_after.action_taken, (
+        f"Tarmoq chorasi natijasi QO'SHILMAGAN: {a1_after.action_taken}"
+    )
     s.close()
 
 
@@ -479,11 +496,18 @@ def _test_linux_agent_e2e():
     )
     _time.sleep(2)
 
+    quarantine_dir = "/tmp/_linux_agent_e2e_quarantine"
+    import shutil as _shutil
+    _shutil.rmtree(quarantine_dir, ignore_errors=True)
+
     try:
         os.environ["API_SERVER_URL"] = "http://127.0.0.1:8199"
         os.environ["AGENT_API_KEY"] = "linux-e2e-test-key"
         os.environ["AGENT_CACHE_FILE"] = "/tmp/_linux_agent_e2e_cache.json"
         os.environ["AGENT_LOG_FILE"] = "/tmp/_linux_agent_e2e.log"
+        # MUHIM: agent endi xom os.remove() o'rniga xavfsiz karantin
+        # (nusxa-tasdiqlash-o'chirish) ishlatadi - test uchun alohida papka.
+        os.environ["AGENT_QUARANTINE_DIR"] = quarantine_dir
         if os.path.exists(os.environ["AGENT_CACHE_FILE"]):
             os.remove(os.environ["AGENT_CACHE_FILE"])
 
@@ -504,13 +528,28 @@ def _test_linux_agent_e2e():
         # Agentning fayl-topilishi logikasini to'g'ridan-to'g'ri chaqiramiz
         # (FileMonitor'ning watchdog kuzatuvi allaqachon alohida testda
         # tekshirilgan - bu yerda "aniqlangandan keyingi" javob zanjiri
-        # sinaladi: hash -> server -> jarayonni to'xtatish -> o'chirish -> report)
+        # sinaladi: hash -> server -> jarayonni to'xtatish -> XAVFSIZ
+        # KARANTIN -> report, filepath bilan birga)
         agent._on_new_file(malicious_file)
 
         _time.sleep(1)
 
-        assert not os.path.exists(malicious_file), "Zararli fayl o'chirilishi kerak edi"
+        assert not os.path.exists(malicious_file), "Zararli fayl (asl joyidan) o'chirilishi kerak edi"
         assert locker.poll() is not None, "Faylni ushlab turgan jarayon to'xtatilishi kerak edi"
+
+        # MUHIM (o'zi topilgan bo'shliq, tuzatildi): ilgari fayl shunchaki
+        # os.remove() bilan yo'qotilardi - endi karantin papkasida
+        # (SHA256 tasdiqlangan) NUSXASI saqlanishi kerak.
+        quarantined_copies = []
+        for root, _dirs, filenames in os.walk(quarantine_dir):
+            for fn in filenames:
+                if fn == "linux_e2e_payload.bin":
+                    quarantined_copies.append(os.path.join(root, fn))
+        assert len(quarantined_copies) == 1, (
+            f"Fayl xavfsiz karantin papkasiga nusxalanishi kerak edi, {len(quarantined_copies)} ta nusxa topildi"
+        )
+        with open(quarantined_copies[0], "rb") as f:
+            assert f.read() == malicious_content, "Karantindagi nusxa asl fayl bilan bir xil bo'lishi kerak edi"
 
         s = get_session()
         alert = (
@@ -520,6 +559,14 @@ def _test_linux_agent_e2e():
         )
         assert alert is not None, "Markazga incident xabari kelib, Alert yaratilishi kerak edi"
         assert alert.device_id is not None
+        assert malicious_file in alert.reason, "Fayl to'liq yo'li Alert.reason'da ko'rinishi kerak edi"
+        assert "karantinga olindi" in alert.action_taken, f"Karantin xabari action_taken'da yo'q: {alert.action_taken}"
+
+        file_event = s.query(FileEvent).filter(FileEvent.sha256 == sha256).first()
+        assert file_event is not None, "check_hash orqali FileEvent yozilishi kerak edi"
+        assert file_event.device_file_path == malicious_file, (
+            f"FileEvent.device_file_path to'liq yo'lni saqlashi kerak edi, bor: {file_event.device_file_path!r}"
+        )
         s.close()
 
     finally:
@@ -530,10 +577,11 @@ def _test_linux_agent_e2e():
             api_proc.kill()
         import shutil
         shutil.rmtree(watch_dir, ignore_errors=True)
+        shutil.rmtree(quarantine_dir, ignore_errors=True)
         for f in ["/tmp/_linux_agent_e2e_cache.json", "/tmp/_linux_agent_e2e.log"]:
             if os.path.exists(f):
                 os.remove(f)
-        for k in ["API_SERVER_URL", "AGENT_API_KEY", "AGENT_CACHE_FILE", "AGENT_LOG_FILE"]:
+        for k in ["API_SERVER_URL", "AGENT_API_KEY", "AGENT_CACHE_FILE", "AGENT_LOG_FILE", "AGENT_QUARANTINE_DIR"]:
             os.environ.pop(k, None)
 
 
@@ -817,9 +865,9 @@ def _test_mitre_tagging():
     from engine.mitre_tagging_engine import run_once as mitre_run_once
 
     s = get_session()
-    a1 = Alert(severity="high", reason="Blacklist'dagi domenga so'rov: evil.com (manba: manual)", action_taken="TODO")
-    a2 = Alert(severity="critical", reason="ClamAV[critical]: Trojan.GenericKD", action_taken="TODO")
-    a3 = Alert(severity="critical", reason="YARA[high]: Suspicious_PowerShell_Obfuscation - test", action_taken="TODO")
+    a1 = Alert(severity="high", reason="Blacklist'dagi domenga so'rov: evil.com (manba: manual)")
+    a2 = Alert(severity="critical", reason="ClamAV[critical]: Trojan.GenericKD")
+    a3 = Alert(severity="critical", reason="YARA[high]: Suspicious_PowerShell_Obfuscation - test")
     s.add_all([a1, a2, a3])
     s.commit()
     ids = [a1.id, a2.id, a3.id]
@@ -961,7 +1009,7 @@ def _test_rbac():
     d = Device(ip_address="172.16.8.99", hostname="RBAC-AUTOTEST-PC", connection_type="wifi", source="test")
     s.add(d)
     s.flush()
-    a = Alert(device_id=d.id, severity="critical", reason="RBAC avtomatik test alert", action_taken="TODO", notified=False)
+    a = Alert(device_id=d.id, severity="critical", reason="RBAC avtomatik test alert", notified=False)
     s.add(a)
     s.commit()
     alert_id = a.id
@@ -1605,8 +1653,8 @@ def _test_ueba():
 
     # Risk Score: anomaly qurilmasiga qo'shimcha critical/high alertlar qo'shib, farqni tekshiramiz
     s = get_session()
-    s.add(Alert(device_id=anomaly_id, severity="critical", reason="Test critical", mitre_tactic="Execution", action_taken="TODO"))
-    s.add(Alert(device_id=anomaly_id, severity="high", reason="Test high", mitre_tactic="Command and Control", action_taken="TODO"))
+    s.add(Alert(device_id=anomaly_id, severity="critical", reason="Test critical", mitre_tactic="Execution"))
+    s.add(Alert(device_id=anomaly_id, severity="high", reason="Test high", mitre_tactic="Command and Control"))
     s.commit()
     s.close()
 
@@ -3316,25 +3364,48 @@ if __name__ == "__main__":
         device_id = device.id
         s.close()
 
-        # 2) Virusli fayl aniqlanishi (deep_scan_engine natijasi kabi)
-        s = get_session()
-        alert = Alert(
-            device_id=device_id, severity="critical",
-            reason="CI-TEST: Trojan.GenericKD aniqlandi",
-            action_taken="TODO: hali chora ko'rilmagan",
-        )
-        s.add(alert)
-        s.commit()
-        alert_id = alert.id
-        s.close()
+        # 2) Virusli fayl aniqlanishi - MUHIM: bu ENDI sintetik ("TODO"
+        # bilan qo'lda yaratilgan) Alert EMAS, balki HAQIQIY `/api/v1/
+        # report_incident` endpoint'i orqali (Endpoint Agent chaqiradigan
+        # AYNAN o'sha yo'l) yaratiladi. O'zi topilgan bug aynan shu
+        # yerda edi: `report_incident()` (va file_analysis_engine.py/
+        # deep_scan_engine.py) yaratgan Alert'lar response_engine'ning
+        # eski `action_taken.like("TODO%")` so'roviga HECH QACHON mos
+        # kelmasdi - avvalgi test buni qo'lda "TODO..." yozib sinagani
+        # uchun bu integratsiya bo'shlig'i yashiringan qolgan edi.
+        from api import server as api_server
+        api_server.AGENT_API_KEY = "ci-e2e-agent-key"
+        api_client = api_server.app.test_client()
+        r = api_client.post("/api/v1/report_incident", json={
+            "hostname": "CI-EMPLOYEE-LAPTOP", "ip_address": "172.16.31.60",
+            "filename": "invoice.exe", "filepath": "C:\\Users\\ci\\Downloads\\invoice.exe",
+            "sha256": "d" * 64, "threat_name": "Trojan.GenericKD",
+            "file_deleted": True, "process_killed": False,
+            "quarantined": True, "quarantine_path": "C:\\ProgramData\\NetworkSecurityAgent\\Quarantine\\abc123\\invoice.exe",
+        }, headers={"X-API-Key": "ci-e2e-agent-key"})
+        assert r.status_code == 200, f"report_incident muvaffaqiyatsiz: {r.get_data(as_text=True)}"
+        alert_id = r.get_json()["alert_id"]
 
-        # 3) Response Engine - avtomatik bloklash
-        response_run_once()
-
-        # 4) alert.action_taken tekshiruvi
         s = get_session()
         alert = s.query(Alert).filter(Alert.id == alert_id).first()
-        assert "AVTOMATIK CHORA" in alert.action_taken, f"Avtomatik chora ko'rilmadi: {alert.action_taken}"
+        assert alert.severity == "critical"
+        assert alert.network_response_done in (False, None), "Hali response_engine ishlamagan bo'lishi kerak edi"
+        assert "C:\\Users\\ci\\Downloads\\invoice.exe" in alert.reason, "Fayl yo'li Alert.reason'da ko'rinmadi"
+        s.close()
+
+        # 3) Response Engine - avtomatik bloklash (ENDI haqiqiy report_incident
+        # orqali kelgan alertni HAQIQATAN topishi kerak - bu aynan tuzatilgan bug)
+        response_run_once()
+
+        # 4) alert.action_taken tekshiruvi - FAYL darajasidagi xabar ("fayl
+        # o'chirildi", "karantinga olindi") HAM, TARMOQ chorasi natijasi HAM
+        # (ustidan yozilmasdan, qo'shilib) mavjud bo'lishi kerak
+        s = get_session()
+        alert = s.query(Alert).filter(Alert.id == alert_id).first()
+        assert alert.network_response_done is True
+        assert "fayl o'chirildi" in alert.action_taken, f"Fayl darajasidagi xabar yo'qoldi: {alert.action_taken}"
+        assert "karantinga olindi" in alert.action_taken, f"Karantin xabari yo'qoldi: {alert.action_taken}"
+        assert "AVTOMATIK TARMOQ CHORASI" in alert.action_taken, f"Avtomatik tarmoq chorasi ko'rilmadi: {alert.action_taken}"
         assert "unifi" in alert.action_taken.lower()
         s.close()
 

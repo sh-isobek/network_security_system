@@ -693,6 +693,7 @@ def files():
         verdict_filter = request.args.get("verdict", "")
         channel_filter = request.args.get("channel", "")
         filename_filter = request.args.get("filename", "").strip()
+        path_filter = request.args.get("path", "").strip()
         ip_filter = request.args.get("ip", "").strip()
         sha256_filter = request.args.get("sha256", "").strip()
 
@@ -703,6 +704,8 @@ def files():
             query = query.filter(FileEvent.channel == channel_filter)
         if filename_filter:
             query = query.filter(FileEvent.filename.ilike(f"%{filename_filter}%"))
+        if path_filter:
+            query = query.filter(FileEvent.device_file_path.ilike(f"%{path_filter}%"))
         if ip_filter:
             query = query.filter(FileEvent.src_ip.ilike(f"%{ip_filter}%"))
         if sha256_filter:
@@ -711,7 +714,7 @@ def files():
         all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
         return render_template(
             "files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter,
-            filename_filter=filename_filter, ip_filter=ip_filter, sha256_filter=sha256_filter,
+            filename_filter=filename_filter, path_filter=path_filter, ip_filter=ip_filter, sha256_filter=sha256_filter,
         )
     finally:
         session.close()

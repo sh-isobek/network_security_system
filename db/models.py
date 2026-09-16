@@ -124,6 +124,20 @@ class Alert(Base):
     action_taken = Column(Text)                               # masalan: "IP bloklandi (firewall)"
     notified = Column(Boolean, default=False)                # admin xabar oldimi
 
+    # --- Response Engine: avtomatik tarmoq chorasi (UniFi/switch bloklash) ko'rilganmi ---
+    # MUHIM (real, o'zi topilgan bug): ilgari response_engine.py
+    # `action_taken.like("TODO%")` matn-qidiruvi orqali "navbatdagi"
+    # alertlarni topardi. Lekin `file_analysis_engine.py`/`deep_scan_
+    # engine.py`/`api/server.py::report_incident()` - barchasi "TODO"
+    # bilan BOSHLANMAYDIGAN, allaqachon tayyor (fayl darajasidagi)
+    # xabar matnini yozardi - shuning uchun ularning alertlari HECH
+    # QACHON response_engine'ga yetib bormasdi, virus aniqlanganda
+    # qurilma AVTOMATIK TARMOQDAN UZILMASDI (faqat matnda "navbatda"
+    # deb yozilgan, aslida hech qachon navbatga tushmagan). Endi aniq,
+    # matn-mustaqil bayroq ishlatiladi - `notified`/`incident_id` bilan
+    # bir xil naqsh.
+    network_response_done = Column(Boolean, default=False)
+
     # --- MITRE ATT&CK belgilash ---
     mitre_technique_id = Column(String(20))                   # masalan "T1204.002"
     mitre_technique_name = Column(String(255))
@@ -270,6 +284,14 @@ class FileEvent(Base):
     verdict = Column(String(20))                  # "clean" | "malicious" | "unknown"
     threat_score = Column(Integer, default=0)     # 0-100
     checked_sources = Column(String(255))          # qaysi manbalar tekshirildi (vergul bilan)
+
+    # Qurilmaning O'ZIDA fayl qayerda joylashgani (Endpoint Agent yuboradi,
+    # masalan "C:\Users\jsmith\Downloads\invoice.exe") - `stored_path`dan
+    # FARQLI (u Suricata'ning SERVER-tomon file-store nusxasi). Ilgari
+    # agent to'liq yo'lni bilardi-yu, faqat fayl NOMINI (`os.path.
+    # basename()`) serverga yuborardi - tahlilchi Dashboard'da faylning
+    # qurilmada QAYERDA topilganini UMUMAN ko'ra olmasdi.
+    device_file_path = Column(String(1000))
 
     # --- 4-bosqich: chuqur skanerlash (YARA / makro / PDF / arxiv) ---
     stored_path = Column(String(1000))             # Suricata file-store'dagi haqiqiy fayl yo'li (agar mavjud)

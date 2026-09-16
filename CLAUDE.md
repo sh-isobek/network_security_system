@@ -595,6 +595,102 @@ loyihada avval uchragan "ikkita HAR XIL AGENT_API_KEY" xatosidan farqli
 (bu safar ikkalasi ham BIR XIL), shuning uchun funksional muammo YO'Q,
 lekin tozalik uchun foydalanuvchiga qo'lda o'chirish tavsiya qilindi.
 
+## O'N YETTINCHI marta topilgan xato: virus aniqlanganda qurilma AVTOMATIK TARMOQDAN UZILMASDI (real, jiddiy bug)
+
+Foydalanuvchi so'radi: "qurilmani virusli/zararli fayllarga tekshirish,
+fayil qayerda ekanligini ko'rsatish, virus aniqlansa adminga xabar
+berish, qurilmani tarmoqdan uzish". Tekshiruv paytida (qurish
+boshlashdan OLDIN, taxmin qilmasdan) 3 ta narsadan 2 tasi allaqachon
+ishlashi tasdiqlandi (fayl tekshirish, admin xabari - severity=critical
+orqali `notification_engine`), lekin **eng muhim qism - avtomatik
+tarmoqdan uzish - HAQIQATDA HECH QACHON ISHLAMAGAN edi**, garchi kod
+matnda "izolyatsiyasi navbatda" deb yozsa ham.
+
+**TUB SABAB**: `response_engine.py` `alerts` jadvalidan `action_taken.
+like("TODO%")` MATN QIDIRUVI orqali "navbatdagi" alertlarni topardi.
+Lekin `file_analysis_engine.py`/`deep_scan_engine.py`/`api/server.py::
+report_incident()` - HECH BIRI "TODO" bilan BOSHLANMAYDIGAN, allaqachon
+tayyor (fayl darajasidagi) xabar matnini yozardi (masalan "TASDIQLANGAN:
+...izolyatsiyasi **navbatda**" - matnda "navbatda" deyilsa-da, "TODO"
+bilan boshlanmagani uchun HECH QACHON haqiqatan navbatga tushmasdi).
+Natijada: FAQAT `parser_engine.py`ning DNS/connection blacklist orqali
+aniqlagan tahdidlari (bular "TODO: ..." yozardi) avtomatik bloklanardi -
+haqiqiy VIRUS/ZARARLI FAYL aniqlanganda esa (eng muhim, eng xavfli
+holat!) qurilma HECH QACHON avtomatik tarmoqdan uzilmasdi.
+
+**Bu xato nega avval hech qachon ushlanmagan edi**: mavjud E2E test
+("UniFi Wi-Fi qurilma -> virusli fayl -> AVTOMATIK bloklash") o'zi
+QO'LDA `action_taken="TODO: hali chora ko'rilmagan"` bilan sintetik
+Alert yaratardi - HAQIQIY `file_analysis_engine`/`report_incident` kod
+yo'lini emas. Bu response_engine'ning O'Z ICHKI mantig'ini to'g'ri
+tekshirgan (berilgan "TODO" alertni to'g'ri qayta ishlaydi), lekin
+HAQIQIY alert-yaratuvchi kod BUNDAY matn yozmasligini UMUMAN
+tekshirmagan - bu klassik "integratsiya bo'shlig'i" (ikkala tomon ham
+alohida to'g'ri, lekin bir-biriga ULANMAGAN).
+
+**Tuzatish** (`db/models.py`, `engine/response_engine.py`, `engine/
+parser_engine.py`, `engine/ueba_engine.py`):
+- Yangi `Alert.network_response_done` (Boolean) ustuni - `notified`/
+  `incident_id` bilan BIR XIL naqsh, matn-qidiruv o'rniga aniq bayroq.
+- `response_engine.py` endi `network_response_done=False` bo'lgan
+  BARCHA alertlarni (manbasidan qat'iy nazar) ko'rib chiqadi va HAR
+  DOIM `True` qilib belgilaydi (severity past bo'lsa ham - "hech qanday
+  chora ko'rilmadi" deb yozib, lekin navbatdan chiqaradi - aks holda
+  minglab UEBA "medium" alertlari HAR TSIKLDA qayta ko'rib chiqilaverardi).
+- **MUHIM arxitektura tuzatishi**: `respond_one()` endi `alert.
+  action_taken`ni USTIDAN YOZMAYDI, balki QO'SHIB yozadi (`_append_
+  action()`) - shunda Endpoint Agent'ning "fayl o'chirildi, karantinga
+  olindi" xabari va Response Engine'ning "AVTOMATIK TARMOQ CHORASI: ..."
+  xabari IKKALASI HAM saqlanib qoladi (avvalgi dizaynda bittasi
+  ikkinchisini albatta yo'qotardi).
+- `parser_engine.py`/`ueba_engine.py`dagi endi ma'nosiz "TODO: ..."
+  matnlari olib tashlandi (queue mexanizmi endi matnga bog'liq emas).
+
+**Bonus tuzatish 1 - fayl to'liq yo'li** (`db/models.py`,
+`agent_core/agent.py`, `api/server.py`, Dashboard): `FileEvent`ga yangi
+`device_file_path` ustuni. Agent avval to'liq yo'lni (masalan
+`C:\Users\jsmith\Downloads\invoice.exe`) BILARDI-yu, serverga faqat
+fayl NOMINI (`os.path.basename()`) yuborardi - tahlilchi Dashboard'da
+fayl qurilmada QAYERDA topilganini UMUMAN ko'ra olmasdi. Endi to'liq
+yo'l `check_hash`/`report_incident` orqali yuboriladi, `FileEvent.
+device_file_path`da saqlanadi (Dashboard `/files`da yangi ustun+filtr),
+va `report_incident`'dan yaratilgan Alert.reason'ga ham qo'shiladi.
+
+**Bonus tuzatish 2 - agent xavfsiz karantin** (`agent_core/agent.py`):
+`agent_core/quarantine.py::quarantine_file()` (nusxa -> SHA256 orqali
+TASDIQLASH -> faqat SHUNDAN KEYIN asl faylni o'chirish) allaqachon
+yozilgan va (`run_full_test.py`da) test qilingan edi, lekin HECH QACHON
+`_on_new_file()`dan chaqirilmagan edi - agent hamon xom, tasdiqlashsiz
+`os.remove(filepath)` ishlatardi. Endi to'g'ridan-to'g'ri chaqiriladi;
+`report_incident`ning docstring'ida ALLAQACHON kutilgan `quarantined`/
+`quarantine_path` maydonlari endi HAQIQATAN to'ldiriladi.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker PostgreSQL
+konteynerida)**:
+1. Mavjud "UniFi avtomatik bloklash" E2E testi TUBDAN qayta yozildi -
+   endi sintetik "TODO" Alert o'rniga HAQIQIY `/api/v1/report_incident`
+   endpoint'i (Flask test client, real HTTP) chaqiriladi - bu aynan
+   tuzatilgan bug'ni ushlaydigan yagona to'g'ri test usuli. Natija:
+   report_incident -> Alert(critical) -> response_engine HAQIQATAN
+   topadi -> UniFi'ga HAQIQIY HTTP bloklash so'rovi -> soxta UniFi
+   server orqali "qurilma bloklandi" tasdiqlandi. `action_taken`da
+   HAM "fayl o'chirildi, karantinga olindi" (fayl darajasi), HAM
+   "AVTOMATIK TARMOQ CHORASI: ..." (tarmoq darajasi) borligi - hech
+   biri boshqasini o'chirib tashlamagani tasdiqlandi.
+2. Mavjud Linux Agent to'liq E2E testi kengaytirildi: real fayl, real
+   uni ushlab turgan jarayon, `AGENT_QUARANTINE_DIR` orqali real
+   karantin papkasi - fayl ENDI shunchaki o'chirilmasdi, balki SHA256
+   tasdiqlangan nusxasi karantin papkasida (mos tarkib bilan) real
+   topilishi, `FileEvent.device_file_path` to'liq yo'lni saqlashi,
+   Alert.reason'da yo'l ko'rinishi tasdiqlandi.
+3. `response_engine`ning o'z birlik testi - `network_response_done`
+   bayrog'i to'g'ri o'rnatilishi VA oldindan yozilgan matn yo'qolmasligi.
+
+**Migratsiya**: production'da HOZIRDA 10 088 ta alertning BARCHASI
+"medium" severity (UEBA) - demak backfill (`network_response_done=false`)
+hech qanday retroaktiv (orqaga qarab) tarmoq bloklash xavfi
+TUG'DIRMAYDI (medium past darajali, avtomatik chora ko'rilmaydi).
+
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
 Foydalanuvchi File Intelligence/URL Intelligence/Risk Engine bo'yicha

@@ -18,6 +18,9 @@
     <label>Fayl nomi
         <input type="text" name="filename" value="{{ filename_filter }}">
     </label>
+    <label>Qurilmadagi yo'l
+        <input type="text" name="path" value="{{ path_filter }}" placeholder="masalan Downloads">
+    </label>
     <label>Manba IP
         <input type="text" name="ip" value="{{ ip_filter }}">
     </label>
@@ -31,13 +34,14 @@
 {% if files %}
 <table>
     <tr>
-        <th>Vaqt</th><th>Fayl nomi</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
+        <th>Vaqt</th><th>Fayl nomi</th><th>Qurilmadagi yo'l</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
         <th>Score</th><th>SHA256</th><th>Manba</th>
     </tr>
     {% for f in files %}
     <tr>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
         <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
+        <td class="mono" style="font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ f.device_file_path or '' }}">{{ f.device_file_path or '-' }}</td>
         <td class="mono">{{ f.src_ip }}</td>
         <td>{% if f.channel == 'endpoint_agent' %}<span class="badge" style="background:#2980b9;">Endpoint Agent</span>{% else %}{{ f.channel or '-' }}{% endif %}</td>
         <td>

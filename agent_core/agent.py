@@ -43,6 +43,7 @@ import requests
 
 from agent_core.file_monitor import FileMonitor
 from agent_core.process_killer import kill_process_holding_file
+from agent_core.quarantine import quarantine_file
 
 
 def _default_log_file() -> str:
@@ -190,19 +191,25 @@ def compute_sha256(filepath: str) -> str:
 
 
 def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = None,
-                                     hostname: str = None, ip_address: str = None) -> dict:
+                                     hostname: str = None, ip_address: str = None,
+                                     filepath: str = None) -> dict:
     """
     Avval markaziy serverga so'raydi. Server bilan bog'lanib bo'lmasa
     (offline holat) - mahalliy keshga tayanadi (fail-safe).
 
-    MUHIM: `filename`/`hostname`/`ip_address` FAQAT server tomonida
-    Dashboard'ning "Fayllar" sahifasida ko'rinish (agent haqiqatan
-    fayllarni tekshirayotganining isboti) uchun yuboriladi - tekshiruv
-    natijasining o'ziga ta'sir qilmaydi. Bungacha agent tomonidan
-    tekshirilgan (lekin toza chiqqan) fayllar Dashboard'da HECH QAYERDA
-    ko'rinmas edi - faqat zararli topilganda Alert yaratilardi, shuning
-    uchun foydalanuvchi "agent fayllarni tekshirmayapti" deb noto'g'ri
-    xulosaga kelishi mumkin edi.
+    MUHIM: `filename`/`hostname`/`ip_address`/`filepath` FAQAT server
+    tomonida Dashboard'ning "Fayllar" sahifasida ko'rinish (agent
+    haqiqatan fayllarni tekshirayotganining isboti) uchun yuboriladi -
+    tekshiruv natijasining o'ziga ta'sir qilmaydi. Bungacha agent
+    tomonidan tekshirilgan (lekin toza chiqqan) fayllar Dashboard'da
+    HECH QAYERDA ko'rinmas edi - faqat zararli topilganda Alert
+    yaratilardi, shuning uchun foydalanuvchi "agent fayllarni
+    tekshirmayapti" deb noto'g'ri xulosaga kelishi mumkin edi.
+
+    `filepath` - qurilmadagi TO'LIQ yo'l (masalan "C:\\Users\\jsmith\\
+    Downloads\\invoice.exe"). Ilgari faqat `filename` (fayl NOMI)
+    yuborilardi - tahlilchi Dashboard'da fayl qurilmada QAYERDA
+    topilganini UMUMAN ko'ra olmasdi.
     """
     if sha256 in cache:
         logger.debug(f"Kesh'dan topildi: {sha256[:12]}...")
@@ -214,6 +221,7 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
             json={
                 "sha256": sha256,
                 "filename": filename,
+                "filepath": filepath,
                 "hostname": hostname,
                 "ip_address": ip_address,
             },
@@ -251,16 +259,20 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
 
 def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
                      threat_name: str, file_deleted: bool, process_killed: bool,
-                     process_name: str = None):
+                     process_name: str = None, quarantined: bool = False,
+                     quarantine_path: str = None):
     payload = {
         "hostname": hostname,
         "ip_address": ip_address,
         "filename": os.path.basename(filepath),
+        "filepath": filepath,
         "sha256": sha256,
         "threat_name": threat_name,
         "file_deleted": file_deleted,
         "process_killed": process_killed,
         "process_name": process_name,
+        "quarantined": quarantined,
+        "quarantine_path": quarantine_path,
     }
     try:
         resp = requests.post(
@@ -350,6 +362,7 @@ class EndpointAgent:
             filename=os.path.basename(filepath),
             hostname=self.hostname,
             ip_address=self.ip_address,
+            filepath=filepath,
         )
 
         if not result.get("malicious"):
@@ -361,13 +374,20 @@ class EndpointAgent:
 
         kill_result = kill_process_holding_file(filepath)
 
-        file_deleted = False
-        try:
-            os.remove(filepath)
-            file_deleted = True
-            logger.warning(f"Fayl o'chirildi: {filepath}")
-        except OSError as exc:
-            logger.error(f"Faylni o'chirib bo'lmadi: {exc}")
+        # MUHIM (o'zi topilgan bo'shliq, tuzatildi): ilgari bu yerda
+        # to'g'ridan-to'g'ri xom `os.remove(filepath)` chaqirilardi -
+        # hech qanday tasdiqlashsiz. `agent_core/quarantine.py::
+        # quarantine_file()` (nusxa -> SHA256 orqali TASDIQLASH -> faqat
+        # SHUNDAN KEYIN asl faylni o'chirish) allaqachon yozilgan va
+        # test qilingan edi, lekin HECH QACHON shu yerdan chaqirilmagan
+        # edi - agent hamon eski, xavfsiz bo'lmagan yo'ldan foydalanardi.
+        quarantine_result = quarantine_file(filepath, sha256, threat_name)
+        file_deleted = bool(quarantine_result.get("source_removed"))
+        quarantined = bool(quarantine_result.get("quarantined"))
+        if quarantined:
+            logger.warning(f"Fayl xavfsiz karantinga olindi: {filepath} -> {quarantine_result.get('quarantine_path')}")
+        else:
+            logger.error(f"Faylni karantinga olib bo'lmadi: {quarantine_result.get('error')}")
 
         report_incident(
             hostname=self.hostname,
@@ -378,6 +398,8 @@ class EndpointAgent:
             file_deleted=file_deleted,
             process_killed=kill_result.process_killed,
             process_name=kill_result.process_name,
+            quarantined=quarantined,
+            quarantine_path=quarantine_result.get("quarantine_path"),
         )
 
     def _safe_send_heartbeat(self):
