@@ -7511,6 +7511,123 @@ def _test_incidents_dashboard():
 check("Dashboard: /incidents ro'yxati/tafsilot/holat yangilash real HTTP orqali", _test_incidents_dashboard)
 
 # ---------------------------------------------------------------------------
+print("\n=== 100) Threat Intelligence: URLhaus/ThreatFox feed'laridan BlacklistEntry'ni avtomatik boyitish ===")
+
+
+def _test_threat_intel_sync():
+    """
+    URLhaus/ThreatFox (abuse.ch) 2024'dan buyon bepul, lekin
+    ro'yxatdan o'tib olinadigan Auth-Key talab qiladi - shuning uchun
+    `requests.get`/`requests.post` ustidan, RASMIY API HUJJATLARIDAN
+    (https://urlhaus-api.abuse.ch/, https://threatfox.abuse.ch/api/)
+    so'zma-so'z olingan namunaviy JSON javoblar bilan Mock qo'yiladi.
+    Bu test JSON-tahlil mantig'ining haqiqiy formatga mosligini
+    tasdiqlaydi (taxminiy format EMAS).
+
+    Tekshiriladi: (1) Auth-Key sozlanmaganda HECH QANDAY tarmoq so'rovi
+    yuborilmasligi, (2) URLhaus javobidan `host` to'g'ri ajratilishi,
+    (3) ThreatFox javobidan `ip:port`dan port ajratilishi VA hash
+    turlarining (BlacklistEntry uchun emas) filtr qilinishi,
+    (4) `engine.threat_intel_sync.run_once()` real DB'ga yozishi,
+    (5) qayta chaqirilganda `UNIQUE(value)` cheklovi tufayli takroriy
+    yozuv QO'SHILMASLIGI (idempotentlik).
+    """
+    import os
+    from unittest.mock import patch, MagicMock
+    from db.models import BlacklistEntry
+    import threat_intel.urlhaus_feed as uh
+    import threat_intel.threatfox_feed as tf
+    import engine.threat_intel_sync as tis
+
+    for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY"]:
+        os.environ.pop(k, None)
+
+    try:
+        # 1) Auth-Key sozlanmagan holatda - tarmoqqa UMUMAN chiqmasligi kerak
+        with patch.object(uh.requests, "get") as mock_get_off, \
+             patch.object(tf.requests, "post") as mock_post_off:
+            assert uh.fetch_recent_urls() is None
+            assert tf.fetch_recent_iocs() is None
+            assert mock_get_off.call_count == 0, "Auth-Key yo'qligida URLhaus'ga so'rov ketmasligi kerak edi"
+            assert mock_post_off.call_count == 0, "Auth-Key yo'qligida ThreatFox'ga so'rov ketmasligi kerak edi"
+            assert tis.run_once() == 0
+
+        # 2) URLhaus - rasmiy hujjatdagi namunaviy javob (so'zma-so'z)
+        os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"
+        urlhaus_response = MagicMock()
+        urlhaus_response.raise_for_status = lambda: None
+        urlhaus_response.json.return_value = {
+            "query_status": "ok",
+            "urls": [
+                {"id": "223622", "urlhaus_reference": "https://urlhaus.abuse.ch/url/223622/",
+                 "url": "http://45.61.49.78/razor/r4z0r.mips", "url_status": "offline",
+                 "host": "45.61.49.78", "date_added": "2019-08-10 09:02:05 UTC",
+                 "threat": "malware_download"},
+                {"id": "223621", "urlhaus_reference": "https://urlhaus.abuse.ch/url/223621/",
+                 "url": "http://urlhaustest-evil-domain.example/r4z0r.sh4", "url_status": "online",
+                 "host": "urlhaustest-evil-domain.example", "date_added": "2019-08-10 09:02:03 UTC",
+                 "threat": "malware_download"},
+            ],
+        }
+        with patch.object(uh.requests, "get", return_value=urlhaus_response) as mock_get:
+            urls = uh.fetch_recent_urls()
+            assert mock_get.call_args.kwargs["headers"]["Auth-Key"] == "test-urlhaus-key"
+        assert urls is not None and len(urls) == 2
+        assert urls[0]["host"] == "45.61.49.78"
+        assert urls[1]["host"] == "urlhaustest-evil-domain.example"
+
+        # 3) ThreatFox - rasmiy hujjatdagi namunaviy javob + ip:port + hash (filtrlanishi kerak)
+        os.environ["THREATFOX_AUTH_KEY"] = "test-threatfox-key"
+        threatfox_response = MagicMock()
+        threatfox_response.raise_for_status = lambda: None
+        threatfox_response.json.return_value = {
+            "query_status": "ok",
+            "data": [
+                {"id": "41", "ioc": "threatfoxtest-gaga-domain.example", "ioc_type": "domain",
+                 "malware_printable": "Dridex", "confidence_level": 50,
+                 "first_seen": "2020-12-08 13:36:27 UTC", "reference": None},
+                {"id": "42", "ioc": "203.0.113.77:4444", "ioc_type": "ip:port",
+                 "malware_printable": "Cobalt Strike", "confidence_level": 90,
+                 "first_seen": "2020-12-08 13:36:27 UTC", "reference": None},
+                # hash turi - BlacklistEntry uchun EMAS, o'tkazib yuborilishi kerak
+                {"id": "43", "ioc": "2151c4b970eff0071948dbbc19066aa4", "ioc_type": "md5_hash",
+                 "malware_printable": "Houdini", "confidence_level": 80,
+                 "first_seen": "2020-12-08 13:36:27 UTC", "reference": None},
+            ],
+        }
+        with patch.object(tf.requests, "post", return_value=threatfox_response) as mock_post:
+            iocs = tf.fetch_recent_iocs()
+            assert mock_post.call_args.kwargs["headers"]["Auth-Key"] == "test-threatfox-key"
+        assert iocs is not None and len(iocs) == 2, f"hash turi filtrlanishi kerak edi, {len(iocs)} ta natija qaytdi"
+        assert iocs[0]["value"] == "threatfoxtest-gaga-domain.example"
+        assert iocs[1]["value"] == "203.0.113.77", f"ip:port'dan port ajratilishi kerak edi, bor: {iocs[1]['value']}"
+
+        # 4) To'liq engine.run_once() - real DB'ga yozilishi
+        with patch.object(uh.requests, "get", return_value=urlhaus_response), \
+             patch.object(tf.requests, "post", return_value=threatfox_response):
+            added = tis.run_once()
+        assert added == 4, f"4 ta yangi yozuv (2 URLhaus + 2 ThreatFox) kutilgan edi, {added} ta qo'shildi"
+
+        s = get_session()
+        bl1 = s.query(BlacklistEntry).filter(BlacklistEntry.value == "urlhaustest-evil-domain.example").first()
+        assert bl1 is not None and bl1.source == "urlhaus"
+        bl2 = s.query(BlacklistEntry).filter(BlacklistEntry.value == "203.0.113.77").first()
+        assert bl2 is not None and bl2.source == "threatfox"
+        s.close()
+
+        # 5) Qayta chaqirilganda - UNIQUE(value) tufayli takroriy yozuv QO'SHILMASLIGI kerak
+        with patch.object(uh.requests, "get", return_value=urlhaus_response), \
+             patch.object(tf.requests, "post", return_value=threatfox_response):
+            added2 = tis.run_once()
+        assert added2 == 0, f"ikkinchi chaqiruvda takroriy yozuv qo'shilmasligi kerak edi, {added2} ta qo'shdi"
+    finally:
+        for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY"]:
+            os.environ.pop(k, None)
+
+
+check("Threat Intelligence: URLhaus/ThreatFox -> BlacklistEntry (rasmiy API formatiga mos mock)", _test_threat_intel_sync)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

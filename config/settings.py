@@ -98,3 +98,14 @@ DEVICE_STALE_HIDE_HOURS = int(os.getenv("DEVICE_STALE_HIDE_HOURS", "72"))
 # kunlar orasidagi alertlarni noto'g'ri ravishda birlashtirmaydi.
 CORRELATION_WINDOW_MINUTES = int(os.getenv("CORRELATION_WINDOW_MINUTES", "30"))
 
+# ---- Threat Intelligence feed'lari (URLhaus/ThreatFox, abuse.ch) ----
+# Ikkalasi ham 2024'dan buyon bepul, lekin ro'yxatdan o'tib olinadigan
+# "Auth-Key" talab qiladi (https://auth.abuse.ch/). MUHIM: URLHAUS_AUTH_
+# KEY/THREATFOX_AUTH_KEY bu yerda EMAS - loyihada UniFi/Ruijie bilan bir
+# xil naqsh: `threat_intel/urlhaus_feed.py`/`threatfox_feed.py` ularni
+# har chaqiruvda `os.getenv()` orqali DINAMIK o'qiydi (bo'sh bo'lsa mos
+# feed jimgina o'tkazib yuboriladi) - bu loyihada bir necha marta
+# uchragan "muhit o'zgaruvchisi modul import vaqtida muzlab qolishi"
+# xato turkumini oldini oladi.
+THREAT_INTEL_POLL_INTERVAL = int(os.getenv("THREAT_INTEL_POLL_INTERVAL", "3600"))
+

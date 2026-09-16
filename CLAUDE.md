@@ -510,9 +510,67 @@ aniq nom bermagani (`None`) uchun downgrade() ishlamay qolar edi - aniq
 `fk_alerts_incident_id` nomi qo'shildi. Downgrade/upgrade round-trip
 ham SQLite'da, ham PostgreSQL'da alohida tasdiqlandi.
 
-**Production'ga hali JOYLASHTIRILMADI** - foydalanuvchi bilan
-kelishilib, keyingi qadamda amalga oshiriladi (Alembic migratsiya +
-docker-compose build/up).
+**YANGILANDI**: production'ga joylashtirildi (migratsiya + `correlation_
+engine`/`dashboard` qayta qurish/ko'tarish) - `correlation_engine`
+ishga tushgandan darhol keyin REAL production backlog'ini (10 088 ta
+mavjud alert) ~13 daqiqada to'liq qayta ishlab, 9926+ ta haqiqiy
+Incident yaratdi (asosan UEBA statistik anomaliya alertlaridan).
+
+## Threat Intelligence: URLhaus/ThreatFox (abuse.ch) - BlacklistEntry avtomatik boyitish
+
+Correlation Engine ishga tushgandan keyin, foydalanuvchi ikkita variant
+orasidan (Detection Rule Engine yoki Threat Intelligence adapterlari)
+**Threat Intelligence**ni tanladi.
+
+**Muhim kashfiyot**: bu sessiya **haqiqiy production serverning o'zida**
+ishlayotgani uchun (avvalgi Claude Code SANDBOX'dan farqli, u yerda
+`virustotal.com`/`api.telegram.org` kabi domenlar bloklangan edi -
+CLAUDE.md'da bir necha marta hujjatlashtirilgan), tarmoq ulanishini
+tekshirganda **`urlhaus-api.abuse.ch`/`threatfox-api.abuse.ch`/
+`otx.alienvault.com` BUTUNLAY OCHIQ** ekanligi aniqlandi - bu birinchi
+marta shu turdagi tashqi threat-intel API'ni HAQIQIY (mock emas)
+tekshirish imkoni.
+
+**Aniqlangan**: URLhaus VA ThreatFox (ikkalasi ham abuse.ch) 2024'dan
+buyon endi ochiq/kalitsiz EMAS - `https://auth.abuse.ch/` orqali
+BEPUL, lekin ro'yxatdan o'tib olinadigan "Auth-Key" talab qiladi
+(rasmiy API hujjatlaridan, `curl`/HTTP javob orqali to'g'ridan-to'g'ri
+tasdiqlangan - taxmin qilinmagan). Foydalanuvchi bu kalitlarni olib
+berishga rozi bo'ldi (Ruijie'dagi kabi kutish yo'q, darhol beriladi).
+
+**Qurilgan** (kalitlar hali kutilayotgan holatda, kod TO'LIQ tayyor):
+- `threat_intel/urlhaus_feed.py` - `fetch_recent_urls()`, rasmiy API
+  hujjatidagi ANIQ JSON formatiga mos (`query_status`, `urls[].host`/
+  `threat`/`url_status`).
+- `threat_intel/threatfox_feed.py` - `fetch_recent_iocs()`, rasmiy
+  hujjatga mos (`query_status`, `data[].ioc`/`ioc_type`/
+  `malware_printable`). `ioc_type="ip:port"`dan port ajratiladi,
+  `ioc_type="url"`dan host ajratiladi, HASH turlari (BlacklistEntry
+  uchun emas, alohida HashBlacklist ishi) ATAYLAB filtrlanadi.
+- `engine/threat_intel_sync.py` (`run_once()`/`run_loop()`, boshqa
+  enginelar bilan bir xil naqsh) - ikkalasi MUSTAQIL (bittasi
+  sozlanmasa, ikkinchisi baribir ishlaydi - UniFi/Ruijie naqshi).
+  `BlacklistEntry.value` UNIQUE bo'lgani uchun avval mavjud qiymatlar
+  BITTA so'rov bilan yuklanadi, so'ng FAQAT haqiqatan yangi qiymatlar
+  qo'shiladi (idempotent - qayta chaqirilganda takroriy yozuv
+  qo'shilmaydi).
+- `docker-compose.yml`: yangi `threat_intel_sync` xizmati - `unifi_
+  sync`/`ruijie_sync` bilan bir xil naqsh, profilsiz.
+
+**Real test qilingan (SQLite VA vaqtinchalik, alohida Docker PostgreSQL
+konteynerida)**: `requests.get`/`requests.post` ustidan, RASMIY API
+HUJJATLARIDAN so'zma-so'z olingan namunaviy JSON javoblar bilan Mock
+qo'yilib (haqiqiy tarmoq so'rovi emas - Auth-Key hali yo'q, lekin
+JSON-tahlil mantig'i HAQIQIY formatga qarshi tekshirildi): (1) Auth-Key
+sozlanmaganda HECH QANDAY tarmoq so'rovi yuborilmasligi; (2) URLhaus
+javobidan `host` to'g'ri ajratilishi; (3) ThreatFox'da `ip:port`dan
+port ajratilishi VA hash turlarining filtrlanishi; (4) `run_once()`
+real DB'ga yozishi; (5) qayta chaqirilganda `UNIQUE(value)` tufayli
+takroriy yozuv QO'SHILMASLIGI.
+
+**Hali kutilmoqda**: foydalanuvchi `auth.abuse.ch`dan Auth-Key olib
+berishi - shundan keyin HAQIQIY jonli feed bilan to'liq (mock EMAS)
+tasdiqlash va production'ga joylashtirish amalga oshiriladi.
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 

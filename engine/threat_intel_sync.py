@@ -1,0 +1,146 @@
+"""
+Threat Intelligence Sync Engine.
+
+URLhaus va ThreatFox (abuse.ch) feed'laridan so'nggi zararli IP/domen/
+URL-host'larni olib, `BlacklistEntry` jadvalini avtomatik boyitadi -
+hozirgacha bu jadval FAQAT qo'lda to'ldirilardi. Ikkalasi ham mustaqil
+(bittasi sozlanmasa, ikkinchisi baribir ishlaydi - UniFi/Ruijie bilan
+bir xil naqsh).
+
+MUHIM: bu ATAYLAB faqat "ma'lumot yig'ish" - hech qanday avtomatik
+bloklash/javob choralarini o'zi ISHGA TUSHIRMAYDI. `BlacklistEntry`ga
+qo'shilgan yozuvlar keyinchalik `engine/parser_engine.py::_is_blacklisted()`
+orqali oddiy DNS/connection tekshiruviga kiradi - xuddi qo'lda
+qo'shilgan yozuvlar kabi.
+
+Ishga tushirish:
+    python -m engine.threat_intel_sync
+    python -m engine.threat_intel_sync --loop
+"""
+import argparse
+import logging
+import os
+import sys
+import time
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config.settings import LOG_LEVEL, THREAT_INTEL_POLL_INTERVAL
+from db.database import get_session
+from db.models import BlacklistEntry, utcnow
+from threat_intel.urlhaus_feed import fetch_recent_urls, is_configured as urlhaus_configured
+from threat_intel.threatfox_feed import fetch_recent_iocs, is_configured as threatfox_configured
+
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("threat_intel_sync")
+
+
+def _add_new_entries(session, candidates: list) -> int:
+    """
+    `candidates` - {"value", "source", "reason"} lug'atlar ro'yxati.
+    `BlacklistEntry.value` UNIQUE bo'lgani uchun: (1) mavjud qiymatlarni
+    BITTA so'rov bilan oldindan yuklab, (2) partiya ICHIDAGI takrorlarni
+    ham chetlab o'tib, faqat HAQIQATAN yangi qiymatlarni qo'shadi.
+    """
+    if not candidates:
+        return 0
+
+    incoming_values = {c["value"] for c in candidates}
+    existing = {
+        v for (v,) in session.query(BlacklistEntry.value).filter(BlacklistEntry.value.in_(incoming_values)).all()
+    }
+
+    added = 0
+    seen_this_batch = set()
+    for c in candidates:
+        value = c["value"]
+        if value in existing or value in seen_this_batch:
+            continue
+        seen_this_batch.add(value)
+        session.add(BlacklistEntry(value=value, source=c["source"], reason=c["reason"], added_at=utcnow()))
+        added += 1
+    return added
+
+
+def sync_urlhaus(session) -> int:
+    if not urlhaus_configured():
+        return 0
+    urls = fetch_recent_urls()
+    if urls is None:
+        logger.warning("URLhaus so'rovi muvaffaqiyatsiz bo'ldi - bu tsikl o'tkazib yuborildi")
+        return 0
+
+    candidates = []
+    for item in urls:
+        threat = item.get("threat") or "malware_download"
+        candidates.append({
+            "value": item["host"],
+            "source": "urlhaus",
+            "reason": f"URLhaus: {threat} ({item.get('url_status', 'unknown')})",
+        })
+    added = _add_new_entries(session, candidates)
+    logger.info(f"URLhaus: {len(urls)} ta yozuv ko'rildi, {added} ta YANGI blacklist yozuvi qo'shildi")
+    return added
+
+
+def sync_threatfox(session) -> int:
+    if not threatfox_configured():
+        return 0
+    iocs = fetch_recent_iocs()
+    if iocs is None:
+        logger.warning("ThreatFox so'rovi muvaffaqiyatsiz bo'ldi - bu tsikl o'tkazib yuborildi")
+        return 0
+
+    candidates = []
+    for item in iocs:
+        malware = item.get("malware") or "noma'lum"
+        candidates.append({
+            "value": item["value"],
+            "source": "threatfox",
+            "reason": f"ThreatFox: {malware} ({item['ioc_type']}, ishonch: {item.get('confidence_level', '?')}%)",
+        })
+    added = _add_new_entries(session, candidates)
+    logger.info(f"ThreatFox: {len(iocs)} ta IOC ko'rildi, {added} ta YANGI blacklist yozuvi qo'shildi")
+    return added
+
+
+def run_once() -> int:
+    if not urlhaus_configured() and not threatfox_configured():
+        return 0
+
+    session = get_session()
+    try:
+        total = sync_urlhaus(session) + sync_threatfox(session)
+        session.commit()
+        return total
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def run_loop(interval_seconds: int = THREAT_INTEL_POLL_INTERVAL):
+    logger.info(
+        f"Threat Intel sync tsiklda ishga tushdi (URLhaus: {urlhaus_configured()}, "
+        f"ThreatFox: {threatfox_configured()}, interval: {interval_seconds}s)"
+    )
+    while True:
+        try:
+            run_once()
+        except Exception as exc:
+            logger.error(f"Tsikl xatoligi: {exc}")
+        time.sleep(interval_seconds)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--loop", action="store_true")
+    ap.add_argument("--interval", type=int, default=THREAT_INTEL_POLL_INTERVAL)
+    args = ap.parse_args()
+
+    if args.loop:
+        run_loop(args.interval)
+    else:
+        n = run_once()
+        logger.info(f"Yakunlandi: {n} ta yangi blacklist yozuvi qo'shildi")

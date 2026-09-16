@@ -488,6 +488,24 @@ services:
       postgres:
         condition: service_healthy
 
+  # Threat Intelligence (URLhaus/ThreatFox) - unifi_sync/ruijie_sync bilan
+  # bir xil naqsh: shunchaki HTTPS API so'rovi, host tarmoq/maxsus huquq
+  # shart emas - profilsiz, standart holatda ishga tushadi. URLHAUS_AUTH_
+  # KEY/THREATFOX_AUTH_KEY sozlanmagan bo'lsa mos feed zararsiz jim turadi.
+  threat_intel_sync:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    command: python -m engine.threat_intel_sync --loop --interval ${THREAT_INTEL_POLL_INTERVAL:-3600}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   network_discovery:
     build: .
     restart: unless-stopped
