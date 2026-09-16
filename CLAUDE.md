@@ -568,9 +568,32 @@ port ajratilishi VA hash turlarining filtrlanishi; (4) `run_once()`
 real DB'ga yozishi; (5) qayta chaqirilganda `UNIQUE(value)` tufayli
 takroriy yozuv QO'SHILMASLIGI.
 
-**Hali kutilmoqda**: foydalanuvchi `auth.abuse.ch`dan Auth-Key olib
-berishi - shundan keyin HAQIQIY jonli feed bilan to'liq (mock EMAS)
-tasdiqlash va production'ga joylashtirish amalga oshiriladi.
+**YANGILANDI - HAQIQIY jonli feed bilan to'liq tasdiqlandi va production'ga
+joylashtirildi**: foydalanuvchi `auth.abuse.ch`dan Auth-Key olib berdi
+(bitta kalit ikkalasi uchun ham ishlaydi - abuse.ch akkaunt darajasida,
+alohida-alohida kerak emas ekan). Loyihaning o'z kodi (mock EMAS,
+`threat_intel/urlhaus_feed.py`/`threatfox_feed.py`/`engine/threat_intel_
+sync.py` to'g'ridan-to'g'ri) HAQIQIY API'larga qarshi ishga tushirildi:
+
+- URLhaus: 696 ta so'nggi zararli URL ko'rildi, 364 ta YANGI blacklist
+  yozuvi qo'shildi.
+- ThreatFox: 610 ta IOC ko'rildi (hash turlari to'g'ri filtrlandi), 487
+  ta YANGI yozuv qo'shildi.
+- Idempotentlik: ikkinchi chaqiruvda 0 ta yangi yozuv (barchasi
+  allaqachon mavjudligi to'g'ri aniqlandi).
+
+Production'ga joylashtirildi (`docker compose build/up threat_intel_
+sync`) - real `blacklist` jadvaliga 851 ta haqiqiy, joriy zararli IP/
+domen yozildi (masalan `105.157.20.136`, `polarclient.net`), soatlik
+avtomatik yangilanish bilan. `parser_engine` endi shu ro'yxatga qarshi
+real DNS/connection trafigini tekshiradi.
+
+**Kichik, zararsiz nozik nuqta**: foydalanuvchi `.env`ga qo'shish
+buyrug'ini ikki marta bajargani sabab `URLHAUS_AUTH_KEY`/`THREATFOX_
+AUTH_KEY` ikkitadan (bir xil qiymat bilan) qator bo'lib qoldi - bu
+loyihada avval uchragan "ikkita HAR XIL AGENT_API_KEY" xatosidan farqli
+(bu safar ikkalasi ham BIR XIL), shuning uchun funksional muammo YO'Q,
+lekin tozalik uchun foydalanuvchiga qo'lda o'chirish tavsiya qilindi.
 
 ## Chuqur arxitektura tahlili (foydalanuvchi tashqi tomondan yuborgan, 29 band) - bosqichma-bosqich boshlandi, 1-bosqich: verdict taksonomiyasi
 
