@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Oylik hisobot - Davomat Dashboard{% endblock %}
+{% block content %}
+<h1>Hisobot ({{ start_date }} — {{ end_date }})</h1>
+
+<div class="filters">
+    <a href="{{ url_for('reports', period='today') }}" class="{{ 'active' if period == 'today' }}">Bugun</a>
+    <a href="{{ url_for('reports', period='week') }}" class="{{ 'active' if period == 'week' }}">So'nggi 7 kun</a>
+    <a href="{{ url_for('reports', period='month') }}" class="{{ 'active' if period == 'month' }}">Shu oy</a>
+</div>
+
+{% if not summary %}
+<div class="empty">Ushbu davr uchun hisoblangan davomat yozuvi yo'q</div>
+{% else %}
+<table>
+    <tr><th>Xodim</th><th>Bo'lim</th><th>Kechikish (marta)</th><th>Jami kech qolgan (daqiqa)</th><th>Kelmagan (marta)</th></tr>
+    {% for row in summary %}
+    <tr>
+        <td>{{ row.employee.full_name if row.employee else '-' }}</td>
+        <td>{{ row.employee.department if row.employee else '-' }}</td>
+        <td>{% if row.late %}<span class="badge orange">{{ row.late }}</span>{% else %}0{% endif %}</td>
+        <td>{{ row.total_late_minutes }}</td>
+        <td>{% if row.absent %}<span class="badge red">{{ row.absent }}</span>{% else %}0{% endif %}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
