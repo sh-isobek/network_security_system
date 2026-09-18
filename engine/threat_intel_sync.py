@@ -34,6 +34,30 @@ from threat_intel.threatfox_feed import fetch_recent_iocs, is_configured as thre
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("threat_intel_sync")
 
+# MUHIM (production'da HAQIQATAN topilgan soxta-pozitiv): URLhaus zararli
+# faylni umumiy, qonuniy platformada (GitHub, Google Drive, Dropbox...)
+# joylashtirilgan URL'larni ham ro'yxatga oladi va `host` sifatida
+# "github.com" qaytaradi. Uni domen sifatida blacklist'ga qo'shish esa
+# domen ierarxiyasi tekshiruvi (`*.github.com`) tufayli GitHub'ga HAR
+# QANDAY ulanishni "high" alertga aylantirdi va response_engine
+# xodimning qurilmasini tarmoqdan uzishga urinardi. Host darajasidagi
+# blok bu platformalar uchun noto'g'ri - faqat aniq URL/fayl hash'i
+# zararli. Bunday host'lar (o'zi va barcha subdomenlari) o'tkazib yuboriladi.
+SHARED_PLATFORM_DOMAINS = {
+    "github.com", "githubusercontent.com", "githubassets.com", "gitlab.com", "bitbucket.org",
+    "google.com", "googleapis.com", "googleusercontent.com", "gstatic.com",
+    "dropbox.com", "dropboxusercontent.com",
+    "onedrive.live.com", "sharepoint.com", "microsoft.com",
+    "telegram.org", "t.me", "whatsapp.com", "youtube.com", "facebook.com",
+}
+
+
+def is_shared_platform_host(value: str) -> bool:
+    """`value` (domen) SHARED_PLATFORM_DOMAINS'ning o'zi yoki subdomeni bo'lsa True.
+    Label chegarasi bo'yicha (oddiy `endswith()` emas - `notgithub.com` mos kelmaydi)."""
+    v = (value or "").strip().lower().rstrip(".")
+    return any(v == d or v.endswith("." + d) for d in SHARED_PLATFORM_DOMAINS)
+
 
 def _add_new_entries(session, candidates: list) -> int:
     """
@@ -42,6 +66,13 @@ def _add_new_entries(session, candidates: list) -> int:
     BITTA so'rov bilan oldindan yuklab, (2) partiya ICHIDAGI takrorlarni
     ham chetlab o'tib, faqat HAQIQATAN yangi qiymatlarni qo'shadi.
     """
+    if not candidates:
+        return 0
+
+    skipped = [c["value"] for c in candidates if is_shared_platform_host(c["value"])]
+    if skipped:
+        logger.info(f"{len(set(skipped))} ta umumiy platforma host'i o'tkazib yuborildi (masalan {skipped[0]})")
+    candidates = [c for c in candidates if not is_shared_platform_host(c["value"])]
     if not candidates:
         return 0
 

@@ -7777,6 +7777,47 @@ def _test_threat_intel_sync():
 check("Threat Intelligence: URLhaus/ThreatFox -> BlacklistEntry (rasmiy API formatiga mos mock)", _test_threat_intel_sync)
 
 # ---------------------------------------------------------------------------
+print("\n=== 100b) Threat Intelligence: umumiy platformalar (github.com va h.k.) blacklist'ga kiritilmaydi (real production soxta-pozitivi) ===")
+
+
+def _test_threat_intel_skips_shared_platforms():
+    from unittest.mock import MagicMock, patch
+    from db.models import BlacklistEntry
+    import threat_intel.urlhaus_feed as uh
+    import engine.threat_intel_sync as tis
+
+    assert tis.is_shared_platform_host("github.com")
+    assert tis.is_shared_platform_host("raw.githubusercontent.com")
+    assert tis.is_shared_platform_host("lb-140-82-112-22-iad.github.com")
+    assert tis.is_shared_platform_host("drive.google.com")
+    assert not tis.is_shared_platform_host("notgithub.com"), "label chegarasi: notgithub.com mos kelmasligi kerak"
+    assert not tis.is_shared_platform_host("evil-github.com.attacker.example")
+    assert not tis.is_shared_platform_host("update.googlecert.help")
+
+    os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"
+    os.environ.pop("THREATFOX_AUTH_KEY", None)
+    try:
+        resp = MagicMock()
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {"query_status": "ok", "urls": [
+            {"url": "https://github.com/x/y/raw/main/a.exe", "host": "github.com", "threat": "malware_download", "url_status": "online"},
+            {"url": "https://drive.google.com/uc?id=1", "host": "drive.google.com", "threat": "malware_download", "url_status": "online"},
+            {"url": "http://sharedplatform-test-evil.example/a.sh", "host": "sharedplatform-test-evil.example", "threat": "malware_download", "url_status": "online"},
+        ]}
+        with patch.object(uh.requests, "get", return_value=resp):
+            tis.run_once()
+        s = get_session()
+        assert s.query(BlacklistEntry).filter(BlacklistEntry.value == "github.com").first() is None, "github.com blacklist'ga kirmasligi kerak"
+        assert s.query(BlacklistEntry).filter(BlacklistEntry.value == "drive.google.com").first() is None
+        assert s.query(BlacklistEntry).filter(BlacklistEntry.value == "sharedplatform-test-evil.example").first() is not None, "haqiqiy zararli host qo'shilishi kerak"
+        s.close()
+    finally:
+        os.environ.pop("URLHAUS_AUTH_KEY", None)
+
+
+check("Threat Intelligence: umumiy platformalar (github.com va h.k.) blacklist'ga kirmaydi", _test_threat_intel_skips_shared_platforms)
+
+# ---------------------------------------------------------------------------
 print("\n=== 101) Heuristik tahlil moduli (entropiya/skript naqshi/kengaytma-nomuvofiqlik/PDF) - 'unknown' hech qachon qolmasin ===")
 
 
