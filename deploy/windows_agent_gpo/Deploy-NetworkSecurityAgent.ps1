@@ -49,6 +49,22 @@ if (-not $ServerShare) {
         $DomainName = $env:USERDNSDOMAIN
     }
     $ServerShare = "\\$DomainName\SYSVOL\$DomainName\scripts\NetworkSecurityAgent"
+
+    # MUHIM (real production'da aniqlangan xato - Kerio VPN): VPN'dagi DNS
+    # domen ildizi nomini (masalan synergypharm.org) DC'ga EMAS, ochiq
+    # internet IP'ga hal qiladi, shuning uchun yuqoridagi DFS-yo'l VPN'da
+    # ishlamaydi. Tartib: (1) skriptning o'zi turgan papka (SYSVOL'dan
+    # ishga tushirilgan bo'lsa - VERSION shu yerda), (2) DC locator
+    # topgan aniq DC nomi orqali, (3) yuqoridagi domen-nomi yo'li.
+    if ($PSScriptRoot -and $PSScriptRoot.StartsWith("\\") -and (Test-Path (Join-Path $PSScriptRoot "VERSION"))) {
+        $ServerShare = $PSScriptRoot
+    } elseif (-not (Test-Path (Join-Path $ServerShare "VERSION"))) {
+        try {
+            $dc = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().FindDomainController().Name
+            $dcShare = "\\$dc\SYSVOL\$DomainName\scripts\NetworkSecurityAgent"
+            if (Test-Path (Join-Path $dcShare "VERSION")) { $ServerShare = $dcShare }
+        } catch { }
+    }
 }
 
 function Write-DeployLog {
