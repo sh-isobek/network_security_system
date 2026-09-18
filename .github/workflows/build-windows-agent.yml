@@ -10,6 +10,8 @@ on:
     paths:
       - "windows_agent/**"
       - "agent_core/**"
+      - "scanners/**"
+      - "threat_intel/url_intel.py"
       - "requirements-agent.txt"
       - "deploy/windows_agent_gpo/**"
       - ".github/workflows/build-windows-agent.yml"
