@@ -31,7 +31,7 @@ maqbul emas - shuning uchun o'chirishdan oldin har doim ko'chiriladi.
 """
 from sqlalchemy import func
 
-from db.models import Device, Event, Alert, WebAccessLog, DeviceBaseline, utcnow
+from db.models import Device, Event, Alert, WebAccessLog, DeviceBaseline, Incident, utcnow
 
 
 def _clean_mac(mac):
@@ -131,6 +131,22 @@ def _merge_device(session, keep: Device, remove: Device):
         {"device_id": keep.id}, synchronize_session=False
     )
     session.query(WebAccessLog).filter(WebAccessLog.device_id == remove.id).update(
+        {"device_id": keep.id}, synchronize_session=False
+    )
+    # MUHIM (production'da HAQIQATAN topilgan real bug - shu tuzatish
+    # aynan shu sabab bilan qo'shildi): `Incident` (Correlation Engine,
+    # `_merge_device()`dan KEYINGI bosqichda qo'shilgan) ham
+    # `device_id` orqali `devices.id`ga FK bog'langan, lekin bu yerda
+    # HECH QACHON reassign qilinmagan edi - Event/Alert/WebAccessLog
+    # yozilgandan keyin, `Incident` FK bosqichi qo'shimcha keyingi ish
+    # sifatida kiritilib, shu funksiyaga qo'shilishi UNUTILGAN edi.
+    # Natijada: IP-kolliziya bo'lib, `remove` qurilmada bog'liq Incident
+    # bo'lsa, `session.delete(remove)` har doim `ForeignKeyViolation`
+    # bilan MUVAFFAQIYATSIZ bo'lardi - bu `parser_engine`/`unifi_sync`
+    # kabi xizmatlarni HAR TSIKLDA (session rollback qilib, hech narsa
+    # commit qilinmasdan) qulatib, haqiqiy production'da uzluksiz xato
+    # tsikliga olib kelgan edi (real, kuzatilgan holat).
+    session.query(Incident).filter(Incident.device_id == remove.id).update(
         {"device_id": keep.id}, synchronize_session=False
     )
 
