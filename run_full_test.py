@@ -236,7 +236,10 @@ def _test_file_pipeline():
     # "unknown" ("hali klassifikatsiya qilinmagan") - avval bu holat
     # noto'g'ri ravishda "clean" deb belgilanardi (aynan shu xato
     # tuzatildi - pastdagi alohida testlarga qarang).
-    assert fes["clean.txt"].verdict == "unknown", "hech qanday manba tasdiqlamagan fayl 'unknown' bo'lishi kerak (avvalgi 'clean' xatosi)"
+    # YANGILANDI (foydalanuvchi so'rovi: "unknown" hech qachon qolmasin): fayl
+    # diskda (stored_path) bor va deep scan (YARA/ClamAV/fayl-turi/PDF/Office/
+    # heuristik) HECH NARSA topmagan - endi "unknown" emas, "clean".
+    assert fes["clean.txt"].verdict == "clean", "to'liq skanerlangan, hech narsa topilmagan fayl 'clean' bo'lishi kerak (deep scan 'unknown'ni hal qiladi)"
 
     # ZIP ichidan chiqqan payload.exe alohida FileEvent sifatida yaratilganini tekshirish
     payload = s.query(FileEvent).filter(FileEvent.filename == "payload.exe").first()
@@ -245,7 +248,7 @@ def _test_file_pipeline():
     assert payload.verdict == "malicious", "payload.exe malicious deb topilishi kerak edi"
 
     readme = s.query(FileEvent).filter(FileEvent.filename == "readme.txt").first()
-    assert readme is not None and readme.verdict == "unknown", "readme.txt 'unknown' bo'lishi kerak edi (hech kim tasdiqlamagan, avvalgi 'clean' xatosi)"
+    assert readme is not None and readme.verdict == "clean", "readme.txt deep scan'dan keyin 'clean' bo'lishi kerak edi (hech narsa topilmagan)"
 
     file_alerts = s.query(Alert).filter(Alert.file_event_id.isnot(None)).all()
     assert len(file_alerts) >= 3, f"Kamida 3 ta fayl-alert kutilgan, {len(file_alerts)} ta topildi"
