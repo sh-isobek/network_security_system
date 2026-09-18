@@ -671,7 +671,17 @@ controller.stop()
 
         _time.sleep(0.5)
         assert os.path.exists(received_log), "Email qabul qilinmadi (SMTP server fayl yozmadi)"
-        content = open(received_log).read()
+        raw_content = open(received_log).read()
+        # Xat tanasi (MIMEText utf-8) base64 bilan kodlangan - xom matn
+        # ichidan emas, MIME qismlarini ochib tekshiramiz.
+        import email as _email
+        content = raw_content
+        for chunk in raw_content.split("=== YANGI XAT ===")[1:]:
+            _hdr_end = chunk.find("Content-Type:")
+            _msg = _email.message_from_string(chunk[_hdr_end:])
+            for _part in _msg.walk():
+                if _part.get_content_maintype() == "text":
+                    content += "\n" + _part.get_payload(decode=True).decode("utf-8", errors="replace")
         assert "NOTIFY-TEST-PC" in content, "Xatda hostname topilmadi"
         # MUHIM (real production'da real Telegram xabarnomasi orqali
         # topilgan xato): xabarnomadagi "Vaqt:" avval xom UTC'ni
