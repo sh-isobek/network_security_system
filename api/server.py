@@ -39,6 +39,7 @@ from db.models import HashBlacklist, Alert, Device, FileEvent, utcnow
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
+from scanners.heuristic_analyzer import SUSPICIOUS_SCORE_THRESHOLD
 from api import token_manager
 
 import logging
@@ -225,8 +226,16 @@ def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_sc
 def check_hash():
     """
     So'rov: {"sha256": "...", "filename": "invoice.exe", "filepath": "C:\\Users\\jsmith\\Downloads\\invoice.exe",
-             "hostname": "...", "ip_address": "..."}
+             "hostname": "...", "ip_address": "...", "magic": "PE"|null,
+             "heuristic_score": 0-100, "heuristic_findings": [str],
+             "heuristic_verdict": "malicious"|"suspicious"|"clean"|null}
     Javob:  {"malicious": bool, "confirmed": bool, "threat_name": str|null, "source": str}
+
+    `magic`/`heuristic_*` - ixtiyoriy, `agent_core/agent.py::analyze_file()`
+    tomonidan hisoblangan MAHALLIY (fayl mazmuni FAQAT endpoint'da
+    mavjud - server hech qachon fayl baytlarini olmaydi) statik tahlil
+    natijasi. Foydalanuvchi so'rovi: "unknown" fayl hech qachon
+    qolmasin - pastga qarang.
 
     MUHIM: `confirmed` maydoni - Endpoint Agent avtomatik karantin/
     o'chirishni FAQAT shu maydon `true` bo'lganda amalga oshiradi.
@@ -305,6 +314,49 @@ def check_hash():
             _log_endpoint_scan(session, data, sha256, "malicious", 100, mb.get("threat_name"), "malwarebazaar")
             session.commit()
             return jsonify({"malicious": True, "confirmed": True, "threat_name": mb.get("threat_name"), "source": "malwarebazaar"})
+
+        # MUHIM (foydalanuvchi so'rovi - "unknown" fayl hech qachon
+        # qolmasin): hash-intel (local/VT/MalwareBazaar) hech narsa
+        # DEMAGANDA (vt_scanned_clean=False bo'lsa - VT haqiqatan
+        # "toza" deb TASDIQLAGAN holatda heuristik e'tiborsiz
+        # qoldiriladi, bu tasdiqni ustidan yozmaslik uchun), Agent
+        # o'zi hisoblagan HEURISTIK signal (fayl mazmuni FAQAT
+        # endpoint'da mavjud - server hech qachon fayl baytlarini
+        # olmaydi, `scanners/heuristic_analyzer.py`) bilan yakuniy
+        # "unknown" hal qilinadi. Bu Agent'ga qaytariladigan
+        # `malicious`/`confirmed`ga HECH QANDAY ta'sir qilmaydi
+        # (Agent o'z avtomatik karantin qarorini mahalliy ravishda,
+        # MUSTAQIL hisoblaydi - `agent_core/agent.py::_on_new_file()`)
+        # - bu yerda FAQAT Dashboard'dagi "Fayllar" yorlig'i va Alert
+        # tahlilchi ko'rishi uchun.
+        heuristic_verdict = data.get("heuristic_verdict")
+        heuristic_score = int(data.get("heuristic_score") or 0)
+        heuristic_findings = data.get("heuristic_findings") or []
+
+        if not vt_scanned_clean and heuristic_verdict in ("malicious", "suspicious"):
+            severity = "critical" if heuristic_verdict == "malicious" else "medium"
+            log_verdict = "malicious" if heuristic_verdict == "malicious" else "suspicious"
+            threat_score = 100 if heuristic_verdict == "malicious" else min(max(heuristic_score, SUSPICIOUS_SCORE_THRESHOLD), 95)
+            _log_endpoint_scan(session, data, sha256, log_verdict, threat_score, None, "heuristic")
+            device = session.query(Device).filter(Device.ip_address == data.get("ip_address")).first()
+            if device is not None and data.get("filename"):
+                session.add(Alert(
+                    device_id=device.id,
+                    severity=severity,
+                    reason=(
+                        f"Endpoint heuristik tahlilida {'tasdiqlangan' if heuristic_verdict == 'malicious' else 'shubhali'} "
+                        f"fayl: {data.get('filename')} | Host: {data.get('hostname')} | SHA256={sha256}\n"
+                        + "\n".join(heuristic_findings)
+                    ),
+                    action_taken=(
+                        "Mahalliy heuristik orqali tasdiqlangan (endpoint'da alohida ko'rib chiqilgan)"
+                        if heuristic_verdict == "malicious"
+                        else "SHUBHALI (heuristik): avtomatik chora ko'rilmadi, qo'lda ko'rib chiqish tavsiya etiladi"
+                    ),
+                    notified=False,
+                ))
+            session.commit()
+            return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
 
         final_verdict = "clean" if vt_scanned_clean else "unknown"
         _log_endpoint_scan(session, data, sha256, final_verdict, 0, None, None)

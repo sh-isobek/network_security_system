@@ -44,6 +44,7 @@ import requests
 from agent_core.file_monitor import FileMonitor
 from agent_core.process_killer import kill_process_holding_file
 from agent_core.quarantine import quarantine_file
+from scanners.heuristic_analyzer import analyze_file
 
 
 def _default_log_file() -> str:
@@ -192,7 +193,7 @@ def compute_sha256(filepath: str) -> str:
 
 def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = None,
                                      hostname: str = None, ip_address: str = None,
-                                     filepath: str = None) -> dict:
+                                     filepath: str = None, heuristic: dict = None) -> dict:
     """
     Avval markaziy serverga so'raydi. Server bilan bog'lanib bo'lmasa
     (offline holat) - mahalliy keshga tayanadi (fail-safe).
@@ -210,11 +211,22 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
     Downloads\\invoice.exe"). Ilgari faqat `filename` (fayl NOMI)
     yuborilardi - tahlilchi Dashboard'da fayl qurilmada QAYERDA
     topilganini UMUMAN ko'ra olmasdi.
+
+    `heuristic` - `scanners.heuristic_analyzer.analyze_file()` natijasi
+    (foydalanuvchi so'rovi: "unknown" fayl hech qachon qolmasin). Fayl
+    MAZMUNI faqat endpoint'da mavjud (server hech qachon fayl
+    baytlarini olmaydi) - shuning uchun bu ball/topilmalar shu yerda
+    hisoblanib, serverga FAQAT Dashboard'dagi "Fayllar" yorlig'ini
+    to'g'irlash (hash-intel hech narsa demagan "unknown"ni "clean"/
+    "suspicious"ga hal qilish) uchun yuboriladi - Agent'ga qaytariladigan
+    `malicious`/`confirmed` javobiga ta'sir qilmaydi (`_on_new_file()`
+    heuristikni MUSTAQIL, mahalliy ravishda hisobga oladi).
     """
     if sha256 in cache:
         logger.debug(f"Kesh'dan topildi: {sha256[:12]}...")
         return cache[sha256]
 
+    heuristic = heuristic or {}
     try:
         resp = requests.post(
             f"{API_SERVER_URL}/api/v1/check_hash",
@@ -224,6 +236,10 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
                 "filepath": filepath,
                 "hostname": hostname,
                 "ip_address": ip_address,
+                "magic": heuristic.get("magic"),
+                "heuristic_score": heuristic.get("score"),
+                "heuristic_findings": heuristic.get("findings"),
+                "heuristic_verdict": heuristic.get("verdict_hint"),
             },
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,
@@ -356,6 +372,21 @@ class EndpointAgent:
             logger.warning(f"Faylni o'qib bo'lmadi (allaqachon o'chirilgan?): {filepath} - {exc}")
             return
 
+        # MUHIM (foydalanuvchi so'rovi: "unknown" fayl hech qachon
+        # qolmasin): fayl mazmuni FAQAT shu yerda, endpoint'da mavjud -
+        # server hech qachon fayl baytlarini olmaydi. Shuning uchun
+        # mahalliy statik heuristika (`scanners/heuristic_analyzer.py`)
+        # shu yerda hisoblanadi va (1) Dashboard'dagi yorliqni
+        # to'g'irlash uchun serverga yuboriladi, (2) DETERMINISTIK
+        # topilma (masalan `.pdf` deb ko'rsatilgan, aslida PE32 fayl)
+        # bo'lsa - hash-intel HECH NARSA demagan taqdirda ham, MAHALLIY
+        # ravishda "tasdiqlangan" deb hisoblanadi (pastga qarang).
+        try:
+            heuristic = analyze_file(filepath, filename=os.path.basename(filepath))
+        except Exception as exc:
+            logger.warning(f"Heuristik tahlil muvaffaqiyatsiz (davom etiladi): {filepath} - {exc}")
+            heuristic = {}
+
         logger.info(f"Tekshirilmoqda: {filepath} (SHA256={sha256[:16]}...)")
         result = check_hash_with_server_or_cache(
             sha256, self.cache,
@@ -363,13 +394,38 @@ class EndpointAgent:
             hostname=self.hostname,
             ip_address=self.ip_address,
             filepath=filepath,
+            heuristic=heuristic,
         )
 
-        if not result.get("malicious"):
-            logger.info(f"Toza: {filepath}")
+        # MUHIM (o'zi topilgan real bug, tuzatildi): ilgari bu yerda
+        # FAQAT `result.get("malicious")` tekshirilardi - bu esa
+        # VirusTotal'ning TASDIQLANMAGAN (masalan 1/70 dvigatel) signali
+        # bilan ham to'liq avtomatik chora (jarayonni o'ldirish, faylni
+        # karantinga olish) ko'rilishiga olib kelardi, garchi shu
+        # faylning `confirmed=False` ekanligi aynan shu maqsadda (soxta-
+        # pozitiv xavfi) mavjud bo'lsa ham (`api/server.py::check_hash()`
+        # docstring'i "FAQAT confirmed=true bo'lganda" deb hujjatlashtirgan,
+        # lekin kod bunga rioya qilmagan edi). Endi avtomatik chora FAQAT
+        # (a) server "confirmed" deb tasdiqlagan, YOKI (b) mahalliy
+        # heuristika DETERMINISTIK "malicious" (kengaytma-nomuvofiqlik/
+        # PDF tuzilmasi - soxta-pozitiv xavfi past) deb topgan holatlarda
+        # ko'riladi.
+        server_confirmed = bool(result.get("confirmed"))
+        local_confirmed = heuristic.get("verdict_hint") == "malicious"
+
+        if not server_confirmed and not local_confirmed:
+            if result.get("malicious"):
+                logger.warning(
+                    f"SHUBHALI (tasdiqlanmagan): {filepath} [{result.get('threat_name')}] - "
+                    "avtomatik chora ko'rilmadi, qo'lda tekshirish tavsiya etiladi"
+                )
+            else:
+                logger.info(f"Toza: {filepath}")
             return
 
-        threat_name = result.get("threat_name", "Noma'lum tahdid")
+        threat_name = result.get("threat_name") or (
+            "; ".join(heuristic.get("findings", [])) or "Noma'lum tahdid"
+        )
         logger.warning(f"ZARARLI FAYL ANIQLANDI: {filepath} [{threat_name}]")
 
         kill_result = kill_process_holding_file(filepath)

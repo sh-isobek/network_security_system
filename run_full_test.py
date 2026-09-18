@@ -5995,6 +5995,81 @@ def _test_device_mac_identity_merge_with_baseline():
 check("Device MAC-asosli identifikatsiya: DeviceBaseline mavjud bo'lganda merge (relationship()siz FK tartiblash) muvaffaqiyatsiz bo'lmasligi", _test_device_mac_identity_merge_with_baseline)
 
 # ---------------------------------------------------------------------------
+print("\n=== 79a2) Device identity: Incident mavjud bo'lganda merge muvaffaqiyatsiz bo'lmasligi (real production xatosi, hozir topilgan) ===")
+
+
+def _test_device_mac_identity_merge_with_incident():
+    """
+    HAQIQIY, HOZIR ISHLAB TURGAN PRODUCTION XATOSI (foydalanuvchi "ko'p
+    funksiyalar ishlamayabdi" deb xabar berganda, `docker logs` orqali
+    topilgan): `parser_engine` va `unifi_sync` konteynerlari HAR
+    TSIKLDA `psycopg2.errors.ForeignKeyViolation: ... update or delete
+    on table "devices" violates foreign key constraint
+    "incidents_device_id_fkey"` bilan qulab tushayotgan edi.
+
+    TUB SABAB: `Incident` jadvali (Correlation Engine, `_merge_device()`
+    yozilgandan KEYINGI bosqichda qo'shilgan) `device_id` orqali
+    `devices.id`ga FK bog'langan, lekin `_merge_device()` buni HECH
+    QACHON reassign qilmagan edi - faqat Event/Alert/WebAccessLog/
+    DeviceBaseline hisobga olingan. Natijada IP-kolliziyaga uchragan
+    (`remove`) qurilmada bog'liq Incident bo'lsa, `session.delete(remove)`
+    doim FK xatosi bilan MUVAFFAQIYATSIZ bo'lardi - bu esa xizmatni
+    xato bilan qulatib (session rollback, hech narsa commit qilinmasdan),
+    HAR KEYINGI tsiklda AYNAN SHU kolliziyani qayta-qayta uchratib,
+    uzluksiz xato tsikliga olib kelgan edi (real production, hozir
+    kuzatilgan holat).
+    """
+    from db.device_identity import find_or_create_device
+    from db.models import Incident, utcnow
+
+    old_mac, new_mac = "11:22:33:AA:BB:EE", "EE:BB:AA:33:22:11"
+    shared_ip, other_ip = "172.16.9.244", "172.16.9.245"
+
+    s = get_session()
+    s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
+    s.query(Device).filter(Device.ip_address.in_([shared_ip, other_ip])).delete(synchronize_session=False)
+    s.commit()
+
+    old_device = Device(ip_address=shared_ip, mac_address=old_mac, hostname="OLD-INCIDENT-PC", source="test")
+    s.add(old_device)
+    s.flush()
+    # MUHIM: "remove" bo'ladigan (eski) qurilmaga bog'liq Incident bor -
+    # bu aynan production'da kuzatilgan holat (Correlation Engine allaqachon
+    # shu qurilma uchun Incident yaratib qo'ygan, keyin shu qurilma IP
+    # kolliziyasiga uchraydi).
+    incident = Incident(
+        title="Test incident (old device)", severity="medium", status="open",
+        device_id=old_device.id, alert_count=1,
+        first_seen=utcnow(), last_seen=utcnow(),
+    )
+    s.add(incident)
+    s.commit()
+    old_device_id = old_device.id
+    incident_id = incident.id
+
+    new_device = Device(ip_address=other_ip, mac_address=new_mac, hostname="NEW-INCIDENT-PC", source="test")
+    s.add(new_device)
+    s.commit()
+    new_device_id = new_device.id
+
+    # Yangi MAC endi O'SHA (Incident'li) IP'ni oladi - kolliziya + merge
+    result = find_or_create_device(s, shared_ip, mac=new_mac, source="test")
+    s.commit()  # MUHIM: aynan shu commit production'da ForeignKeyViolation bilan qulagan edi
+
+    assert result.id == new_device_id
+    assert s.query(Device).filter(Device.id == old_device_id).first() is None, (
+        "Eski (Incident'li) qurilma o'chirilishi kerak edi"
+    )
+    moved_incident = s.query(Incident).filter(Incident.id == incident_id).first()
+    assert moved_incident is not None and moved_incident.device_id == new_device_id, (
+        "Eski qurilmaning Incident'i yangi qatorga ko'chirilishi kerak edi (yo'qolmasligi)"
+    )
+    s.close()
+
+
+check("Device MAC-asosli identifikatsiya: Incident mavjud bo'lganda merge (real production ForeignKeyViolation tuzatilgan)", _test_device_mac_identity_merge_with_incident)
+
+# ---------------------------------------------------------------------------
 print("\n=== 79b) Device identity: ikkita jarayon BIR VAQTDA QARAMA-QARSHI yo'nalishda birlashtirsa deadlock/FK xatosi bo'lmasligi ===")
 
 
@@ -7697,6 +7772,372 @@ def _test_threat_intel_sync():
 
 
 check("Threat Intelligence: URLhaus/ThreatFox -> BlacklistEntry (rasmiy API formatiga mos mock)", _test_threat_intel_sync)
+
+# ---------------------------------------------------------------------------
+print("\n=== 101) Heuristik tahlil moduli (entropiya/skript naqshi/kengaytma-nomuvofiqlik/PDF) - 'unknown' hech qachon qolmasin ===")
+
+
+def _test_heuristic_analyzer_module():
+    """
+    Foydalanuvchi so'rovi: "fayl 90% gacha tekshirilib zararli/zararsizga
+    aniq ajratilsin - 'unknown' shaklida hech qachon qolmasin". Bu test
+    `scanners/heuristic_analyzer.py`ning har bir qismini tekshiradi:
+    entropiya (yuqori entropiya - paketlangan/shifrlangan bajariladigan
+    fayl belgisi), shubhali skript naqshlari (PowerShell Base64/IEX),
+    va DETERMINISTIK qatlam (kengaytma-nomuvofiqlik/PDF tuzilmasi -
+    bular "malicious" bera oladi, entropiya/skript esa FAQAT
+    "suspicious" - soxta-pozitiv xavfi tufayli).
+    """
+    import os as _os
+    import shutil
+    import zlib
+
+    from scanners.heuristic_analyzer import shannon_entropy, scan_bytes_heuristic, analyze_file
+
+    # --- 1) Entropiya: bir xil baytlar (past) vs tasodifiy baytlar (yuqori) ---
+    assert shannon_entropy(b"") == 0.0
+    assert shannon_entropy(b"A" * 1000) < 1.0, "Bir xil baytlar past entropiyaga ega bo'lishi kerak edi"
+    high_entropy_data = _os.urandom(4096)
+    assert shannon_entropy(high_entropy_data) > 7.5, "Tasodifiy baytlar yuqori entropiyaga ega bo'lishi kerak edi"
+
+    # --- 2) scan_bytes_heuristic: PE turi + yuqori entropiya -> "suspicious" (HECH QACHON "malicious" EMAS) ---
+    fake_pe = b"MZ" + high_entropy_data
+    result_pe = scan_bytes_heuristic(fake_pe, "PE", "exe")
+    assert result_pe["verdict_hint"] == "suspicious", f"Yuqori entropiyali PE 'suspicious' bo'lishi kerak edi: {result_pe}"
+    assert result_pe["score"] >= 40
+
+    # --- 3) scan_bytes_heuristic: past entropiyali PE -> "clean" (soxta-pozitiv yo'q) ---
+    low_entropy_pe = b"MZ" + b"\x90" * 2000
+    result_low = scan_bytes_heuristic(low_entropy_pe, "PE", "exe")
+    assert result_low["verdict_hint"] == "clean", f"Past entropiyali oddiy PE soxta-pozitiv bermasligi kerak edi: {result_low}"
+
+    # --- 4) ZIP/PDF kabi tabiiy yuqori-entropiyali formatlar TEKSHIRILMAYDI (soxta-pozitiv yo'q) ---
+    result_zip = scan_bytes_heuristic(_os.urandom(4096), "ZIP", "docx")
+    assert result_zip["score"] == 0, "ZIP/DOCX kabi formatlar uchun entropiya tekshiruvi ISHLAMASLIGI kerak (tabiiy yuqori entropiya)"
+
+    # --- 5) Shubhali skript naqshi (PowerShell) ---
+    ps1_content = b"powershell.exe -w hidden -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA"
+    result_script = scan_bytes_heuristic(ps1_content, "SCRIPT", "ps1")
+    assert result_script["verdict_hint"] == "suspicious"
+    assert any("PowerShell" in f for f in result_script["findings"])
+
+    # --- 6) Zararsiz skript - hech qanday signal yo'q ---
+    benign_script = b"#!/bin/bash\necho 'hello world'\n"
+    result_benign_script = scan_bytes_heuristic(benign_script, "SCRIPT", "sh")
+    assert result_benign_script["verdict_hint"] == "clean"
+
+    work_dir = "/tmp/_test_heuristic_analyzer"
+    if _os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    _os.makedirs(work_dir)
+    try:
+        # --- 7) analyze_file(): DETERMINISTIK kengaytma-nomuvofiqlik -> "malicious" (foydalanuvchining o'z misoli) ---
+        masquerade_path = _os.path.join(work_dir, "invoice.pdf")
+        with open(masquerade_path, "wb") as f:
+            f.write(b"MZ" + b"\x90" * 58 + b"This program cannot be run in DOS mode")
+        result_masq = analyze_file(masquerade_path, filename="invoice.pdf")
+        assert result_masq["verdict_hint"] == "malicious", f"Niqoblangan fayl 'malicious' bo'lishi kerak edi: {result_masq}"
+        assert result_masq["score"] == 100
+
+        # --- 8) analyze_file(): PDF ichidagi siqilgan xavfli tuzilma -> "malicious" ---
+        inner = b"<< /OpenAction 5 0 R /Names << /JavaScript 6 0 R >> >>"
+        compressed = zlib.compress(inner)
+        hidden_pdf_path = _os.path.join(work_dir, "hidden.pdf")
+        with open(hidden_pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n" + compressed + b"\nendstream\nendobj\n%%EOF\n")
+        result_pdf = analyze_file(hidden_pdf_path, filename="hidden.pdf")
+        assert result_pdf["verdict_hint"] == "malicious", f"Xavfli PDF tuzilmasi aniqlanmadi: {result_pdf}"
+
+        # --- 9) analyze_file(): oddiy, mos keladigan matn fayli -> "clean" (unknown emas!) ---
+        benign_path = _os.path.join(work_dir, "readme.txt")
+        with open(benign_path, "w") as f:
+            f.write("Bu oddiy, zararsiz matn fayli.")
+        result_benign = analyze_file(benign_path, filename="readme.txt")
+        assert result_benign["verdict_hint"] == "clean", f"Oddiy matn fayli 'clean' bo'lishi kerak edi: {result_benign}"
+        assert result_benign["score"] == 0
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Heuristik tahlil moduli - entropiya/skript/kengaytma-nomuvofiqlik/PDF ('unknown' hal qilinadi)", _test_heuristic_analyzer_module)
+
+# ---------------------------------------------------------------------------
+print("\n=== 102) Deep Scan Engine: 'unknown' holatni heuristik orqali hal qilish (real DB, foydalanuvchi so'rovi) ===")
+
+
+def _test_deep_scan_resolves_unknown():
+    """
+    Foydalanuvchi so'rovi: hash-intel VA barcha chuqur tekshiruvlar
+    (YARA/ClamAV/fayl-turi/Office/PDF/ZIP) hech narsa topmagan taqdirda
+    ham, fayl "unknown" holatida QOLMASLIGI kerak - oxirgi, ehtimoliy
+    (entropiya/skript) qatlam orqali "clean" yoki "suspicious"ga hal
+    qilinadi.
+    """
+    import shutil
+    from unittest.mock import patch
+
+    try:
+        import engine.deep_scan_engine as dse
+    except ImportError as exc:
+        print(f"   (yara/oletools yo'q - bu test o'tkazib yuborildi: {exc})")
+        return
+
+    work_dir = "/tmp/_test_deep_scan_resolves_unknown"
+    if os.path.exists(work_dir):
+        shutil.rmtree(work_dir)
+    os.makedirs(work_dir)
+
+    try:
+        # --- 1) Hech qanday belgi topilmagan, past-entropiyali PE -> "unknown" -> "clean" ---
+        clean_path = os.path.join(work_dir, "utility.exe")
+        with open(clean_path, "wb") as f:
+            f.write(b"MZ" + b"\x90" * 4000)
+
+        s = get_session()
+        fe_clean = FileEvent(
+            src_ip="172.16.65.1", filename="utility.exe", file_ext="exe",
+            sha256="7b" * 32, checked=True, verdict="unknown", stored_path=clean_path,
+        )
+        s.add(fe_clean)
+        s.commit()
+        with patch.object(dse, "yara_scan_file", return_value=[]), \
+             patch.object(dse, "clamav_db_available", return_value=False), \
+             patch.object(dse, "clamav_scan_file", return_value={"infected": False, "error": None}):
+            dse.deep_scan_one(s, fe_clean)
+            s.commit()
+        assert fe_clean.verdict == "clean", (
+            f"To'liq skanerlangan, hech narsa topilmagan fayl 'unknown' EMAS 'clean' bo'lishi kerak edi, '{fe_clean.verdict}' keldi"
+        )
+        assert s.query(Alert).filter(Alert.file_event_id == fe_clean.id).first() is None, (
+            "Toza deb hal qilingan fayl uchun Alert yaratilmasligi kerak"
+        )
+        s.close()
+
+        # --- 2) Yuqori entropiyali, hech qanday YARA/ClamAV/mismatch belgisi bo'lmagan PE -> "unknown" -> "suspicious" ---
+        suspicious_path = os.path.join(work_dir, "packed_tool.exe")
+        with open(suspicious_path, "wb") as f:
+            f.write(b"MZ" + os.urandom(8192))
+
+        s = get_session()
+        fe_susp = FileEvent(
+            src_ip="172.16.65.2", filename="packed_tool.exe", file_ext="exe",
+            sha256="8b" * 32, checked=True, verdict="unknown", stored_path=suspicious_path,
+        )
+        s.add(fe_susp)
+        s.commit()
+        with patch.object(dse, "yara_scan_file", return_value=[]), \
+             patch.object(dse, "clamav_db_available", return_value=False), \
+             patch.object(dse, "clamav_scan_file", return_value={"infected": False, "error": None}):
+            dse.deep_scan_one(s, fe_susp)
+            s.commit()
+        assert fe_susp.verdict == "suspicious", (
+            f"Yuqori entropiyali, tasdiqlanmagan fayl 'suspicious' bo'lishi kerak edi (HECH QACHON avtomatik "
+            f"'malicious' EMAS - soxta-pozitiv xavfi), '{fe_susp.verdict}' keldi"
+        )
+        alert = s.query(Alert).filter(Alert.file_event_id == fe_susp.id).first()
+        assert alert is not None and alert.severity == "medium", (
+            "Heuristik-asosli topilma FAQAT 'medium' severity berishi kerak - avtomatik tarmoq chorasi "
+            "ko'rilmasligi uchun (response_engine faqat high/critical'ga avtomatik javob beradi)"
+        )
+        s.close()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+check("Deep Scan Engine: 'unknown' holat heuristik orqali 'clean'/'suspicious'ga hal qilinadi", _test_deep_scan_resolves_unknown)
+
+# ---------------------------------------------------------------------------
+print("\n=== 103) check_hash: Endpoint heuristik orqali 'unknown' hal qilinadi, Agent'ga qaytariladigan javob O'ZGARMAYDI ===")
+
+
+def _test_check_hash_resolves_unknown_via_agent_heuristic():
+    """
+    Foydalanuvchi so'rovi: fayl mazmuni FAQAT endpoint'da mavjud bo'lgani
+    uchun, Agent o'zi hisoblagan heuristik (`scanners/heuristic_analyzer.
+    analyze_file()`) natijasi serverga yuboriladi va hash-intel hech
+    narsa demagan holatlarda "unknown"ni hal qiladi. MUHIM: bu Agent'ga
+    qaytariladigan `malicious`/`confirmed` javobiga TA'SIR QILMAYDI -
+    Agent o'z avtomatik karantin qarorini MUSTAQIL ravishda (mahalliy
+    heuristika orqali) qabul qiladi, server javobi orqali emas.
+    """
+    import hashlib
+    from unittest.mock import patch
+    import api.server as api_server
+
+    # MUHIM: bu 109+ testli faylda ko'plab test "ab"*32/"9b"*32 kabi
+    # oddiy takror-hex naqshlardan foydalanadi - bitta umumiy DB'da
+    # to'qnashish xavfi bor (aynan shu sabab bilan "ab"*32 boshqa,
+    # oldinroq yozilgan testning FileEvent'i bilan TO'QNASHIB, `.first()`
+    # noto'g'ri (eski) qatorni qaytargan edi). Kafolatlangan noyoblik
+    # uchun hashlib orqali, tavsiflovchi satrlardan hosil qilinadi.
+    sha_suspicious = hashlib.sha256(b"heuristic_test_suspicious_endpoint_file").hexdigest()
+    sha_malicious = hashlib.sha256(b"heuristic_test_malicious_endpoint_file").hexdigest()
+    sha_no_heuristic = hashlib.sha256(b"heuristic_test_old_agent_no_fields").hexdigest()
+
+    api_server.AGENT_API_KEY = "test-key-heuristic-unknown"
+    api_client = api_server.app.test_client()
+    headers = {"X-API-Key": "test-key-heuristic-unknown"}
+
+    s = get_session()
+    dev1 = Device(ip_address="172.16.66.1", hostname="TEST-PC-HEUR-1", source="test")
+    dev2 = Device(ip_address="172.16.66.2", hostname="TEST-PC-HEUR-2", source="test")
+    s.add_all([dev1, dev2])
+    s.commit()
+    dev1_id, dev2_id = dev1.id, dev2.id
+    s.close()
+
+    # --- 1) heuristic_verdict="suspicious" (ehtimoliy, entropiya) -> FileEvent "suspicious", Alert(medium) ---
+    with patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        r = api_client.post("/api/v1/check_hash", json={
+            "sha256": sha_suspicious, "filename": "packed_installer.exe",
+            "hostname": "TEST-PC-HEUR-1", "ip_address": "172.16.66.1",
+            "magic": "PE", "heuristic_score": 55,
+            "heuristic_findings": ["Yuqori entropiya (7.80/8.0)"],
+            "heuristic_verdict": "suspicious",
+        }, headers=headers)
+    assert r.status_code == 200
+    resp = r.get_json()
+    assert resp["malicious"] is False and resp["confirmed"] is False, (
+        "Heuristik 'suspicious' Agent'ga qaytariladigan javobga ta'sir qilmasligi kerak edi"
+    )
+
+    s = get_session()
+    fe1 = s.query(FileEvent).filter(FileEvent.sha256 == sha_suspicious).first()
+    assert fe1 is not None and fe1.verdict == "suspicious", (
+        f"Endpoint heuristik 'suspicious' bo'lsa, FileEvent 'unknown' EMAS 'suspicious' bo'lishi kerak edi, '{fe1.verdict if fe1 else None}' keldi"
+    )
+    alert1 = s.query(Alert).filter(Alert.device_id == dev1_id).first()
+    assert alert1 is not None and alert1.severity == "medium"
+    s.close()
+
+    # --- 2) heuristic_verdict="malicious" (deterministik, kengaytma-nomuvofiqlik) -> FileEvent "malicious", Alert(critical) ---
+    with patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        r2 = api_client.post("/api/v1/check_hash", json={
+            "sha256": sha_malicious, "filename": "invoice.pdf",
+            "hostname": "TEST-PC-HEUR-2", "ip_address": "172.16.66.2",
+            "magic": "PE", "heuristic_score": 100,
+            "heuristic_findings": ["Fayl kengaytmasi '.pdf' (PDF kutilgan), lekin haqiqiy tarkib 'PE'"],
+            "heuristic_verdict": "malicious",
+        }, headers=headers)
+    assert r2.status_code == 200
+    resp2 = r2.get_json()
+    assert resp2["malicious"] is False and resp2["confirmed"] is False, (
+        "Heuristik 'malicious' HAM Agent'ga qaytariladigan javobga ta'sir qilmasligi kerak edi - "
+        "Agent bu qarorni MUSTAQIL, mahalliy ravishda qabul qiladi"
+    )
+
+    s = get_session()
+    fe2 = s.query(FileEvent).filter(FileEvent.sha256 == sha_malicious).first()
+    assert fe2 is not None and fe2.verdict == "malicious", (
+        f"Endpoint heuristik 'malicious' (deterministik) bo'lsa, FileEvent 'malicious' bo'lishi kerak edi, '{fe2.verdict if fe2 else None}' keldi"
+    )
+    alert2 = s.query(Alert).filter(Alert.device_id == dev2_id).first()
+    assert alert2 is not None and alert2.severity == "critical"
+    s.close()
+
+    # --- 3) heuristic maydonlari yuborilmasa (eski Agent versiyasi) - eski xatti-harakat SAQLANADI (regressiya himoyasi) ---
+    with patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        r3 = api_client.post("/api/v1/check_hash", json={
+            "sha256": sha_no_heuristic, "filename": "old_agent_file.bin",
+            "hostname": "TEST-PC-HEUR-1", "ip_address": "172.16.66.1",
+        }, headers=headers)
+    assert r3.status_code == 200
+    s = get_session()
+    fe3 = s.query(FileEvent).filter(FileEvent.sha256 == sha_no_heuristic).first()
+    assert fe3 is not None and fe3.verdict == "unknown", (
+        "Heuristik maydonlarsiz (eski Agent) so'rov eski xatti-harakatni saqlashi kerak edi ('unknown')"
+    )
+    s.close()
+
+
+check("check_hash: Endpoint heuristik orqali 'unknown' hal qilinadi, Agent javobi o'zgarmaydi", _test_check_hash_resolves_unknown_via_agent_heuristic)
+
+# ---------------------------------------------------------------------------
+print("\n=== 104) Endpoint Agent: 'confirmed' bo'yicha aniq chora (real bug tuzatilgan) + mahalliy heuristik orqali niqoblangan fayl aniqlanishi ===")
+
+
+def _test_agent_confirmed_gating_and_local_heuristic():
+    """
+    O'ZI TOPILGAN REAL BUG: `_on_new_file()` ilgari FAQAT `result.get(
+    "malicious")`ni tekshirardi - bu esa VirusTotal'ning TASDIQLANMAGAN
+    (masalan 1/70 dvigatel) signali bilan ham to'liq avtomatik chora
+    (jarayonni o'ldirish, faylni o'chirish) ko'rilishiga olib kelardi,
+    garchi `api/server.py::check_hash()`ning o'z docstring'i "FAQAT
+    confirmed=true bo'lganda" deb hujjatlashtirgan bo'lsa ham. Bu test
+    ikkalasini ham tasdiqlaydi:
+
+    (1) `confirmed=False` (shubhali, tasdiqlanmagan) -> HECH QANDAY
+        avtomatik chora ko'RILMASLIGI kerak (bug tuzatilgan).
+    (2) Server hash-intel bo'yicha hech narsa demasa ham (`malicious=
+        False`), MAHALLIY heuristik DETERMINISTIK "malicious" (masalan
+        kengaytma-nomuvofiqligi) topsa - Agent BARIBIR avtomatik chora
+        ko'rishi kerak (foydalanuvchi so'rovi: fayl mazmuni FAQAT
+        endpoint'da mavjud, bu signalni yo'qotib bo'lmaydi).
+    """
+    import shutil
+    from unittest.mock import patch
+
+    import agent_core.agent as agent_mod
+
+    watch_dir = "/tmp/_test_agent_confirmed_gating"
+    if os.path.exists(watch_dir):
+        shutil.rmtree(watch_dir)
+    os.makedirs(watch_dir)
+
+    try:
+        agent = agent_mod.EndpointAgent([watch_dir])
+
+        # --- 1) confirmed=False (VT 1/70 kabi tasdiqlanmagan signal) -> chora ko'rilmasligi kerak ---
+        suspicious_file = os.path.join(watch_dir, "maybe_suspicious.bin")
+        with open(suspicious_file, "wb") as f:
+            f.write(b"benign-looking content for gating test")
+
+        with patch.object(agent_mod, "check_hash_with_server_or_cache",
+                           return_value={"malicious": True, "confirmed": False, "threat_name": "Weak.Signal"}), \
+             patch.object(agent_mod, "analyze_file", return_value={"verdict_hint": "clean", "findings": [], "score": 0, "magic": None}), \
+             patch.object(agent_mod, "quarantine_file") as mock_quarantine, \
+             patch.object(agent_mod, "kill_process_holding_file") as mock_kill, \
+             patch.object(agent_mod, "report_incident") as mock_report:
+            agent._on_new_file(suspicious_file)
+
+        assert mock_quarantine.call_count == 0, "confirmed=False bo'lsa, fayl KARANTINGA OLINMASLIGI kerak edi (bug qaytdi)"
+        assert mock_kill.call_count == 0, "confirmed=False bo'lsa, jarayon TO'XTATILMASLIGI kerak edi"
+        assert mock_report.call_count == 0, "confirmed=False bo'lsa, markazga incident YUBORILMASLIGI kerak edi"
+        assert os.path.exists(suspicious_file), "confirmed=False bo'lsa, asl fayl SAQLANIB QOLISHI kerak edi"
+
+        # --- 2) Server hech narsa demaydi, lekin MAHALLIY heuristik deterministik "malicious" -> chora ko'rilishi kerak ---
+        masquerade_file = os.path.join(watch_dir, "invoice.pdf")
+        with open(masquerade_file, "wb") as f:
+            f.write(b"MZ" + b"\x90" * 58 + b"masquerade payload for agent-side detection test")
+
+        with patch.object(agent_mod, "check_hash_with_server_or_cache",
+                           return_value={"malicious": False, "confirmed": False, "threat_name": None}), \
+             patch.object(agent_mod, "analyze_file",
+                          return_value={"verdict_hint": "malicious", "findings": ["Fayl kengaytmasi '.pdf' - haqiqiy tarkib 'PE'"], "score": 100, "magic": "PE"}), \
+             patch.object(agent_mod, "quarantine_file",
+                          return_value={"quarantined": True, "quarantine_path": "/tmp/fake_q/x", "source_removed": True, "error": None}) as mock_quarantine2, \
+             patch.object(agent_mod, "kill_process_holding_file") as mock_kill2, \
+             patch.object(agent_mod, "report_incident") as mock_report2:
+            mock_kill2.return_value = type("R", (), {"process_killed": False, "process_name": None})()
+            agent._on_new_file(masquerade_file)
+
+        assert mock_quarantine2.call_count == 1, (
+            "Server hash-intel jim tursa ham, mahalliy heuristik deterministik 'malicious' topganda "
+            "fayl KARANTINGA OLINISHI kerak edi (endpoint-orqali niqoblangan fayl bo'shlig'i)"
+        )
+        assert mock_report2.call_count == 1, "Markazga incident xabari yuborilishi kerak edi"
+        report_kwargs = mock_report2.call_args.kwargs
+        assert "PE" in report_kwargs.get("threat_name", "") or "kengaytma" in report_kwargs.get("threat_name", "").lower(), (
+            f"threat_name mahalliy heuristik topilmalaridan olinishi kerak edi: {report_kwargs.get('threat_name')}"
+        )
+    finally:
+        shutil.rmtree(watch_dir, ignore_errors=True)
+
+
+check("Endpoint Agent: 'confirmed' bo'yicha aniq chora + mahalliy heuristik orqali niqoblangan fayl aniqlanishi", _test_agent_confirmed_gating_and_local_heuristic)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

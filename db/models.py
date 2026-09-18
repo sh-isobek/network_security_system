@@ -281,7 +281,7 @@ class FileEvent(Base):
     protocol = Column(String(20))               # HTTP / SMTP / FTP
     channel = Column(String(50))                 # masalan "telegram" | "email" | "web" (URL/header asosida taxmin)
     checked = Column(Boolean, default=False)     # hash tekshiruvidan o'tdimi
-    verdict = Column(String(20))                  # "clean" | "malicious" | "unknown"
+    verdict = Column(String(20))                  # "clean" | "suspicious" | "malicious" | "unknown"
     threat_score = Column(Integer, default=0)     # 0-100
     checked_sources = Column(String(255))          # qaysi manbalar tekshirildi (vergul bilan)
 

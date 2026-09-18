@@ -56,6 +56,7 @@ from scanners.archive_scanner import extract_zip_and_queue
 from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_available as clamav_db_available
 from scanners.file_type_detector import detect_magic_from_file, check_extension_mismatch
 from scanners.pdf_analyzer import scan_pdf_file, PDF_EXTENSIONS
+from scanners.heuristic_analyzer import scan_bytes_heuristic, READ_LIMIT_BYTES
 from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -133,6 +134,51 @@ def deep_scan_one(session, fe: FileEvent):
             children = extract_zip_and_queue(session, fe)
             if children:
                 findings.append(f"Arxivdan {len(children)} ta fayl chiqarilib, tahlil navbatiga qo'yildi.")
+
+        # 4) "unknown" holatni hal qilish (foydalanuvchi so'rovi: fayl
+        # HECH QACHON "unknown" holatida qolmasligi kerak). Bu nuqtaga
+        # kelinganda hash-intel (local/VT/MalwareBazaar) VA yuqoridagi
+        # BARCHA chuqur tekshiruvlar (YARA/ClamAV/fayl-turi-nomuvofiqligi/
+        # Office/PDF/ZIP) allaqachon ishlab bo'lgan va hech narsa
+        # topmagan - bu fayl ENDI to'liq, ko'p qatlamli tekshiruvdan
+        # o'tdi. Oxirgi, EHTIMOLIY (statistik) signal - entropiya +
+        # skript naqshlari (`scanners/heuristic_analyzer.py`) - orqali
+        # "unknown" "clean" (hech narsa topilmadi) yoki "suspicious"ga
+        # (zaif, ammo e'tiborga loyiq signal) HAL QILINADI. Bu funksiya
+        # HECH QACHON "malicious" bermaydi (faqat statistik signallar -
+        # soxta-pozitiv xavfi) - shuning uchun avtomatik karantin/
+        # tarmoqdan uzishga OLIB KELMAYDI, faqat Alert(medium) orqali
+        # tahlilchi e'tiboriga yetkaziladi.
+        if not is_malicious and fe.verdict == "unknown":
+            try:
+                with open(fe.stored_path, "rb") as fh:
+                    _content = fh.read(READ_LIMIT_BYTES)
+            except OSError:
+                _content = b""
+            heuristic = scan_bytes_heuristic(_content, real_magic, fe.file_ext)
+            if heuristic["verdict_hint"] == "suspicious":
+                fe.verdict = "suspicious"
+                fe.threat_score = max(fe.threat_score or 0, heuristic["score"])
+                findings.append("Heuristik tahlil (entropiya/skript naqshi): " + "; ".join(heuristic["findings"]))
+                session.add(Alert(
+                    file_event_id=fe.id,
+                    device_id=_upsert_device_for_file(session, fe.src_ip).id,
+                    severity="medium",
+                    reason=(
+                        f"Heuristik tahlilda shubhali belgilar topildi (tasdiqlanmagan): {fe.filename}\n"
+                        + "\n".join(heuristic["findings"])
+                    ),
+                    action_taken="SHUBHALI (heuristik): avtomatik chora ko'rilmadi, qo'lda ko'rib chiqish tavsiya etiladi",
+                    notified=False,
+                ))
+                logger.warning(f"HEURISTIK SHUBHALI: {fe.filename} ({fe.src_ip}) - ball={heuristic['score']}")
+            else:
+                fe.verdict = "clean"
+                fe.threat_score = 0
+                findings.append(
+                    "Heuristik tahlil: xavfli belgi topilmadi - to'liq skanerlangan (YARA/ClamAV/fayl "
+                    "turi/PDF/Office + entropiya) va 'unknown' o'rniga 'clean' deb belgilandi."
+                )
     else:
         findings.append("stored_path mavjud emas - chuqur tekshiruv o'tkazib yuborildi (faqat hash natijasi asosida).")
 
