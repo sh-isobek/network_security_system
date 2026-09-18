@@ -6243,19 +6243,19 @@ def _test_all_pages_column_filters():
     from api import token_manager
 
     s = get_session()
-    alpha = Device(ip_address="172.16.63.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
+    alpha = Device(ip_address="172.16.163.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
                    connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(), risk_score=85,
                    discovery_source="arp_scan", device_type="workstation", vendor="Dell-Test")
-    beta = Device(ip_address="172.16.63.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
+    beta = Device(ip_address="172.16.163.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
                   connection_type="cable", source="network_discovery", last_seen=utcnow(), risk_score=5,
                   discovery_source="icmp", device_type="server", vendor="HP-Test")
     s.add_all([alpha, beta])
     s.commit()
     s.add(Alert(severity="high", reason="ALPHA-FILTER-PC uchun test alert", device_id=alpha.id,
                 mitre_technique_id="T1204.002", acknowledged=False))
-    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="172.16.63.1", sha256="ab" * 32,
+    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="172.16.163.1", sha256="ab" * 32,
                      verdict="clean", channel="endpoint_agent"))
-    s.add(WebAccessLog(source_ip="172.16.63.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
+    s.add(WebAccessLog(source_ip="172.16.163.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
     s.commit()
     s.close()
 
@@ -7359,7 +7359,7 @@ def _test_devices_stale_hide():
     assert "yashirilgan" in html, "Yashirilgan qurilmalar haqida ogohlantirish ko'rinmadi"
 
     # 2) `show_stale=1` bilan qayta ko'rinishi kerak
-    html = client.get("/devices?show_stale=1").get_data(as_text=True)
+    html = client.get("/devices?show_stale=1&hostname=DEVICE-72H").get_data(as_text=True)
     assert "FRESH-DEVICE-72H" in html and "STALE-DEVICE-72H" in html, \
         "show_stale=1 bilan eski qurilma ham ko'rinishi kerak edi"
 
@@ -7396,6 +7396,11 @@ def _test_notification_severity_filter():
     from unittest.mock import patch, MagicMock
 
     s = get_session()
+    # Izolyatsiya: bitta umumiy bazada oldingi testlardan qolgan, hali
+    # xabar qilinmagan alertlar bu testning sanog'iga aralashmasligi uchun
+    # ularni "xabar qilingan" deb belgilaymiz.
+    s.query(Alert).filter(Alert.notified.isnot(True)).update({"notified": True}, synchronize_session=False)
+    s.commit()
     d = Device(ip_address="172.16.96.1", mac_address="AA:BB:CC:96:00:01",
                hostname="SEVERITY-FILTER-PC", connection_type="wifi", source="test")
     s.add(d)
@@ -7558,6 +7563,15 @@ def _test_correlation_engine():
     import engine.correlation_engine as ce
 
     s = get_session()
+    # Izolyatsiya: oldingi testlardan qolgan, hali Incident'ga bog'lanmagan
+    # alertlar bu testning sanog'iga aralashmasligi uchun ularni bitta
+    # texnik Incident'ga biriktiramiz.
+    _legacy = Incident(title="legacy alerts (test isolation)", severity="low", status="resolved",
+                       first_seen=utcnow(), last_seen=utcnow())
+    s.add(_legacy)
+    s.flush()
+    s.query(Alert).filter(Alert.incident_id.is_(None)).update({"incident_id": _legacy.id}, synchronize_session=False)
+    s.commit()
     d1 = Device(ip_address="172.16.97.1", mac_address="AA:BB:CC:97:00:01", hostname="CORR-TEST-D1",
                 connection_type="wifi", source="test")
     d2 = Device(ip_address="172.16.97.2", mac_address="AA:BB:CC:97:00:02", hostname="CORR-TEST-D2",
