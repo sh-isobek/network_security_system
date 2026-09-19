@@ -40,6 +40,23 @@ $ErrorActionPreference = "Stop"
 # kompyuterning AD'dagi domen a'zoligidan TO'G'RIDAN-TO'G'RI o'qiydi -
 # foydalanuvchi sessiyasiga bog'liq emas, SYSTEM kontekstida ham
 # (login'dan oldin ham) ishonchli ishlaydi.
+function Write-EarlyLog {
+    param([string]$Message)
+    try {
+        $ld = Split-Path $LogFile -Parent
+        if (-not (Test-Path $ld)) { New-Item -ItemType Directory -Path $ld -Force | Out-Null }
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [Deploy-NetworkSecurityAgent] $Message" | Out-File -FilePath $LogFile -Append -Encoding utf8
+    } catch { }
+}
+Write-EarlyLog "Skript boshlandi (kompyuter: $env:COMPUTERNAME, PSScriptRoot: $PSScriptRoot)"
+
+# Tez yo'l: skript SYSVOL'dagi o'z papkasidan ishga tushirilgan bo'lsa, VERSION
+# shu yerda - AD/DNS'ga (VPN'da sekin/osilib qolishi mumkin) umuman murojaat kerak emas.
+if (-not $ServerShare -and $PSScriptRoot -and $PSScriptRoot.StartsWith("\\") -and (Test-Path (Join-Path $PSScriptRoot "VERSION"))) {
+    $ServerShare = $PSScriptRoot
+    Write-EarlyLog "ServerShare skript papkasidan olindi: $ServerShare"
+}
+
 if (-not $ServerShare) {
     try {
         $DomainName = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name
