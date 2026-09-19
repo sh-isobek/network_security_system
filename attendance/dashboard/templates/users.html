@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Foydalanuvchilar - Davomat Dashboard{% endblock %}
+{% block content %}
+<h1>Foydalanuvchilar</h1>
+
+<div class="card">
+    <h2 style="margin-top:0;">Yangi foydalanuvchi</h2>
+    <form method="post" action="{{ url_for('user_add') }}" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label style="font-size:11px; color:#5a6673;">Login<br>
+            <input type="text" name="username" required style="padding:6px; border:1px solid #dde3e8; border-radius:4px;"></label>
+        <label style="font-size:11px; color:#5a6673;">Parol<br>
+            <input type="password" name="password" required style="padding:6px; border:1px solid #dde3e8; border-radius:4px;"></label>
+        <label style="font-size:11px; color:#5a6673;">Rol<br>
+            <select name="role" style="padding:6px; border:1px solid #dde3e8; border-radius:4px;">
+                {% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+            </select>
+        </label>
+        <button type="submit">Yaratish</button>
+    </form>
+</div>
+
+<table>
+    <tr><th>Login</th><th>Rol</th><th>Holat</th><th>Oxirgi kirish</th><th></th></tr>
+    {% for u in users %}
+    <tr>
+        <td>{{ u.username }}</td>
+        <td><span class="badge blue">{{ u.role }}</span></td>
+        <td>{% if u.is_active %}<span class="badge green">Faol</span>{% else %}<span class="badge gray">Faolsiz</span>{% endif %}</td>
+        <td>{{ u.last_login | local_dt }}</td>
+        <td>
+            {% if u.is_active %}
+            <form method="post" action="{{ url_for('user_deactivate', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" style="background:#c0392b; color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px;">Faolsizlantirish</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('user_activate', user_id=u.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" style="background:#27ae60; color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px;">Faollashtirish</button>
+            </form>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% endblock %}
