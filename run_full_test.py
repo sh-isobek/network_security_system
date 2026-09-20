@@ -8327,13 +8327,78 @@ def _test_full_file_path_reporting_and_display():
 check("Fayl joylashuvi: agent har bir faylni yuboradi (kesh zaxira), Dashboard to'liq yo'lni ko'rsatadi", _test_full_file_path_reporting_and_display)
 
 # ---------------------------------------------------------------------------
-print("\n=== 106) Heuristika: ikki kengaytma niqobi (video.mp4.apk) va APK ruxsatlari (real Telegram 'To'y arxiv' zararli APK) ===")
+print("\n=== 106) Heuristika: ikki kengaytma niqobi + APK (haqiqiy binar AXML manifest tahlili) ===")
+
+
+def _build_axml(package, permissions=(), receiver_actions=(), launcher=True, accessibility_service=False):
+    """Test uchun HAQIQIY binar AndroidManifest.xml (AXML) quradi - Android'ning o'z formatida."""
+    import struct
+    strings = []
+
+    def sidx(t):
+        if t not in strings:
+            strings.append(t)
+        return strings.index(t)
+
+    NONE = 0xFFFFFFFF
+    body = b""
+
+    def start(name, attrs):
+        nonlocal body
+        a = b""
+        for an, av in attrs:
+            a += struct.pack("<IIIHBBI", NONE, sidx(an), sidx(av), 8, 0, 3, sidx(av))
+        body += struct.pack("<HHIII", 0x0102, 16, 36 + len(a), 1, NONE)
+        body += struct.pack("<IIHHHHHH", NONE, sidx(name), 20, 20, len(attrs), 0, 0, 0) + a
+
+    def end(name):
+        nonlocal body
+        body += struct.pack("<HHIII", 0x0103, 16, 24, 1, NONE) + struct.pack("<II", NONE, sidx(name))
+
+    start("manifest", [("package", package)])
+    for pm in permissions:
+        start("uses-permission", [("name", "android.permission." + pm)])
+        end("uses-permission")
+    start("application", [])
+    if launcher:
+        start("activity", [("name", ".Main")])
+        start("intent-filter", [])
+        start("action", [("name", "android.intent.action.MAIN")]); end("action")
+        start("category", [("name", "android.intent.category.LAUNCHER")]); end("category")
+        end("intent-filter"); end("activity")
+    if accessibility_service:
+        start("service", [("name", ".Acc"), ("permission", "android.permission.BIND_ACCESSIBILITY_SERVICE")])
+        start("intent-filter", [])
+        start("action", [("name", "android.accessibilityservice.AccessibilityService")]); end("action")
+        end("intent-filter"); end("service")
+    if receiver_actions:
+        start("receiver", [("name", ".Rcv")])
+        start("intent-filter", [])
+        for ra in receiver_actions:
+            start("action", [("name", ra)]); end("action")
+        end("intent-filter"); end("receiver")
+    end("application")
+    end("manifest")
+
+    sp_strings = b""
+    offsets = []
+    for t in strings:
+        offsets.append(len(sp_strings))
+        sp_strings += struct.pack("<H", len(t)) + t.encode("utf-16-le") + b"\0\0"
+    while len(sp_strings) % 4:
+        sp_strings += b"\0"
+    strings_start = 28 + 4 * len(strings)
+    pool = struct.pack("<HHIIIIII", 0x0001, 28, strings_start + len(sp_strings), len(strings), 0, 0, strings_start, 0)
+    pool += b"".join(struct.pack("<I", o) for o in offsets) + sp_strings
+    total = 8 + len(pool) + len(body)
+    return struct.pack("<HHI", 0x0003, 8, total) + pool + body
 
 
 def _test_double_extension_and_apk():
     import shutil
     import zipfile
-    from scanners.heuristic_analyzer import check_double_extension, analyze_file, scan_apk
+    from scanners.heuristic_analyzer import check_double_extension, analyze_file
+    from scanners.apk_analyzer import analyze_apk, parse_manifest
 
     # nom bo'yicha qoidalar
     assert check_double_extension("To'ydan arxiv 2026(FullHD).mp4.apk"), "mp4.apk aniqlanmadi"
@@ -8343,46 +8408,69 @@ def _test_double_extension_and_apk():
     assert not check_double_extension("archive.tar.gz") and not check_double_extension("report.v2.exe"), "soxta-pozitiv"
     assert not check_double_extension("notes.txt.zip"), "zip bajariladigan emas"
 
+    # AXML parseri: builder -> parse_manifest aylanma tekshiruvi
+    info = parse_manifest(_build_axml("com.test.app", ["INTERNET", "SEND_SMS"],
+                                      ["android.provider.Telephony.SMS_RECEIVED"], launcher=False, accessibility_service=True))
+    assert info["package"] == "com.test.app"
+    assert "android.permission.SEND_SMS" in info["permissions"]
+    assert "android.provider.Telephony.SMS_RECEIVED" in info["receiver_actions"]
+    assert info["accessibility_service"] is True and info["has_launcher"] is False
+
     work = "/tmp/_test_apk_heur"
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     try:
-        def make_apk(path, perms):
-            manifest = "".join("android.permission." + p_ + "\0" for p_ in perms).encode("utf-16-le")
+        def make_apk(path, **kw):
             with zipfile.ZipFile(path, "w") as zf:
-                zf.writestr("AndroidManifest.xml", manifest)
+                zf.writestr("AndroidManifest.xml", _build_axml(**kw))
                 zf.writestr("classes.dex", b"dex\n035\0" + b"\0" * 64)
 
-        # 1) real hodisa: video niqobi + SMS/accessibility ruxsatlari -> malicious
+        # 1) real hodisa: video niqobi + SMS/accessibility -> malicious
         p1 = os.path.join(work, "To'ydan arxiv 2026(FullHD).mp4.apk")
-        make_apk(p1, ["SEND_SMS", "READ_SMS", "BIND_ACCESSIBILITY_SERVICE"])
+        make_apk(p1, package="uz.toy.arxiv", permissions=["SEND_SMS", "READ_SMS", "RECEIVE_SMS"],
+                 receiver_actions=["android.provider.Telephony.SMS_RECEIVED"], launcher=False, accessibility_service=True)
         r1 = analyze_file(p1, filename=os.path.basename(p1))
         assert r1["verdict_hint"] == "malicious" and r1["score"] == 100, r1
-        assert any("Ikki kengaytma" in f for f in r1["findings"]) and any("SEND_SMS" in f for f in r1["findings"]), r1
+        assert any("Ikki kengaytma" in f for f in r1["findings"]) and any("SMS" in f for f in r1["findings"]), r1
 
-        # 2) niqobsiz, lekin xavfli ruxsatli APK -> suspicious (avtomatik karantin emas)
+        # 2) niqobsiz, lekin SMS-stealer profili (SMS + accessibility + yashirin ikona) -> malicious
         p2 = os.path.join(work, "tool.apk")
-        make_apk(p2, ["SEND_SMS", "READ_SMS"])
+        make_apk(p2, package="x.tool", permissions=["READ_SMS", "SEND_SMS", "RECEIVE_SMS"],
+                 receiver_actions=["android.provider.Telephony.SMS_RECEIVED"], launcher=False, accessibility_service=True)
         r2 = analyze_file(p2, filename="tool.apk")
-        assert r2["verdict_hint"] == "suspicious" and r2["score"] >= 60, r2
+        assert r2["verdict_hint"] == "malicious" and r2["score"] >= 80, r2
 
-        # 3) ruxsatsiz oddiy APK -> baribir suspicious (kompyuterda APK odatiy emas), lekin past ball
+        # 3) qonuniy ko'rinishdagi APK (faqat INTERNET + launcher) -> suspicious, past ball (zararli EMAS)
         p3 = os.path.join(work, "plain.apk")
-        make_apk(p3, [])
+        make_apk(p3, package="org.example.calc", permissions=["INTERNET"])
         r3 = analyze_file(p3, filename="plain.apk")
         assert r3["verdict_hint"] == "suspicious" and r3["score"] == 40, r3
 
-        # 4) oddiy ZIP (APK emas) - aralashib ketmaydi
-        p4 = os.path.join(work, "docs.zip")
-        with zipfile.ZipFile(p4, "w") as zf:
+        # 4) F-Droid kabi (REQUEST_INSTALL_PACKAGES + BOOT) - zararli deb belgilanmasligi kerak (soxta-pozitiv himoyasi)
+        p4 = os.path.join(work, "store.apk")
+        make_apk(p4, package="org.store.app", permissions=["INTERNET", "REQUEST_INSTALL_PACKAGES", "QUERY_ALL_PACKAGES"],
+                 receiver_actions=["android.intent.action.BOOT_COMPLETED"])
+        r4 = analyze_file(p4, filename="store.apk")
+        assert r4["verdict_hint"] == "suspicious" and r4["score"] < 80, r4
+
+        # 5) oddiy ZIP (APK emas) - aralashib ketmaydi
+        p5 = os.path.join(work, "docs.zip")
+        with zipfile.ZipFile(p5, "w") as zf:
             zf.writestr("a.txt", "salom")
-        assert scan_apk(p4) is None
-        assert analyze_file(p4, filename="docs.zip")["verdict_hint"] == "clean"
+        assert analyze_apk(p5) is None
+        assert analyze_file(p5, filename="docs.zip")["verdict_hint"] == "clean"
+
+        # 6) buzilgan manifest - "o'qib bo'lmadi" shubhali
+        p6 = os.path.join(work, "broken.apk")
+        with zipfile.ZipFile(p6, "w") as zf:
+            zf.writestr("AndroidManifest.xml", b"garbage-not-axml")
+        r6 = analyze_apk(p6)
+        assert r6 is not None and r6["verdict_hint"] == "suspicious"
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-check("Heuristika: ikki kengaytma niqobi + APK ruxsatlari (malicious/suspicious/clean chegaralari)", _test_double_extension_and_apk)
+check("Heuristika: ikki kengaytma niqobi + APK haqiqiy AXML tahlili (malicious/suspicious/clean chegaralari)", _test_double_extension_and_apk)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

@@ -39,10 +39,10 @@ soxta "clean" yorlig'i berishdan ko'ra halolroq.
 """
 import math
 import re
-import zipfile
 from collections import Counter
 from typing import Optional
 
+from scanners.apk_analyzer import analyze_apk
 from scanners.file_type_detector import (
     detect_magic_from_bytes,
     check_extension_mismatch,
@@ -83,16 +83,6 @@ _DECOY_EXTS = {
     "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv", "zip", "rar", "7z",
 }
 
-# Android'da SMS/kirish (accessibility)/o'rnatish kabi zararli dasturlar (masalan
-# "To'y taklifnomasi.apk" turkumidagi Telegram orqali tarqaladigan) suiiste'mol
-# qiladigan ruxsatlar.
-_RISKY_ANDROID_PERMISSIONS = [
-    "SEND_SMS", "READ_SMS", "RECEIVE_SMS", "WRITE_SMS", "BIND_ACCESSIBILITY_SERVICE",
-    "REQUEST_INSTALL_PACKAGES", "SYSTEM_ALERT_WINDOW", "BIND_DEVICE_ADMIN",
-    "READ_CONTACTS", "READ_CALL_LOG", "RECORD_AUDIO", "QUERY_ALL_PACKAGES", "RECEIVE_BOOT_COMPLETED",
-]
-
-
 def check_double_extension(filename: Optional[str]) -> Optional[str]:
     """`nom.mp4.apk` kabi (media/hujjat kengaytmasi + bajariladigan kengaytma) nomni aniqlaydi.
     Topilsa tushuntirish matnini, aks holda None qaytaradi."""
@@ -106,27 +96,6 @@ def check_double_extension(filename: Optional[str]) -> Optional[str]:
     return None
 
 
-def scan_apk(filepath: str) -> Optional[dict]:
-    """
-    Fayl Android paketi (ZIP ichida AndroidManifest.xml + classes.dex) bo'lsa, xavfli
-    ruxsatlarni sanaydi. APK bo'lmasa None. ZIP markaziy katalogini o'qiydi (fayl hajmidan
-    qat'iy nazar), manifest 2 MB bilan cheklanadi.
-    Qaytaradi: {"risky": [ruxsat nomlari]}
-    """
-    try:
-        with zipfile.ZipFile(filepath) as zf:
-            names = set(zf.namelist())
-            if "AndroidManifest.xml" not in names:
-                return None
-            manifest = zf.read("AndroidManifest.xml")[:2 * 1024 * 1024]
-    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError):
-        return None
-    risky = []
-    for perm in _RISKY_ANDROID_PERMISSIONS:
-        needle = ("android.permission." + perm)
-        if needle.encode("utf-8") in manifest or needle.encode("utf-16-le") in manifest:
-            risky.append(perm)
-    return {"risky": risky}
 
 READ_LIMIT_BYTES = 5 * 1024 * 1024  # 5 MB - "zip bomb"ga o'xshash cheksiz o'qishdan himoya
 
@@ -209,10 +178,9 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
     dbl = check_double_extension(name)
     if dbl:
         findings.append(dbl)
-        apk_info = scan_apk(filepath)
-        if apk_info is not None:
-            findings.append("Fayl haqiqatan Android paketi (APK)" + (
-                f"; xavfli ruxsatlar: {', '.join(apk_info['risky'])}" if apk_info["risky"] else ""))
+        apk = analyze_apk(filepath)
+        if apk is not None:
+            findings.extend(apk["findings"])
         return {"score": 100, "findings": findings, "verdict_hint": "malicious", "magic": magic_label}
 
     # 1) Kengaytma nomuvofiqligi - deterministik
@@ -236,20 +204,20 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
             findings.extend(pdf_result.get("findings", []))
             return {"score": 100, "findings": findings, "verdict_hint": "malicious", "magic": magic_label or "PDF"}
 
-    # 2b) Android paketi (APK) Windows/Linux kompyuterda - odatiy emas; xavfli ruxsatlar bilan
-    # kuchliroq signal (ehtimoliy - faqat "suspicious", hech qachon avtomatik "malicious" emas)
-    apk_score = 0
+    # 2b) Android paketi (APK): haqiqiy AXML manifest tahlili (scanners/apk_analyzer.py).
+    # Ball >= 80 (zararli APK'larga xos KOMBINATSIYA: SMS + accessibility/overlay + yashirin ikona...)
+    # - "malicious"; aks holda "suspicious" (kompyuterda APK odatiy emas).
     if magic_label == "ZIP" or file_ext in ("apk", "xapk", "apks"):
-        apk_info = scan_apk(filepath)
-        if apk_info is not None:
-            apk_score = 40 + 10 * min(len(apk_info["risky"]), 3)
-            findings.append("Android paketi (APK) kompyuterda topildi" + (
-                f"; xavfli ruxsatlar: {', '.join(apk_info['risky'])}" if apk_info["risky"] else ""))
+        apk = analyze_apk(filepath)
+        if apk is not None:
+            findings.extend(apk["findings"])
+            verdict = "malicious" if apk["verdict_hint"] == "malicious" else "suspicious"
+            return {"score": apk["score"], "findings": findings, "verdict_hint": verdict, "magic": magic_label or "ZIP"}
 
     # 3) Ehtimoliy (statistik) signallar
     soft = scan_bytes_heuristic(data, magic_label, file_ext)
     findings.extend(soft["findings"])
-    score = min(100, soft["score"] + apk_score)
+    score = soft["score"]
     verdict_hint = "suspicious" if score >= SUSPICIOUS_SCORE_THRESHOLD else "clean"
 
     return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label}
