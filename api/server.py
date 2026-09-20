@@ -39,7 +39,7 @@ from config.settings import LOG_LEVEL
 from db.database import get_session
 from db.models import HashBlacklist, Alert, Device, FileEvent, utcnow
 from threat_intel.local_checker import check_local
-from threat_intel.virustotal_checker import check_virustotal
+from threat_intel.virustotal_checker import check_virustotal, vt_slot_busy
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
 from scanners.heuristic_analyzer import SUSPICIOUS_SCORE_THRESHOLD
 from api import token_manager
@@ -332,7 +332,8 @@ def check_hash():
         # Mahalliyda topilmasa - VirusTotal/MalwareBazaar (server tomonida,
         # shunda agentlar o'zlari internetga chiqmaydi - markazlashtirilgan
         # va tezkorroq, chunki natija darhol keshga tushadi)
-        vt = check_virustotal(sha256)
+        vt_deferred = vt_slot_busy()
+        vt = None if vt_deferred else check_virustotal(sha256)
         if vt is not None and vt.get("malicious"):
             positives = int(vt.get("positives") or 0)
             total = int(vt.get("total") or 0)
@@ -407,6 +408,13 @@ def check_hash():
 
         final_verdict = "clean" if vt_scanned_clean else "unknown"
         _log_endpoint_scan(session, data, sha256, final_verdict, 0, None, None)
+        if vt_deferred and final_verdict == "unknown":
+            # VT slot band edi (bepul tarif) - fon `file_analysis_engine` o'z sur'ati bilan tekshiradi
+            session.flush()
+            _fe = (session.query(FileEvent).filter(FileEvent.sha256 == sha256, FileEvent.channel == "endpoint_agent")
+                   .order_by(FileEvent.id.desc()).first())
+            if _fe is not None:
+                _fe.checked = False
         session.commit()
         return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None,
                         "upload_required": not vt_scanned_clean or heuristic_verdict in ("suspicious", "malicious")})

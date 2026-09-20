@@ -8689,6 +8689,33 @@ def _test_agent_all_drives():
 
 check("Agent: barcha disklar/USB, ichma-ich papkalar, tizim istisnolari", _test_agent_all_drives)
 
+print("\n=== 112) check_hash: VT slot band bo'lsa 15s kutmaydi, fayl fon tekshiruviga qoldiriladi ===")
+
+
+def _test_check_hash_vt_busy_defers():
+    import hashlib, time
+    from unittest.mock import patch
+    import api.server as api_server
+    api_server.AGENT_API_KEY = "test-key-vt-busy"
+    c = api_server.app.test_client()
+    sha = hashlib.sha256(b"vt_busy_deferred_file").hexdigest()
+    s = get_session()
+    s.add(Device(ip_address="172.16.99.9", hostname="TEST-VT-BUSY", source="test")); s.commit(); s.close()
+    with patch.object(api_server, "vt_slot_busy", return_value=True), \
+         patch.object(api_server, "check_virustotal", side_effect=AssertionError("VT chaqirilmasligi kerak")), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        t0 = time.time()
+        r = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "a.txt", "hostname": "TEST-VT-BUSY", "ip_address": "172.16.99.9"},
+                   headers={"X-API-Key": "test-key-vt-busy"})
+        assert r.status_code == 200 and time.time() - t0 < 3
+    s = get_session()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == sha).first()
+    assert fe is not None and fe.checked is False and fe.verdict == "unknown", "fon tekshiruvi uchun checked=False bo'lishi kerak"
+    s.close()
+
+
+check("check_hash: VT slot band -> kutmaydi, fon tekshiruviga qoldiriladi", _test_check_hash_vt_busy_defers)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

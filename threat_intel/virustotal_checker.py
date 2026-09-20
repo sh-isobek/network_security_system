@@ -35,6 +35,15 @@ def _respect_rate_limit():
     _last_request_time = time.time()
 
 
+def vt_slot_busy() -> bool:
+    """
+    API (agent so'rovi) yo'lida ISHLATILADI: VT bepul tarifi (4/min) slotini kutish agentni
+    5s timeout'ga tushiradi - shuning uchun band bo'lsa VT so'ralmaydi (True), fayl fon
+    tekshiruviga (`file_analysis_engine`) qoldiriladi.
+    """
+    return bool(VT_API_KEY) and time.time() - _last_request_time < RATE_LIMIT_DELAY
+
+
 def check_virustotal(sha256: str, timeout: int = 10) -> Optional[dict]:
     """
     VirusTotal'dan hash bo'yicha natija so'raydi.
