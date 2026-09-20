@@ -158,7 +158,8 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           "$hash  $zip" | Out-File -Encoding ascii "$zip.sha256"
           $tag = "agent-v$($env:AGENT_VERSION)"
-          gh release view $tag *> $null
+          # PowerShell 5.1 native stderr'ni xato deb oladi - cmd orqali jimgina tekshiramiz
+          cmd /c "gh release view $tag >nul 2>&1"
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag allaqachon mavjud - o'zgartirilmaydi (versiya o'zgarmagan)"
             exit 0
