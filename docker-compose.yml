@@ -286,7 +286,9 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 1g
-    command: gunicorn -w 4 -b 0.0.0.0:8443 api.server:app
+    command: gunicorn -w 4 --timeout 150 -b 0.0.0.0:8443 api.server:app
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}

@@ -5,6 +5,9 @@ metadata:
   namespace: network-security
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "150"
     cert-manager.io/cluster-issuer: letsencrypt-prod   # cert-manager o'rnatilgan bo'lsa
 spec:
   ingressClassName: nginx

@@ -26,6 +26,8 @@ import hashlib
 import hmac
 import os
 import sys
+import json
+from urllib.parse import unquote
 from functools import wraps
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,12 +43,15 @@ from threat_intel.virustotal_checker import check_virustotal
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
 from scanners.heuristic_analyzer import SUSPICIOUS_SCORE_THRESHOLD
 from api import token_manager
+from scanners.upload_scanner import scan_upload, MAX_UPLOAD_BYTES
 
 import logging
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("api_server")
 
 app = Flask(__name__)
+app.config["UPLOAD_SCAN_ROOT"] = os.getenv("UPLOAD_SCAN_ROOT", "/tmp/endpoint-scans")
+app.config["UPLOAD_SCAN_MAX_BYTES"] = MAX_UPLOAD_BYTES
 
 # Oddiy shared-secret autentifikatsiya (production'da mTLS/HTTPS bilan almashtirilishi kerak)
 #
@@ -144,7 +149,8 @@ def require_api_key(fn):
         # Agent tokeni hostname'ga biriktirilgan bo'lsa, boshqa qurilma
         # nomidan ma'lumot yuborishiga yo'l qo'ymaymiz. Qo'lda yaratilgan
         # umumiy integratsiya tokenlarida agent_hostname bo'sh bo'ladi.
-        hostname = (request.get_json(silent=True) or {}).get("hostname")
+        hostname = (request.headers.get("X-Agent-Hostname") if request.endpoint == "scan_file_upload"
+                    else (request.get_json(silent=True) or {}).get("hostname"))
         if token_info is not None and (not token_info.agent_hostname or token_info.agent_hostname == hostname):
             return fn(*args, **kwargs)
 
@@ -167,6 +173,45 @@ def require_bootstrap_key(fn):
 @limiter.exempt
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/v1/scan_file", methods=["POST"])
+@limiter.limit("6 per minute")
+@require_api_key
+def scan_file_upload():
+    """Raw file bytes, authenticated before reading. No persistent sample copy."""
+    limit = app.config["UPLOAD_SCAN_MAX_BYTES"]
+    if request.mimetype != "application/octet-stream":
+        return jsonify({"error": "application/octet-stream required"}), 415
+    if request.content_length is None:
+        return jsonify({"error": "Content-Length required"}), 411
+    if request.content_length > limit:
+        return jsonify({"error": "File too large"}), 413
+    filename = unquote(request.headers.get("X-File-Name", "sample.bin"))
+    if len(filename) > 255:
+        return jsonify({"error": "Filename too long"}), 400
+    result = scan_upload(
+        request.stream, request.headers.get("X-File-SHA256", "").lower(),
+        filename, app.config["UPLOAD_SCAN_ROOT"], limit,
+    )
+    # Sample has already been deleted. Only hash and analysis survive in DB.
+    session = get_session()
+    try:
+        session.add(FileEvent(
+            src_ip=request.remote_addr or "unknown",
+            sha256=result["sha256"], protocol="endpoint", channel="endpoint_upload",
+            checked=True, deep_scanned=True, verdict=result["verdict"],
+            threat_score=result["score"], checked_sources=result["source"],
+            deep_scan_findings=json.dumps({
+                "findings": result["findings"],
+                "scan_complete": result["scan_complete"],
+                "scan_warning": result.get("scan_warning"),
+            }, ensure_ascii=False),
+        ))
+        session.commit()
+    finally:
+        session.close()
+    return jsonify(result)
 
 
 def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_score: int,
@@ -301,6 +346,7 @@ def check_hash():
                 "malicious": True, "confirmed": confirmed,
                 "threat_name": vt.get("threat_name"), "source": "virustotal",
                 "positives": positives, "total": total,
+                "upload_required": not confirmed,
             })
 
         # VT hashni HAQIQATAN tekshirdi (None emas) va hech qaysi dvigatel
@@ -356,12 +402,14 @@ def check_hash():
                     notified=False,
                 ))
             session.commit()
-            return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
+            return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None,
+                            "upload_required": True})
 
         final_verdict = "clean" if vt_scanned_clean else "unknown"
         _log_endpoint_scan(session, data, sha256, final_verdict, 0, None, None)
         session.commit()
-        return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None})
+        return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None,
+                        "upload_required": not vt_scanned_clean or heuristic_verdict in ("suspicious", "malicious")})
     finally:
         session.close()
 

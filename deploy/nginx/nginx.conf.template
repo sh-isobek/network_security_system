@@ -49,7 +49,11 @@ http {
         # per-agent API token autentifikatsiyasi ishlaydi.
         #__MTLS_BLOCK__
 
-        client_max_body_size 25m;  # fayl hash/metadata yuklash uchun
+        client_max_body_size 25m;
+        # Do not create a second sample copy in nginx client_body_temp_path.
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 150s;
 
         location / {
             proxy_pass http://${NGINX_AGENT_API_UPSTREAM};
