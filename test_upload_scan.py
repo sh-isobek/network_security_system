@@ -89,6 +89,15 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertFalse(result["scan_complete"])
         self.assert_empty()
 
+    def test_clamav_temporary_children_removed_on_timeout(self):
+        def interrupted_scan(path, temp_dir):
+            self.assertEqual(os.path.dirname(path), temp_dir)
+            Path(temp_dir, "decompressed-child").write_bytes(b"temporary child")
+            return {"scanned": False, "error": "timeout"}
+        with patch.object(scanner, "clamav_scan", side_effect=interrupted_scan):
+            self.assertEqual(self.scan()["verdict"], "unknown")
+        self.assert_empty()
+
     def test_archive_members_never_written_to_disk(self):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as archive:
