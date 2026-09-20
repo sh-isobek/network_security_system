@@ -266,7 +266,7 @@ def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_sc
 
 
 @app.route("/api/v1/check_hash", methods=["POST"])
-@limiter.limit(os.getenv("API_RATE_LIMIT_CHECK_HASH", "100 per minute"))
+@limiter.limit(os.getenv("API_RATE_LIMIT_CHECK_HASH", "240 per minute"))
 @require_api_key
 def check_hash():
     """

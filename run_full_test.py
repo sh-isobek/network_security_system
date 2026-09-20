@@ -8299,7 +8299,7 @@ def _test_full_file_path_reporting_and_display():
     # server o'chiq bo'lsa - kesh zaxira sifatida ishlaydi
     with patch.object(agent_mod.requests, "post", side_effect=_rq.RequestException("down")):
         out = agent_mod.check_hash_with_server_or_cache(sha, cache, filepath=long_path)
-        assert out == cache[sha], "Server o'chiq bo'lsa kesh natijasi qaytishi kerak edi"
+        assert out.pop("offline") is True and out == cache[sha], "Server o'chiq bo'lsa kesh natijasi (offline belgisi bilan) qaytishi kerak edi"
 
     # --- 2) Dashboard: to'liq yo'l qisqartirilmaydi; yo'li yo'q qatorlar uchun tushunarli izoh ---
     s = get_session()
@@ -8574,7 +8574,7 @@ def _test_agent_rescan_flag():
     try:
         ag = am.EndpointAgent([watch])
         seen = []
-        ag._on_new_file = lambda p: seen.append(p)
+        ag._on_new_file = lambda p, bulk=False: seen.append(p) or False
         ag._maybe_start_rescan()
         time.sleep(0.5)
         assert not seen, "bayroq yo'q - qayta skanerlash bo'lmasligi kerak"
@@ -8611,6 +8611,83 @@ def _test_agent_autoupdate_static():
 
 
 check("DC avto-yangilash: workflow Release + Sync/Install skriptlari (statik tekshiruv)", _test_agent_autoupdate_static)
+
+print("\n=== 110) Agent: offline paytida tekshirilgan fayl aloqa tiklangach ONLINE qayta tekshiriladi ===")
+
+
+def _test_agent_offline_recheck():
+    import os, tempfile
+    from unittest.mock import patch
+    import agent_core.agent as am
+    d = tempfile.mkdtemp(prefix="nsa_recheck_")
+    f = os.path.join(d, "x.bin"); open(f, "wb").write(b"payload-recheck")
+    old_cache = am.LOCAL_CACHE_FILE
+    am.LOCAL_CACHE_FILE = os.path.join(d, "cache.json")
+    try:
+        ag = am.EndpointAgent([d])
+        with patch.object(am.requests, "post", side_effect=am.requests.ConnectionError("down")):
+            ag._on_new_file(f)
+        assert f in ag._pending_recheck, "offline natija navbatga tushishi kerak"
+        with patch.object(ag, "_server_reachable", return_value=False):
+            assert ag._recheck_offline_once() == 0 and f in ag._pending_recheck
+        class R:
+            status_code = 200
+            def json(self): return {"malicious": False, "confirmed": False, "threat_name": None, "source": None}
+        with patch.object(ag, "_server_reachable", return_value=True), patch.object(am.requests, "post", return_value=R()) as post:
+            assert ag._recheck_offline_once() == 1
+            assert post.called, "server'ga haqiqiy so'rov yuborilishi kerak"
+        assert f not in ag._pending_recheck, "online natijadan keyin navbatda qolmasligi kerak"
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+
+
+check("Agent: offline fayl aloqa tiklangach online qayta tekshiriladi", _test_agent_offline_recheck)
+
+print("\n=== 111) Agent: barcha disklar (USB ham) va papkalar - istisnolar, yangi disk, ommaviy skaner ===")
+
+
+def _test_agent_all_drives():
+    import os, tempfile, threading
+    from unittest.mock import patch
+    import agent_core.agent as am
+    from agent_core.file_monitor import is_excluded
+    assert is_excluded("C:\\Windows\\WinSxS\\x.dll") and is_excluded("C:\\$Recycle.Bin\\S-1\\a")
+    assert is_excluded("C:\\ProgramData\\NetworkSecurityAgent\\agent.log"), "agentning o'z logi tsikl hosil qilmasligi kerak"
+    assert not is_excluded("E:\\flash\\invoice.exe") and not is_excluded("D:\\Work\\a.docm")
+    assert not is_excluded("C:\\Windows\\Temp\\dropper.exe"), "Windows\\Temp - zararli fayl ko'p tashlanadigan joy, tekshirilishi kerak"
+
+    d = tempfile.mkdtemp(prefix="nsa_drives_")
+    main = os.path.join(d, "main"); usb = os.path.join(d, "usb")
+    os.makedirs(os.path.join(main, "deep", "er")); os.makedirs(os.path.join(usb, "sub"))
+    open(os.path.join(main, "deep", "er", "a.bin"), "wb").write(b"a")
+    open(os.path.join(usb, "sub", "virus.exe"), "wb").write(b"u")
+    old_cache = am.LOCAL_CACHE_FILE
+    am.LOCAL_CACHE_FILE = os.path.join(d, "c.json")
+    try:
+        ag = am.EndpointAgent([main])
+        seen = []
+        ag._on_new_file = lambda p, bulk=False: seen.append((p, bulk)) or False
+        # yangi disk ulandi
+        with patch.object(am, "list_local_drives", return_value=[main, usb]):
+            ag._drive_watch_once()
+        for _ in range(50):
+            if any(p.endswith("virus.exe") for p, _b in seen):
+                break
+            import time; time.sleep(0.1)
+        assert usb in ag.monitor.watch_dirs, "yangi disk kuzatuvga qo'shilishi kerak"
+        assert any(p.endswith("virus.exe") and b for p, b in seen), "USB dagi mavjud fayl (ichki papkada) bulk rejimida tekshirilishi kerak"
+        # butun daraxt (ichma-ich) skaner
+        seen.clear()
+        assert ag._rescan_tree(main) == 1 and seen[0][0].endswith("a.bin")
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+        try:
+            ag.monitor.observer.stop() if ag.monitor.observer.is_alive() else None
+        except Exception:
+            pass
+
+
+check("Agent: barcha disklar/USB, ichma-ich papkalar, tizim istisnolari", _test_agent_all_drives)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

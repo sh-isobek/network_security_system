@@ -42,7 +42,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 
-from agent_core.file_monitor import FileMonitor
+from agent_core.file_monitor import FileMonitor, is_excluded, list_local_drives
 from agent_core.process_killer import kill_process_holding_file
 from agent_core.quarantine import quarantine_file
 from scanners.heuristic_analyzer import analyze_file
@@ -129,6 +129,10 @@ LOCAL_CACHE_FILE = os.getenv(
 )
 API_TIMEOUT = 5  # soniya - server sekin javob bersa ham foydalanuvchini kutdirmaslik uchun
 UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+MAX_SCAN_BYTES = int(os.getenv("AGENT_MAX_SCAN_BYTES", str(1024 * 1024 * 1024)))  # 1 GB
+DRIVE_POLL_SECONDS = int(os.getenv("AGENT_DRIVE_POLL_SECONDS", "30"))
+BULK_SERVER_DELAY = float(os.getenv("AGENT_BULK_SERVER_DELAY", "0.7"))  # server chegarasi (100/daq) ostida qolish uchun
+RECHECK_INTERVAL_SECONDS = int(os.getenv("AGENT_RECHECK_INTERVAL_SECONDS", "60"))
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
     os.path.expandvars(r"%USERPROFILE%\Downloads"),
@@ -142,6 +146,7 @@ DEFAULT_WATCH_DIRS_LINUX = [
     os.path.expanduser("~/Desktop"),
     "/tmp",
     "/var/tmp",
+    "/home", "/mnt", "/media", "/opt", "/srv",   # foydalanuvchi fayllari va ulangan disklar
 ]
 
 DEFAULT_WATCH_DIRS_MACOS = [
@@ -195,7 +200,8 @@ def compute_sha256(filepath: str) -> str:
 
 def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = None,
                                      hostname: str = None, ip_address: str = None,
-                                     filepath: str = None, heuristic: dict = None) -> dict:
+                                     filepath: str = None, heuristic: dict = None,
+                                     prefer_cache: bool = False) -> dict:
     """
     Avval markaziy serverga so'raydi. Server bilan bog'lanib bo'lmasa
     (offline holat) - mahalliy keshga tayanadi (fail-safe).
@@ -230,6 +236,8 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
     # turgani (to'liq yo'l) ko'rinmasdi; kesh esa eskirgan "toza" natijani
     # ham qaytarishi mumkin edi. Endi har bir yangi fayl serverga yuboriladi.
     cached = cache.get(sha256)
+    if prefer_cache and cached is not None and not cached.get("malicious"):
+        return {**cached, "from_cache": True}   # ommaviy skanerlash: allaqachon toza deb ma'lum xesh
 
     heuristic = heuristic or {}
     try:
@@ -278,12 +286,12 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
 
     if cached is not None:
         logger.debug(f"Server javob bermadi, kesh'dan olindi: {sha256[:12]}...")
-        return cached
+        return {**cached, "offline": True}
 
     # Server bilan bog'lanib bo'lmadi va keshda ham yo'q - xavfsizlik uchun
     # "malicious=False" deb hisoblaymiz (false-positive bilan foydalanuvchi
     # ishini to'xtatmaslik uchun), lekin bu holatni alohida belgilaymiz
-    return {"malicious": False, "threat_name": None, "source": "no_data_offline"}
+    return {"malicious": False, "threat_name": None, "source": "no_data_offline", "offline": True}
 
 
 def upload_for_scan(filepath: str, sha256: str, hostname: str):
@@ -397,6 +405,7 @@ class EndpointAgent:
         self.ip_address = _get_local_ip()
         self.cache = _load_cache()
         self.watch_dirs = list(watch_dirs)
+        self._pending_recheck = set()
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
@@ -408,12 +417,16 @@ class EndpointAgent:
             )
         logger.info(f"Agent ishga tushmoqda: host={self.hostname}, ip={self.ip_address}")
 
-    def _on_new_file(self, filepath: str):
+    def _on_new_file(self, filepath: str, bulk: bool = False) -> bool:
+        """Faylni tekshiradi. Server bilan HAQIQATAN aloqa qilingan bo'lsa True (ommaviy skanerni sekinlatish uchun)."""
         try:
+            if os.path.getsize(filepath) > MAX_SCAN_BYTES:
+                logger.info(f"Juda katta fayl o'tkazib yuborildi (> {MAX_SCAN_BYTES} bayt): {filepath}")
+                return False
             sha256 = compute_sha256(filepath)
         except OSError as exc:
             logger.warning(f"Faylni o'qib bo'lmadi (allaqachon o'chirilgan?): {filepath} - {exc}")
-            return
+            return False
 
         # MUHIM (foydalanuvchi so'rovi: "unknown" fayl hech qachon
         # qolmasin): fayl mazmuni FAQAT shu yerda, endpoint'da mavjud -
@@ -438,7 +451,9 @@ class EndpointAgent:
             ip_address=self.ip_address,
             filepath=filepath,
             heuristic=heuristic,
+            prefer_cache=bulk,
         )
+        contacted = not result.get("from_cache") and not result.get("offline")
 
         # MUHIM (o'zi topilgan real bug, tuzatildi): ilgari bu yerda
         # FAQAT `result.get("malicious")` tekshirilardi - bu esa
@@ -453,6 +468,13 @@ class EndpointAgent:
         # heuristika DETERMINISTIK "malicious" (kengaytma-nomuvofiqlik/
         # PDF tuzilmasi - soxta-pozitiv xavfi past) deb topgan holatlarda
         # ko'riladi.
+        # Server bilan aloqa yo'q edi (offline/kesh) - natija ishonchsiz: aloqa tiklanganda
+        # bu fayl QAYTA tekshiriladi (`_recheck_offline_loop`).
+        if result.get("offline"):
+            self._pending_recheck.add(filepath)
+        else:
+            self._pending_recheck.discard(filepath)
+
         server_confirmed = bool(result.get("confirmed"))
         local_confirmed = heuristic.get("verdict_hint") == "malicious"
 
@@ -464,7 +486,7 @@ class EndpointAgent:
                 )
             else:
                 logger.info(f"Toza: {filepath}")
-            return
+            return contacted
 
         threat_name = result.get("threat_name") or (
             "; ".join(heuristic.get("findings", [])) or "Noma'lum tahdid"
@@ -500,6 +522,7 @@ class EndpointAgent:
             quarantined=quarantined,
             quarantine_path=quarantine_result.get("quarantine_path"),
         )
+        return True
 
     def _safe_send_heartbeat(self):
         """
@@ -539,7 +562,39 @@ class EndpointAgent:
             daemon=True,
         )
         self._heartbeat_thread.start()
+        threading.Thread(target=self._recheck_offline_loop, name="AgentRecheck", daemon=True).start()
+        threading.Thread(target=self._drive_watch_loop, name="AgentDrives", daemon=True).start()
         self._maybe_start_rescan()
+
+    def _server_reachable(self) -> bool:
+        try:
+            r = requests.get(f"{API_SERVER_URL}/api/v1/health", timeout=API_TIMEOUT,
+                             proxies={"http": None, "https": None}, **_tls_request_kwargs())
+            return r.status_code == 200
+        except requests.RequestException:
+            return False
+
+    def _recheck_offline_once(self):
+        """Offline paytida tekshirilgan fayllarni server tiklangach qayta tekshiradi."""
+        if not self._pending_recheck or not self._server_reachable():
+            return 0
+        done = 0
+        for path in list(self._pending_recheck):
+            if not os.path.isfile(path):
+                self._pending_recheck.discard(path)
+                continue
+            self._on_new_file(path)   # muvaffaqiyatli bo'lsa _pending_recheck'dan o'zi chiqadi
+            done += 1
+        if done:
+            logger.info(f"Aloqa tiklandi: offline paytdagi {done} ta fayl qayta tekshirildi")
+        return done
+
+    def _recheck_offline_loop(self):
+        while not self._heartbeat_stop.wait(RECHECK_INTERVAL_SECONDS):
+            try:
+                self._recheck_offline_once()
+            except Exception as exc:
+                logger.warning(f"Offline qayta tekshiruvda xato (davom etadi): {exc}")
 
     def _maybe_start_rescan(self):
         """
@@ -557,21 +612,46 @@ class EndpointAgent:
             return
         threading.Thread(target=self._rescan_existing, name="AgentRescan", daemon=True).start()
 
+    def _rescan_tree(self, root_dir: str) -> int:
+        """Bitta papka/diskdagi MAVJUD barcha fayllarni tekshiradi (tizim shovqini o'tkazib yuboriladi)."""
+        count = 0
+        for dirpath, dirs, files in os.walk(root_dir):
+            dirs[:] = [d for d in dirs if not is_excluded(os.path.join(dirpath, d))]
+            for name in files:
+                if self._heartbeat_stop.is_set():
+                    return count
+                path = os.path.join(dirpath, name)
+                if is_excluded(path):
+                    continue
+                try:
+                    contacted = self._on_new_file(path, bulk=True)
+                    count += 1
+                    if contacted:
+                        time.sleep(BULK_SERVER_DELAY)   # server so'rov chegarasi (daqiqasiga) ostida qolish
+                except Exception as exc:
+                    logger.warning(f"Qayta skanerlashda xato ({name}): {exc}")
+        return count
+
     def _rescan_existing(self):
         logger.info("Qayta skanerlash boshlandi: mavjud fayllar tekshirilmoqda...")
         count = 0
-        for root_dir in self.watch_dirs:
-            for dirpath, _dirs, files in os.walk(root_dir):
-                for name in files:
-                    if self._heartbeat_stop.is_set():
-                        return
-                    try:
-                        self._on_new_file(os.path.join(dirpath, name))
-                        count += 1
-                    except Exception as exc:
-                        logger.warning(f"Qayta skanerlashda xato ({name}): {exc}")
-                    time.sleep(0.2)  # serverga (VT kvotasi) va diskka yuklamani cheklash
+        for root_dir in list(self.monitor.watch_dirs):
+            count += self._rescan_tree(root_dir)
         logger.info(f"Qayta skanerlash tugadi: {count} ta fayl tekshirildi")
+
+    def _drive_watch_once(self):
+        """Yangi ulangan disk (USB/flesh) topilsa - kuzatuvga qo'shadi va undagi mavjud fayllarni tekshiradi."""
+        for root in list_local_drives():
+            if root not in self.monitor.watch_dirs and self.monitor.add_dir(root):
+                logger.info(f"Yangi disk ulandi: {root} - undagi fayllar tekshirilmoqda")
+                threading.Thread(target=self._rescan_tree, args=(root,), name="AgentDriveScan", daemon=True).start()
+
+    def _drive_watch_loop(self):
+        while not self._heartbeat_stop.wait(DRIVE_POLL_SECONDS):
+            try:
+                self._drive_watch_once()
+            except Exception as exc:
+                logger.warning(f"Disk kuzatuvida xato (davom etadi): {exc}")
 
     def stop(self):
         self._heartbeat_stop.set()

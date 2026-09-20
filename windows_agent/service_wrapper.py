@@ -32,6 +32,7 @@ except ImportError:
 
 from windows_agent.agent import EndpointAgent
 from agent_core.agent import logger
+from agent_core.file_monitor import list_local_drives
 
 
 SERVICE_NAME = "NetworkSecurityEndpointAgent"
@@ -154,7 +155,10 @@ class EndpointAgentService(win32serviceutil.ServiceFramework):
         )
 
         try:
-            watch_dirs = _windows_watch_dirs()
+            # BARCHA mahalliy va olinadigan (USB/flesh) disklar - virusli fayl istalgan joyda bo'lishi
+            # mumkin. Disk aniqlanmasa, eski (foydalanuvchi profillari) ro'yxatga qaytiladi.
+            watch_dirs = list_local_drives() or _windows_watch_dirs()
+            logger.info(f"Kuzatiladigan ildizlar: {watch_dirs}")
             if not watch_dirs:
                 servicemanager.LogWarningMsg(
                     "No Windows user folders found; monitoring system Temp only if available."
