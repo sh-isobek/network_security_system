@@ -168,7 +168,13 @@ def analyze_apk(filepath: str) -> Optional[dict]:
         with zipfile.ZipFile(filepath) as zf:
             if "AndroidManifest.xml" not in zf.namelist():
                 return None
-            raw = zf.read("AndroidManifest.xml")[:MANIFEST_LIMIT]
+            # Bound decompression itself, not just the already allocated result.
+            with zf.open("AndroidManifest.xml") as manifest:
+                raw = manifest.read(MANIFEST_LIMIT + 1)
+            if len(raw) > MANIFEST_LIMIT:
+                return {"package": "", "permissions": [], "score": 55, "risky": [],
+                        "verdict_hint": "suspicious",
+                        "findings": ["APK manifest exceeds the analysis size limit"]}
     except (OSError, zipfile.BadZipFile, KeyError, RuntimeError, NotImplementedError):
         return None
 

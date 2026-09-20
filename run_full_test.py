@@ -8474,6 +8474,8 @@ check("Heuristika: ikki kengaytma niqobi + APK haqiqiy AXML tahlili (malicious/s
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
+from test_upload_scan import run_tests as run_upload_tests
+check("Uploaded samples are deleted on success and failure", run_upload_tests)
 print("YAKUNIY HISOBOT")
 print("=" * 60)
 passed = sum(1 for _, ok, _ in RESULTS if ok)

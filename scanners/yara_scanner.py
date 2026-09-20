@@ -17,7 +17,7 @@ def _get_rules():
     return _compiled_rules
 
 
-def scan_file(filepath: str) -> List[dict]:
+def scan_file(filepath: str, timeout: int = 0) -> List[dict]:
     """
     Faylni YARA qoidalari bilan tekshiradi.
     Qaytaradi: [{"rule": "...", "severity": "...", "description": "..."}]
@@ -26,7 +26,7 @@ def scan_file(filepath: str) -> List[dict]:
         return []
 
     rules = _get_rules()
-    matches = rules.match(filepath)
+    matches = rules.match(filepath, timeout=timeout)
 
     findings = []
     for m in matches:

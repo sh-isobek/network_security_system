@@ -56,7 +56,9 @@ spec:
       containers:
         - name: agent-api
           image: ghcr.io/your-org/network-security-system:latest
-          command: ["gunicorn", "-w", "4", "-b", "0.0.0.0:8443", "api.server:app"]
+          command: ["gunicorn", "-w", "4", "--timeout", "150", "-b", "0.0.0.0:8443", "api.server:app"]
+          volumeMounts:
+            - {name: scan-temp, mountPath: /tmp}
           ports:
             - containerPort: 8443
           envFrom:
@@ -69,6 +71,9 @@ spec:
           resources:
             requests: {cpu: "100m", memory: "128Mi"}
             limits: {cpu: "500m", memory: "512Mi"}
+      volumes:
+        - name: scan-temp
+          emptyDir: {medium: Memory, sizeLimit: 256Mi}
 ---
 apiVersion: v1
 kind: Service

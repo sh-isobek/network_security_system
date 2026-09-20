@@ -36,6 +36,7 @@ import socket
 import sys
 import time
 import threading
+from urllib.parse import quote
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -127,6 +128,7 @@ LOCAL_CACHE_FILE = os.getenv(
     os.path.join(os.path.dirname(_default_log_file()), "agent_hash_cache.json"),
 )
 API_TIMEOUT = 5  # soniya - server sekin javob bersa ham foydalanuvchini kutdirmaslik uchun
+UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
     os.path.expandvars(r"%USERPROFILE%\Downloads"),
@@ -263,6 +265,10 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
         )
         if resp.status_code == 200:
             result = resp.json()
+            if result.get("upload_required") and filepath:
+                uploaded = upload_for_scan(filepath, sha256, hostname)
+                if uploaded is not None:
+                    result = uploaded
             cache[sha256] = result
             _save_cache(cache)
             return result
@@ -278,6 +284,35 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
     # "malicious=False" deb hisoblaymiz (false-positive bilan foydalanuvchi
     # ishini to'xtatmaslik uchun), lekin bu holatni alohida belgilaymiz
     return {"malicious": False, "threat_name": None, "source": "no_data_offline"}
+
+
+def upload_for_scan(filepath: str, sha256: str, hostname: str):
+    """Stream a bounded sample; upload failures preserve the hash/local decision."""
+    try:
+        with open(filepath, "rb") as sample:
+            size = os.fstat(sample.fileno()).st_size
+            if not 0 < size <= UPLOAD_MAX_BYTES:
+                return None
+            response = requests.post(
+                f"{API_SERVER_URL}/api/v1/scan_file",
+                data=sample,
+                headers={"X-API-Key": AGENT_API_KEY,
+                         "Content-Type": "application/octet-stream",
+                         "X-Agent-Hostname": hostname or "",
+                         "X-File-Name": quote(os.path.basename(filepath), safe=""),
+                         "X-File-SHA256": sha256},
+                timeout=(5, 120), allow_redirects=False,
+                proxies={"http": None, "https": None},
+                **_tls_request_kwargs(),
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("sha256") == sha256:
+                    return result
+            logger.warning("Upload scan failed: HTTP %s", response.status_code)
+    except (OSError, ValueError, requests.RequestException) as exc:
+        logger.warning("Upload scan unavailable: %s", exc)
+    return None
 
 
 def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,

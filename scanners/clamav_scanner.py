@@ -42,7 +42,8 @@ def is_database_available() -> bool:
     return False
 
 
-def scan_file(filepath: str, extra_db_dir: Optional[str] = None) -> dict:
+def scan_file(filepath: str, extra_db_dir: Optional[str] = None,
+              temp_dir: Optional[str] = None) -> dict:
     """
     Faylni ClamAV orqali skanerlaydi.
 
@@ -64,6 +65,10 @@ def scan_file(filepath: str, extra_db_dir: Optional[str] = None) -> dict:
         }
 
     cmd = [CLAMSCAN_BIN, "--no-summary", "-d", db_dir, filepath]
+    if temp_dir is not None:
+        # Upload scans own this directory, including decompression artifacts
+        # left behind when the child scanner is killed on timeout.
+        cmd[1:1] = ["--tempdir", temp_dir]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=CLAMSCAN_TIMEOUT)
