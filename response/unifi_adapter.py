@@ -2,27 +2,22 @@
 UniFi Controller API adapteri - Wi-Fi orqali ulangan qurilmalarni
 bloklash/uzish uchun.
 
-MUHIM: ikkita mutlaqo boshqacha UniFi API avlodi mavjud:
+FAQAT Integration API (v1) - API Key (token) orqali. Login/parol
+orqali kirish OLIB TASHLANGAN: UniFi hisobida 2-bosqichli
+autentifikatsiya (pochtaga tasdiqlash kodi) yoqilgan, shuning uchun
+login/parol bilan avtomatik kirib bo'lmaydi va u yo'l endi
+qo'llab-quvvatlanmaydi.
 
-  1. **Integration API (v1) - API Key orqali** (2025-yildan, Network
-     Application 9.1.105+). O'qish (klientlar ro'yxati) uchun to'liq
-     hujjatlashtirilgan va sinovdan o'tkazilgan (`network_discovery/
-     unifi_discovery.py`ga qarang). LEKIN klientni bloklash/uzish
-     (yozish amali) uchun aniq endpoint/parametr nomlari rasmiy
-     hujjatlarda hali TO'LIQ BARQAROR EMAS (bu funksiya bu loyihada
-     "Early Access" deb belgilangan API asosida, ehtiyotkorlik bilan
-     yozilgan - agar ishlamasa, quyidagi 2-usulga avtomatik qaytadi).
+Sozlama: UNIFI_CONTROLLER_URL, UNIFI_API_KEY, UNIFI_SITE_ID (UUID),
+UNIFI_VERIFY_SSL. API kalit: UniFi Network > Control Plane > Integrations.
 
-  2. **Eski, legacy API - login/parol orqali** (barqaror, ko'p yillik
-     sinovdan o'tgan). Ikki ko'rinishi bor - UniFi OS konsoli
-     (`/api/auth/login`) va self-hosted klassik dastur (`/api/login`).
+MUHIM (halol cheklov): klientni bloklash/uzish (yozish amali) uchun
+aniq endpoint/amal nomlari rasmiy hujjatlarda hali TO'LIQ BARQAROR
+EMAS ("Early Access"). Agar amal ishlamasa, avtomatik zaxira yo'q -
+natija "muvaffaqiyatsiz" deb qaytariladi va qo'lda aralashuv kerak
+bo'ladi (response_engine buni alertga yozadi).
 
-Ustuvorlik: agar `UNIFI_API_KEY` sozlangan bo'lsa, avval shu orqali
-sinaladi; muvaffaqiyatsiz bo'lsa (yoki sozlanmagan bo'lsa) - login/
-parol orqali (agar sozlangan bo'lsa) davom etiladi.
-
-Hujjat: https://developer.ui.com/unifi-api/ (rasmiy, API Key uchun),
-https://ubntwiki.com/products/software/unifi-controller/api (legacy)
+Hujjat: https://developer.ui.com/unifi-api/
 """
 import os
 
@@ -30,21 +25,13 @@ import requests
 
 from response.base_adapter import BlockingAdapter, ActionResult, TargetDevice
 
-# Legacy "cmd/stamgr" buyruq nomlari (login/parol usuli uchun)
-_LEGACY_CMD = {"disconnect": "kick-sta", "quarantine": "block-sta", "restore": "unblock-sta"}
-
-# Integration API (v1, API Key) uchun taxminiy amal nomlari - MUHIM:
-# bu rasmiy hujjatda hali to'liq barqaror emas, shuning uchun
-# muvaffaqiyatsiz bo'lsa avtomatik legacy usulga qaytiladi (pastga q.)
+# Integration API (v1, API Key) amal nomlari - rasmiy hujjatda hali to'liq
+# barqaror emas (yuqoridagi izohga q.)
 _API_KEY_ACTION = {"disconnect": "KICK", "quarantine": "BLOCK", "restore": "UNBLOCK"}
 
 
 class UniFiAdapter(BlockingAdapter):
     name = "unifi"
-
-    def __init__(self):
-        self._session = requests.Session()
-        self._logged_in = False
 
     def can_handle(self, device: TargetDevice) -> bool:
         return device.connection_type == "wifi" and bool(device.mac_address)
@@ -53,8 +40,7 @@ class UniFiAdapter(BlockingAdapter):
         """
         Yangi Integration API (v1) orqali urinadi. Muvaffaqiyatli
         bo'lsa True, aks holda (sozlanmagan, xato, yoki bu amal
-        qo'llab-quvvatlanmasa) False qaytaradi - chaqiruvchisi legacy
-        usulga qaytishi kerak.
+        qo'llab-quvvatlanmasa) False qaytaradi.
         """
         controller_url = os.getenv("UNIFI_CONTROLLER_URL", "").rstrip("/")
         api_key = os.getenv("UNIFI_API_KEY", "")
@@ -77,61 +63,25 @@ class UniFiAdapter(BlockingAdapter):
         except requests.RequestException:
             return False
 
-    def _login(self) -> bool:
-        controller_url = os.getenv("UNIFI_CONTROLLER_URL", "").rstrip("/")
-        username = os.getenv("UNIFI_USERNAME", "")
-        password = os.getenv("UNIFI_PASSWORD", "")
-        os_console = os.getenv("UNIFI_OS_CONSOLE", "true").lower() in ("true", "1", "yes")
-        verify_ssl = os.getenv("UNIFI_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
-
-        if not controller_url or not username:
-            return False
-        login_path = "/api/auth/login" if os_console else "/api/login"
-        try:
-            resp = self._session.post(
-                f"{controller_url}{login_path}",
-                json={"username": username, "password": password},
-                verify=verify_ssl,
-                timeout=10,
-            )
-            self._logged_in = resp.status_code == 200
-            return self._logged_in
-        except requests.RequestException:
-            return False
-
-    def _send_legacy_cmd(self, cmd: str, mac: str) -> ActionResult:
-        controller_url = os.getenv("UNIFI_CONTROLLER_URL", "").rstrip("/")
-        site = os.getenv("UNIFI_SITE", "default")
-        os_console = os.getenv("UNIFI_OS_CONSOLE", "true").lower() in ("true", "1", "yes")
-        verify_ssl = os.getenv("UNIFI_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
-
-        if not self._logged_in and not self._login():
-            return ActionResult(False, "UniFi Controller'ga ulanib bo'lmadi (sozlama yoki tarmoq xatoligi)", self.name)
-
-        cmd_path = f"/proxy/network/api/s/{site}/cmd/stamgr" if os_console else f"/api/s/{site}/cmd/stamgr"
-        try:
-            resp = self._session.post(
-                f"{controller_url}{cmd_path}",
-                json={"cmd": cmd, "mac": mac.lower()},
-                verify=verify_ssl,
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                return ActionResult(True, f"UniFi (legacy): {cmd} muvaffaqiyatli bajarildi ({mac})", self.name)
-            return ActionResult(False, f"UniFi API xatoligi: HTTP {resp.status_code}", self.name)
-        except requests.RequestException as exc:
-            return ActionResult(False, f"UniFi so'rov xatoligi: {exc}", self.name)
+    @staticmethod
+    def _configured() -> bool:
+        return bool(os.getenv("UNIFI_CONTROLLER_URL", "") and os.getenv("UNIFI_API_KEY", "") and os.getenv("UNIFI_SITE_ID", ""))
 
     def _do_action(self, action_type: str, mac: str) -> ActionResult:
-        """
-        Avval API Key orqali urinadi (agar sozlangan bo'lsa), keyin
-        legacy login/parol usuliga qaytadi.
-        """
+        """Faqat API Key (token) orqali. Zaxira (login/parol) usuli yo'q."""
+        if not self._configured():
+            return ActionResult(
+                False,
+                "UniFi Controller'ga ulanib bo'lmadi (UNIFI_CONTROLLER_URL/UNIFI_API_KEY/UNIFI_SITE_ID sozlanmagan)",
+                self.name,
+            )
         if self._try_api_key_action(action_type, mac):
             return ActionResult(True, f"UniFi (API Key): {action_type} muvaffaqiyatli bajarildi ({mac})", self.name)
-
-        legacy_cmd = _LEGACY_CMD[action_type]
-        return self._send_legacy_cmd(legacy_cmd, mac)
+        return ActionResult(
+            False,
+            f"UniFi API Key orqali {action_type} muvaffaqiyatsiz (ulanish xatosi yoki bu amal qo'llab-quvvatlanmaydi)",
+            self.name,
+        )
 
     def disconnect(self, device: TargetDevice) -> ActionResult:
         # darhol uzadi, lekin qurilma qayta ulanishga urinishi mumkin

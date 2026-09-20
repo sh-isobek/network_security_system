@@ -4,24 +4,14 @@ UniFi Discovery - network_discovery paketi.
 `response/unifi_adapter.py` bilan bir xil autentifikatsiya usuli,
 lekin bu yerda bloklash o'rniga klientlar RO'YXATINI o'qish uchun.
 
-MUHIM: ikkita mutlaqo boshqacha UniFi API avlodi mavjud:
-
-  1. **Integration API (v1) - API Key orqali** (2025-yildan, Network
-     Application 9.1.105+) - ASOSIY va TAVSIYA ETILGAN usul. Login
-     bosqichi UMUMAN YO'Q - har bir so'rovga `X-API-Key` sarlavhasi
-     bilan API kalit yuboriladi. Sayt ID **UUID** ko'rinishida
-     (masalan "88f7af54-98f8-306a-a1c7-c9349722b1f6"), sayt NOMI emas.
-     Manzil: `{CONTROLLER_URL}/proxy/network/integration/v1/...`
-     API kalitni yaratish: UniFi Network > Control Plane > Integrations.
-
-  2. **Eski, legacy API - login/parol orqali** (zaxira usul, faqat
-     API Key mavjud bo'lmagan eski dasturlar uchun). Bu holatda ham
-     ikkita ko'rinish bor - UniFi OS konsoli (`/api/auth/login`) va
-     self-hosted klassik dastur (`/api/login`).
-
-Qaysi usul ishlatilishini aniqlash: agar `UNIFI_API_KEY` sozlangan
-bo'lsa, u ustuvor (login umuman qilinmaydi). Aks holda login/parolga
-qaytiladi.
+FAQAT Integration API (v1) - API Key (token) orqali (Network
+Application 9.1.105+). Login/parol orqali kirish OLIB TASHLANGAN:
+UniFi hisobida 2-bosqichli autentifikatsiya (pochtaga tasdiqlash kodi)
+yoqilgan, shuning uchun u usul ishlamaydi. Har bir so'rovga
+`X-API-Key` sarlavhasi yuboriladi. Sayt ID **UUID** ko'rinishida
+(masalan "88f7af54-98f8-306a-a1c7-c9349722b1f6"), sayt NOMI emas.
+Manzil: `{CONTROLLER_URL}/proxy/network/integration/v1/...`
+API kalitni yaratish: UniFi Network > Control Plane > Integrations.
 """
 import logging
 import os
@@ -123,85 +113,23 @@ def _get_clients_via_api_key(controller_url: str, api_key: str, site_id: str,
     return clients
 
 
-def _get_clients_via_login(controller_url: str, username: str, password: str,
-                            site: str, os_console: bool, verify_ssl: bool, timeout: int) -> List[UnifiClient]:
-    """Eski, legacy usul - login/parol orqali (API Key mavjud bo'lmaganda zaxira)."""
-    if not controller_url or not username:
-        logger.warning("UNIFI_API_KEY ham, UNIFI_USERNAME ham sozlanmagan")
-        return []
-
-    if os_console:
-        login_path = "/api/auth/login"
-        clients_path = f"/proxy/network/api/s/{site}/stat/sta"
-    else:
-        login_path = "/api/login"
-        clients_path = f"/api/s/{site}/stat/sta"
-
-    session = requests.Session()
-    try:
-        login_resp = session.post(
-            f"{controller_url}{login_path}",
-            json={"username": username, "password": password},
-            verify=verify_ssl, timeout=timeout,
-        )
-        if login_resp.status_code != 200:
-            logger.error(f"UniFi login muvaffaqiyatsiz: HTTP {login_resp.status_code} ({login_path})")
-            return []
-
-        clients_resp = session.get(
-            f"{controller_url}{clients_path}",
-            verify=verify_ssl, timeout=timeout,
-        )
-        if clients_resp.status_code != 200:
-            logger.error(f"UniFi klientlar ro'yxatini olib bo'lmadi: HTTP {clients_resp.status_code} ({clients_path})")
-            return []
-
-        data = clients_resp.json().get("data", [])
-        clients = [
-            UnifiClient(
-                ip=c.get("ip"),
-                mac=c.get("mac", "").upper(),
-                hostname=c.get("hostname") or c.get("name"),
-                is_wired=c.get("is_wired", False),
-                uplink_device_id=c.get("ap_mac"),  # legacy API'da bu haqiqatan AP MAC manzili
-            )
-            for c in data
-        ]
-        logger.info(f"UniFi (login/parol): {len(clients)} ta klient topildi")
-        return clients
-
-    except requests.RequestException as exc:
-        logger.error(f"UniFi Controller'ga ulanib bo'lmadi: {exc}")
-        return []
-
-
 def get_unifi_clients(timeout: int = 10) -> List[UnifiClient]:
     """
     UniFi Controller'dan hozir ulangan barcha klientlar ro'yxatini
-    oladi. `UNIFI_API_KEY` sozlangan bo'lsa (tavsiya etiladi) - yangi
-    Integration API ishlatiladi. Aks holda eski login/parol usuliga
-    qaytiladi. Controller mavjud bo'lmasa/ulanib bo'lmasa, bo'sh
-    ro'yxat qaytaradi (exception ko'tarmaydi).
+    Integration API (API Key) orqali oladi. Sozlanmagan bo'lsa yoki
+    ulanib bo'lmasa, bo'sh ro'yxat qaytaradi (exception ko'tarmaydi).
 
     MUHIM: barcha muhit o'zgaruvchilari HAR CHAQIRUVDA dinamik o'qiladi
-    (modul darajasidagi "muzlab qolgan" konstanta emas) - bu loyihada
-    bir necha marta uchragan xato turkumini oldini oladi.
+    (modul darajasidagi "muzlab qolgan" konstanta emas).
     """
     controller_url = os.getenv("UNIFI_CONTROLLER_URL", "").rstrip("/")
     verify_ssl = os.getenv("UNIFI_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
-
     api_key = os.getenv("UNIFI_API_KEY", "")
     site_id = os.getenv("UNIFI_SITE_ID", "")
 
-    if controller_url and api_key and site_id:
-        result = _get_clients_via_api_key(controller_url, api_key, site_id, verify_ssl, timeout)
-        if result is not None:
-            return result
-        logger.warning("API Key usuli muvaffaqiyatsiz bo'ldi - login/parol zaxira usuliga o'tilmoqda (agar sozlangan bo'lsa)")
+    if not (controller_url and api_key and site_id):
+        logger.warning("UNIFI_CONTROLLER_URL/UNIFI_API_KEY/UNIFI_SITE_ID sozlanmagan - UniFi discovery o'tkazib yuborildi")
+        return []
 
-    username = os.getenv("UNIFI_USERNAME", "")
-    password = os.getenv("UNIFI_PASSWORD", "")
-    site = os.getenv("UNIFI_SITE", "default")
-    os_console = os.getenv("UNIFI_OS_CONSOLE", "true").lower() in ("true", "1", "yes")
-
-    return _get_clients_via_login(controller_url, username, password, site, os_console, verify_ssl, timeout)
+    result = _get_clients_via_api_key(controller_url, api_key, site_id, verify_ssl, timeout)
+    return result if result is not None else []

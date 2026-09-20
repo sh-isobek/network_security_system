@@ -2985,17 +2985,6 @@ def action(mac):
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"status": "ok"}), 200
 
-@app.route("/api/login", methods=["POST"])
-def legacy_login():
-    body = request.get_json()
-    if body.get("username") == "ci_admin" and body.get("password") == "ci_pass":
-        return jsonify({"meta": {"rc": "ok"}}), 200
-    return jsonify({"meta": {"rc": "error"}}), 401
-
-@app.route("/api/s/default/cmd/stamgr", methods=["POST"])
-def legacy_cmd():
-    return jsonify({"meta": {"rc": "ok"}}), 200
-
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=18777)
 ''')
@@ -3050,17 +3039,23 @@ if __name__ == "__main__":
         assert result.success is True
         assert "API Key" in result.message
 
-        # --- 4) Response Adapter: API Key noto'g'ri, legacy login/parol'ga avtomatik o'tish ---
+        # --- 4) Response Adapter: API Key noto'g'ri -> "muvaffaqiyatsiz" (login/parol
+        #        zaxirasi OLIB TASHLANGAN - UNIFI_USERNAME/PASSWORD sozlangan bo'lsa ham
+        #        e'tiborsiz qoldiriladi, ya'ni 2FA hisobi bilan kirishga urinilmaydi) ---
         os.environ["UNIFI_API_KEY"] = "notogri-kalit"
         os.environ["UNIFI_USERNAME"] = "ci_admin"
         os.environ["UNIFI_PASSWORD"] = "ci_pass"
-        os.environ["UNIFI_OS_CONSOLE"] = "false"
 
         adapter2 = UniFiAdapter()
         device2 = TargetDevice(mac_address="AA:BB:CC:DD:EE:04", ip_address="172.16.20.4", connection_type="wifi")
         result2 = adapter2.restore(device2)
-        assert result2.success is True, f"Legacy fallback muvaffaqiyatli bo'lishi kerak edi: {result2}"
-        assert "legacy" in result2.message
+        assert result2.success is False, f"API Key noto'g'ri bo'lsa, zaxira usuli YO'Q - muvaffaqiyatsiz bo'lishi kerak: {result2}"
+        assert "legacy" not in result2.message
+
+        # --- 5) API Key sozlanmagan -> discovery bo'sh, adapter "muvaffaqiyatsiz" ---
+        os.environ.pop("UNIFI_API_KEY", None)
+        assert get_unifi_clients() == []
+        assert UniFiAdapter().quarantine(device2).success is False
 
     finally:
         mock_proc.terminate()
@@ -3074,7 +3069,7 @@ if __name__ == "__main__":
             os.environ.pop(k, None)
 
 
-check("UniFi API Key integratsiyasi (discovery + response adapter + legacy fallback)", _test_unifi_api_key)
+check("UniFi API Key integratsiyasi (faqat token; login/parol olib tashlangan)", _test_unifi_api_key)
 
 # ---------------------------------------------------------------------------
 print("\n=== 43) AVTOMATIK USTUN-MIGRATSIYA (real production xatosini takrorlaydi) ===")
@@ -7712,7 +7707,7 @@ def _test_threat_intel_sync():
     import threat_intel.threatfox_feed as tf
     import engine.threat_intel_sync as tis
 
-    for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY"]:
+    for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY", "URLHAUS_ENABLED"]:
         os.environ.pop(k, None)
 
     try:
@@ -7726,7 +7721,7 @@ def _test_threat_intel_sync():
             assert tis.run_once() == 0
 
         # 2) URLhaus - rasmiy hujjatdagi namunaviy javob (so'zma-so'z)
-        os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"
+        os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"; os.environ["URLHAUS_ENABLED"] = "true"
         urlhaus_response = MagicMock()
         urlhaus_response.raise_for_status = lambda: None
         urlhaus_response.json.return_value = {
@@ -7794,7 +7789,7 @@ def _test_threat_intel_sync():
             added2 = tis.run_once()
         assert added2 == 0, f"ikkinchi chaqiruvda takroriy yozuv qo'shilmasligi kerak edi, {added2} ta qo'shdi"
     finally:
-        for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY"]:
+        for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY", "URLHAUS_ENABLED"]:
             os.environ.pop(k, None)
 
 
@@ -7820,7 +7815,7 @@ def _test_threat_intel_skips_shared_platforms():
     assert not tis.is_shared_platform_host("evil-github.com.attacker.example")
     assert not tis.is_shared_platform_host("update.googlecert.help")
 
-    os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"
+    os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"; os.environ["URLHAUS_ENABLED"] = "true"
     os.environ.pop("THREATFOX_AUTH_KEY", None)
     try:
         resp = MagicMock()
@@ -7838,10 +7833,28 @@ def _test_threat_intel_skips_shared_platforms():
         assert s.query(BlacklistEntry).filter(BlacklistEntry.value == "sharedplatform-test-evil.example").first() is not None, "haqiqiy zararli host qo'shilishi kerak"
         s.close()
     finally:
-        os.environ.pop("URLHAUS_AUTH_KEY", None)
+        os.environ.pop("URLHAUS_AUTH_KEY", None); os.environ.pop("URLHAUS_ENABLED", None)
 
 
 check("Threat Intelligence: umumiy platformalar (github.com va h.k.) blacklist'ga kirmaydi", _test_threat_intel_skips_shared_platforms)
+
+
+def _test_urlhaus_disabled_by_default():
+    from unittest.mock import patch
+    import threat_intel.urlhaus_feed as uh
+    import engine.threat_intel_sync as tis
+    os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"
+    os.environ.pop("URLHAUS_ENABLED", None)
+    os.environ.pop("THREATFOX_AUTH_KEY", None)
+    try:
+        with patch.object(uh.requests, "get") as mock_get:
+            assert tis.run_once() == 0
+            assert mock_get.call_count == 0, "URLhaus standart holatda o'chiq - tarmoqqa so'rov ketmasligi kerak"
+    finally:
+        os.environ.pop("URLHAUS_AUTH_KEY", None)
+
+
+check("Threat Intelligence: URLhaus standart holatda o'chiq (URLHAUS_ENABLED=true bo'lmasa so'rov yuborilmaydi)", _test_urlhaus_disabled_by_default)
 
 # ---------------------------------------------------------------------------
 print("\n=== 101) Heuristik tahlil moduli (entropiya/skript naqshi/kengaytma-nomuvofiqlik/PDF) - 'unknown' hech qachon qolmasin ===")

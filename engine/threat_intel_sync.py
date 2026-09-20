@@ -98,8 +98,15 @@ def _add_new_entries(session, candidates: list) -> int:
     return added
 
 
+def urlhaus_enabled() -> bool:
+    """URLhaus ATAYLAB standart holatda O'CHIQ: feed noto'g'ri (umumiy platformalar,
+    qonuniy CDN'lar) ma'lumot berib, soxta-pozitiv alertlarga olib keldi.
+    Faqat URLHAUS_ENABLED=true bo'lganda ishlaydi."""
+    return os.getenv("URLHAUS_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
 def sync_urlhaus(session) -> int:
-    if not urlhaus_configured():
+    if not urlhaus_enabled() or not urlhaus_configured():
         return 0
     urls = fetch_recent_urls()
     if urls is None:
@@ -141,7 +148,7 @@ def sync_threatfox(session) -> int:
 
 
 def run_once() -> int:
-    if not urlhaus_configured() and not threatfox_configured():
+    if not (urlhaus_enabled() and urlhaus_configured()) and not threatfox_configured():
         return 0
 
     session = get_session()
