@@ -396,6 +396,7 @@ class EndpointAgent:
         self.hostname = platform.node()
         self.ip_address = _get_local_ip()
         self.cache = _load_cache()
+        self.watch_dirs = list(watch_dirs)
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
@@ -538,6 +539,39 @@ class EndpointAgent:
             daemon=True,
         )
         self._heartbeat_thread.start()
+        self._maybe_start_rescan()
+
+    def _maybe_start_rescan(self):
+        """
+        `rescan.flag` fayli (kesh bilan bir papkada) mavjud bo'lsa, kuzatilgan papkalardagi
+        MAVJUD barcha fayllar bir marta qayta tekshiriladi (odatda agent faqat YANGI fayllarni
+        ko'radi). Bayroq darhol o'chiriladi - xizmat qayta ishga tushganda tsikl takrorlanmaydi.
+        """
+        flag = os.path.join(os.path.dirname(LOCAL_CACHE_FILE), "rescan.flag")
+        if not os.path.isfile(flag):
+            return
+        try:
+            os.remove(flag)
+        except OSError as exc:
+            logger.warning(f"rescan.flag o'chirib bo'lmadi, qayta skanerlash bekor qilindi: {exc}")
+            return
+        threading.Thread(target=self._rescan_existing, name="AgentRescan", daemon=True).start()
+
+    def _rescan_existing(self):
+        logger.info("Qayta skanerlash boshlandi: mavjud fayllar tekshirilmoqda...")
+        count = 0
+        for root_dir in self.watch_dirs:
+            for dirpath, _dirs, files in os.walk(root_dir):
+                for name in files:
+                    if self._heartbeat_stop.is_set():
+                        return
+                    try:
+                        self._on_new_file(os.path.join(dirpath, name))
+                        count += 1
+                    except Exception as exc:
+                        logger.warning(f"Qayta skanerlashda xato ({name}): {exc}")
+                    time.sleep(0.2)  # serverga (VT kvotasi) va diskka yuklamani cheklash
+        logger.info(f"Qayta skanerlash tugadi: {count} ta fayl tekshirildi")
 
     def stop(self):
         self._heartbeat_stop.set()

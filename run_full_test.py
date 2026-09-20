@@ -8472,6 +8472,125 @@ def _test_double_extension_and_apk():
 
 check("Heuristika: ikki kengaytma niqobi + APK haqiqiy AXML tahlili (malicious/suspicious/clean chegaralari)", _test_double_extension_and_apk)
 
+print("\n=== 107) PE tahlili (sintetik PE) ===")
+
+
+def _build_pe(sections, imports=(), timestamp=1700000000, entry_section=0):
+    """Minimal, haqiqiy PE tuzilmasi (import jadvali bilan). sections: [(nom, xom_bytes, chars)]"""
+    import struct
+    file_align, sect_align = 0x200, 0x1000
+    nsec = len(sections) + (1 if imports else 0)
+    hdr_size = 0x200
+    sec_list = list(sections)
+    idata = b""
+    idata_rva = 0
+    # bo'limlar joylashuvi
+    layout = []
+    rptr, vaddr = hdr_size, sect_align
+    all_secs = list(sec_list)
+    if imports:
+        all_secs.append((".idata", b"", 0xC0000040))
+    for i, (name, raw, chars) in enumerate(all_secs):
+        if name == ".idata":
+            # import jadvali: 1 ta DLL
+            base = vaddr
+            names = [n.encode() for n in imports]
+            ilt_off = 40
+            hn_off = ilt_off + (len(names) + 1) * 4
+            hn_blob, hn_rvas, cur = b"", [], hn_off
+            for n in names:
+                hn_rvas.append(base + cur)
+                ent = b"\0\0" + n + b"\0"
+                hn_blob += ent
+                cur += len(ent)
+            dll_rva = base + cur
+            dll = b"kernel32.dll\0"
+            ilt = b"".join(struct.pack("<I", r) for r in hn_rvas) + struct.pack("<I", 0)
+            desc = struct.pack("<IIIII", base + ilt_off, 0, 0, dll_rva, base + ilt_off) + b"\0" * 20
+            raw = desc + ilt + hn_blob + dll
+            idata_rva = base
+        rsize = (len(raw) + file_align - 1) // file_align * file_align if raw else 0
+        vsize = max(len(raw), 0x2000 if (raw == b"" and name != ".idata") else len(raw) or 1)
+        layout.append((name, raw, chars, vaddr, vsize, rptr if rsize else 0, rsize))
+        rptr += rsize
+        vaddr += (max(vsize, 1) + sect_align - 1) // sect_align * sect_align
+    entry_rva = layout[entry_section][3]
+    opt = struct.pack("<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII", 0x10B, 1, 0, 0, 0, 0, entry_rva, 0, 0, 0x400000, sect_align, file_align,
+                      4, 0, 0, 0, 4, 0, 0, vaddr, hdr_size, 0, 3, 0, 0x100000, 0x1000, 0x100000, 0x1000, 0, 16)
+    dirs = [(0, 0)] * 16
+    if imports:
+        dirs[1] = (idata_rva, 40)
+    opt += b"".join(struct.pack("<II", a, b) for a, b in dirs)
+    coff = struct.pack("<HHIIIHH", 0x14C, len(layout), timestamp, 0, 0, len(opt), 0x102)
+    dos = b"MZ" + b"\0" * 58 + struct.pack("<I", 0x80)
+    hdr = dos + b"\0" * (0x80 - len(dos)) + b"PE\0\0" + coff + opt
+    for name, raw, chars, va, vs, rp, rs in layout:
+        hdr += name.encode().ljust(8, b"\0") + struct.pack("<IIIIIIHHI", vs, va, rs, rp, 0, 0, 0, 0, chars)
+    out = hdr.ljust(hdr_size, b"\0")
+    for name, raw, chars, va, vs, rp, rs in layout:
+        out += raw.ljust(rs, b"\0")
+    return out
+
+
+def _test_pe_analyzer():
+    import random
+    from scanners.pe_analyzer import analyze_pe
+
+    # --- 1) PE tahlilchi ---
+    code = bytes(range(256)) * 16  # past entropiya
+    clean = _build_pe([(".text", code, 0x60000020)],
+                      imports=["CreateFileA", "ReadFile", "WriteFile", "CloseHandle", "GetLastError", "ExitProcess", "GetModuleHandleA"])
+    r = analyze_pe(clean)
+    assert r is not None and r["verdict_hint"] == "clean", f"toza PE clean bo'lishi kerak: {r}"
+
+    rnd = random.Random(7)
+    noisy = bytes(rnd.getrandbits(8) for _ in range(8192))
+    packed = _build_pe([("UPX0", b"", 0xE0000080), ("UPX1", noisy, 0xE0000040)], imports=["LoadLibraryA", "GetProcAddress"], entry_section=1)
+    r = analyze_pe(packed)
+    assert r["verdict_hint"] == "suspicious" and r["packer"], f"UPX+entropiya suspicious bo'lishi kerak: {r}"
+
+    inj = _build_pe([(".text", code, 0x60000020)],
+                    imports=["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "OpenProcess", "CloseHandle", "GetLastError", "ExitProcess"])
+    r = analyze_pe(inj)
+    assert r["score"] >= 40 and any("injection" in f for f in r["findings"]), f"injection API majmuasi: {r}"
+    assert analyze_pe(b"not a pe at all") is None
+
+
+
+check("PE tahlili (sintetik PE): toza clean, paketlangan/injection suspicious", _test_pe_analyzer)
+
+print("\n=== 108) Agent: rescan.flag -> mavjud fayllar qayta tekshiriladi (bayroq bir martalik) ===")
+
+
+def _test_agent_rescan_flag():
+    import os, tempfile, time
+    import agent_core.agent as am
+    d = tempfile.mkdtemp(prefix="nsa_rescan_")
+    watch = os.path.join(d, "dl"); os.makedirs(os.path.join(watch, "sub"))
+    for n in ("a.txt", os.path.join("sub", "b.bin")):
+        open(os.path.join(watch, n), "wb").write(b"x" + n.encode())
+    old_cache = am.LOCAL_CACHE_FILE
+    am.LOCAL_CACHE_FILE = os.path.join(d, "agent_hash_cache.json")
+    try:
+        ag = am.EndpointAgent([watch])
+        seen = []
+        ag._on_new_file = lambda p: seen.append(p)
+        ag._maybe_start_rescan()
+        time.sleep(0.5)
+        assert not seen, "bayroq yo'q - qayta skanerlash bo'lmasligi kerak"
+        flag = os.path.join(d, "rescan.flag"); open(flag, "w").write("1")
+        ag._maybe_start_rescan()
+        for _ in range(50):
+            if len(seen) >= 2 and not os.path.exists(flag):
+                break
+            time.sleep(0.1)
+        assert len(seen) == 2 and not os.path.exists(flag), f"2 ta fayl va bayroq o'chirilishi kerak: {seen}"
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+
+
+check("Agent: rescan.flag mavjud fayllarni bir marta qayta tekshiradi", _test_agent_rescan_flag)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

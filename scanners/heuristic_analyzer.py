@@ -43,6 +43,7 @@ from collections import Counter
 from typing import Optional
 
 from scanners.apk_analyzer import analyze_apk
+from scanners.pe_analyzer import analyze_pe
 from scanners.file_type_detector import (
     detect_magic_from_bytes,
     check_extension_mismatch,
@@ -218,6 +219,13 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
     soft = scan_bytes_heuristic(data, magic_label, file_ext)
     findings.extend(soft["findings"])
     score = soft["score"]
+
+    # 3b) PE (.exe/.dll) chuqur statik tahlili: bo'limlar, importlar, paketlovchi (scanners/pe_analyzer.py)
+    if magic_label == "PE":
+        pe = analyze_pe(data)
+        if pe is not None:
+            findings.extend(f for f in pe["findings"] if f not in findings)
+            score = min(100, max(score, pe["score"]))
     verdict_hint = "suspicious" if score >= SUSPICIOUS_SCORE_THRESHOLD else "clean"
 
     return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label}

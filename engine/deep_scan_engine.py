@@ -57,6 +57,8 @@ from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_a
 from scanners.file_type_detector import detect_magic_from_file, check_extension_mismatch
 from scanners.pdf_analyzer import scan_pdf_file, PDF_EXTENSIONS
 from scanners.heuristic_analyzer import scan_bytes_heuristic, check_double_extension, READ_LIMIT_BYTES
+from scanners.pe_analyzer import analyze_pe
+from scanners.apk_analyzer import analyze_apk
 from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -111,6 +113,15 @@ def deep_scan_one(session, fe: FileEvent):
             findings.append(f"{dbl}[critical]")
             is_malicious = True
 
+        # 1e) Android paketi (APK): haqiqiy AXML manifest tahlili - ball >= 80 (SMS +
+        # accessibility/overlay + yashirin ikona kabi zararli kombinatsiya) "malicious".
+        if real_magic == "ZIP" or fe.file_ext in ("apk", "xapk", "apks"):
+            _apk = analyze_apk(fe.stored_path)
+            if _apk is not None:
+                findings.append(f"APK tahlili[{_apk['verdict_hint']}, ball={_apk['score']}]: " + "; ".join(_apk["findings"]))
+                if _apk["verdict_hint"] == "malicious":
+                    is_malicious = True
+
         # 2) Office makro
         if fe.file_ext in OFFICE_EXTENSIONS:
             office_result = scan_office_file(fe.stored_path)
@@ -162,6 +173,12 @@ def deep_scan_one(session, fe: FileEvent):
             except OSError:
                 _content = b""
             heuristic = scan_bytes_heuristic(_content, real_magic, fe.file_ext)
+            if real_magic == "PE":
+                _pe = analyze_pe(_content)
+                if _pe is not None:
+                    heuristic["findings"] = heuristic["findings"] + [f for f in _pe["findings"] if f not in heuristic["findings"]]
+                    heuristic["score"] = min(100, max(heuristic["score"], _pe["score"]))
+                    heuristic["verdict_hint"] = "suspicious" if heuristic["score"] >= 40 else "clean"
             if heuristic["verdict_hint"] == "suspicious":
                 fe.verdict = "suspicious"
                 fe.threat_score = max(fe.threat_score or 0, heuristic["score"])
