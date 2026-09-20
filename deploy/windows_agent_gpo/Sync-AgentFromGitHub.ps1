@@ -45,7 +45,9 @@ try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
         $zip = Join-Path $stage $zipAsset.name
         Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zip -UseBasicParsing -TimeoutSec 300
-        $expected = ((Invoke-WebRequest -Uri $shaAsset.browser_download_url -UseBasicParsing -TimeoutSec 60).Content -split "\s+")[0].Trim().ToLower()
+        $shaBody = (Invoke-WebRequest -Uri $shaAsset.browser_download_url -UseBasicParsing -TimeoutSec 60).Content
+        if ($shaBody -is [byte[]]) { $shaBody = [Text.Encoding]::ASCII.GetString($shaBody) }   # PS 5.1: octet-stream bayt massivi
+        $expected = ($shaBody.Trim() -split "\s+")[0].ToLower()
         $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
         if ($actual -ne $expected) { throw "SHA256 mos emas (kutilgan $expected, olingan $actual) - o'rnatilmadi" }
 
