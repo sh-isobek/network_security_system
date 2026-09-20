@@ -222,9 +222,12 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
     `malicious`/`confirmed` javobiga ta'sir qilmaydi (`_on_new_file()`
     heuristikni MUSTAQIL, mahalliy ravishda hisobga oladi).
     """
-    if sha256 in cache:
-        logger.debug(f"Kesh'dan topildi: {sha256[:12]}...")
-        return cache[sha256]
+    # MUHIM: kesh endi FAQAT server bilan aloqa uzilganda ishlatiladi. Avval kesh
+    # birinchi tekshirilardi - shu sababli bir xil fayl (xesh) boshqa joyda paydo
+    # bo'lganda serverga umuman xabar bermasdi va Dashboard'da fayl QAYERDA
+    # turgani (to'liq yo'l) ko'rinmasdi; kesh esa eskirgan "toza" natijani
+    # ham qaytarishi mumkin edi. Endi har bir yangi fayl serverga yuboriladi.
+    cached = cache.get(sha256)
 
     heuristic = heuristic or {}
     try:
@@ -266,6 +269,10 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
         logger.warning(f"Server xatoligi: HTTP {resp.status_code}")
     except requests.RequestException as exc:
         logger.warning(f"Serverga ulanib bo'lmadi (offline rejim): {exc}")
+
+    if cached is not None:
+        logger.debug(f"Server javob bermadi, kesh'dan olindi: {sha256[:12]}...")
+        return cached
 
     # Server bilan bog'lanib bo'lmadi va keshda ham yo'q - xavfsizlik uchun
     # "malicious=False" deb hisoblaymiz (false-positive bilan foydalanuvchi

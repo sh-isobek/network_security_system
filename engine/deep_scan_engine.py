@@ -56,7 +56,7 @@ from scanners.archive_scanner import extract_zip_and_queue
 from scanners.clamav_scanner import scan_file as clamav_scan_file, is_database_available as clamav_db_available
 from scanners.file_type_detector import detect_magic_from_file, check_extension_mismatch
 from scanners.pdf_analyzer import scan_pdf_file, PDF_EXTENSIONS
-from scanners.heuristic_analyzer import scan_bytes_heuristic, READ_LIMIT_BYTES
+from scanners.heuristic_analyzer import scan_bytes_heuristic, check_double_extension, READ_LIMIT_BYTES
 from engine.quarantine import quarantine_file
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -103,6 +103,12 @@ def deep_scan_one(session, fe: FileEvent):
         mismatch = check_extension_mismatch(fe.file_ext, real_magic)
         if mismatch["severity"] == "critical":
             findings.append(f"Fayl turi nomuvofiqligi[critical]: {mismatch['note']}")
+            is_malicious = True
+
+        # 1d) Ikki kengaytma niqobi (masalan "video.mp4.apk") - deterministik
+        dbl = check_double_extension(fe.filename)
+        if dbl:
+            findings.append(f"{dbl}[critical]")
             is_malicious = True
 
         # 2) Office makro

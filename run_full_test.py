@@ -8273,6 +8273,118 @@ def _test_agent_confirmed_gating_and_local_heuristic():
 check("Endpoint Agent: 'confirmed' bo'yicha aniq chora + mahalliy heuristik orqali niqoblangan fayl aniqlanishi", _test_agent_confirmed_gating_and_local_heuristic)
 
 # ---------------------------------------------------------------------------
+print("\n=== 105) Fayl joylashuvi (to'liq yo'l): agent har bir faylni yuboradi, Dashboard yo'lni qisqartirmasdan ko'rsatadi ===")
+
+
+def _test_full_file_path_reporting_and_display():
+    import requests as _rq
+    from unittest.mock import patch, MagicMock
+    import agent_core.agent as agent_mod
+
+    # --- 1) Agent: kesh serverga xabar berishni O'TKAZIB YUBORMASLIGI kerak (har bir yangi joy yuboriladi) ---
+    sha = "5a" * 32
+    cache = {sha: {"malicious": False, "confirmed": False, "threat_name": None, "source": None}}
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"malicious": False, "confirmed": False, "threat_name": None, "source": None}
+    long_path = "C:\\Users\\jsmith\\Downloads\\Reports\\2026\\September\\very_long_folder_name_for_testing\\invoice_final.pdf"
+    with patch.object(agent_mod, "_save_cache", lambda c: None), \
+         patch.object(agent_mod.requests, "post", return_value=resp) as mock_post:
+        agent_mod.check_hash_with_server_or_cache(sha, cache, filename="invoice_final.pdf", hostname="PC1",
+                                                  ip_address="172.16.67.1", filepath=long_path)
+        agent_mod.check_hash_with_server_or_cache(sha, cache, filename="copy.pdf", hostname="PC1",
+                                                  ip_address="172.16.67.1", filepath="D:\\Other\\copy.pdf")
+        assert mock_post.call_count == 2, "Keshdagi xesh uchun ham server har safar xabardor qilinishi kerak edi (yo'l yo'qolmasligi uchun)"
+        assert mock_post.call_args_list[0].kwargs["json"]["filepath"] == long_path
+        assert mock_post.call_args_list[1].kwargs["json"]["filepath"] == "D:\\Other\\copy.pdf"
+    # server o'chiq bo'lsa - kesh zaxira sifatida ishlaydi
+    with patch.object(agent_mod.requests, "post", side_effect=_rq.RequestException("down")):
+        out = agent_mod.check_hash_with_server_or_cache(sha, cache, filepath=long_path)
+        assert out == cache[sha], "Server o'chiq bo'lsa kesh natijasi qaytishi kerak edi"
+
+    # --- 2) Dashboard: to'liq yo'l qisqartirilmaydi; yo'li yo'q qatorlar uchun tushunarli izoh ---
+    s = get_session()
+    s.add(FileEvent(filename="invoice_final.pdf", src_ip="172.16.67.1", sha256="6a" * 32, channel="endpoint_agent",
+                    verdict="clean", device_file_path=long_path))
+    s.add(FileEvent(filename="old_agent_file.bin", src_ip="172.16.67.2", sha256="6b" * 32, channel="endpoint_agent", verdict="unknown"))
+    s.add(FileEvent(filename="net_file.exe", src_ip="172.16.67.3", dest_ip="93.184.216.34", sha256="6c" * 32, channel="web", verdict="unknown"))
+    s.commit()
+    s.close()
+
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    create_user("filepath_ci_admin", "filepathpass123", "admin")
+    dashboard_app.secret_key = "test-secret-filepath"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "filepath_ci_admin", "password": "filepathpass123"})
+    html = client.get("/files").get_data(as_text=True)
+    assert long_path in html or long_path.replace("\\", "&#92;") in html, "To'liq yo'l Dashboard'da ko'rinmadi"
+    assert "very_long_folder_name_for_testing" in html
+    assert "yo'l noma'lum" in html, "Yo'li yo'q endpoint yozuvi uchun izoh ko'rinmadi"
+    assert "tarmoq orqali: 172.16.67.3" in html and "93.184.216.34" in html, "Tarmoq yozuvi uchun manba/manzil ko'rinmadi"
+    assert "text-overflow: ellipsis" not in html.split("Qurilmadagi yo'l</th>")[1].split("</table>")[0], "Yo'l hali ham '...' bilan qisqartirilmoqda"
+
+
+check("Fayl joylashuvi: agent har bir faylni yuboradi (kesh zaxira), Dashboard to'liq yo'lni ko'rsatadi", _test_full_file_path_reporting_and_display)
+
+# ---------------------------------------------------------------------------
+print("\n=== 106) Heuristika: ikki kengaytma niqobi (video.mp4.apk) va APK ruxsatlari (real Telegram 'To'y arxiv' zararli APK) ===")
+
+
+def _test_double_extension_and_apk():
+    import shutil
+    import zipfile
+    from scanners.heuristic_analyzer import check_double_extension, analyze_file, scan_apk
+
+    # nom bo'yicha qoidalar
+    assert check_double_extension("To'ydan arxiv 2026(FullHD).mp4.apk"), "mp4.apk aniqlanmadi"
+    assert check_double_extension("hisobot.PDF.exe") and check_double_extension("rasm.jpg.scr")
+    assert check_double_extension("C:\\Users\\x\\Downloads\\video.mp4.apk")
+    assert not check_double_extension("setup.exe") and not check_double_extension("video.mp4")
+    assert not check_double_extension("archive.tar.gz") and not check_double_extension("report.v2.exe"), "soxta-pozitiv"
+    assert not check_double_extension("notes.txt.zip"), "zip bajariladigan emas"
+
+    work = "/tmp/_test_apk_heur"
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    try:
+        def make_apk(path, perms):
+            manifest = "".join("android.permission." + p_ + "\0" for p_ in perms).encode("utf-16-le")
+            with zipfile.ZipFile(path, "w") as zf:
+                zf.writestr("AndroidManifest.xml", manifest)
+                zf.writestr("classes.dex", b"dex\n035\0" + b"\0" * 64)
+
+        # 1) real hodisa: video niqobi + SMS/accessibility ruxsatlari -> malicious
+        p1 = os.path.join(work, "To'ydan arxiv 2026(FullHD).mp4.apk")
+        make_apk(p1, ["SEND_SMS", "READ_SMS", "BIND_ACCESSIBILITY_SERVICE"])
+        r1 = analyze_file(p1, filename=os.path.basename(p1))
+        assert r1["verdict_hint"] == "malicious" and r1["score"] == 100, r1
+        assert any("Ikki kengaytma" in f for f in r1["findings"]) and any("SEND_SMS" in f for f in r1["findings"]), r1
+
+        # 2) niqobsiz, lekin xavfli ruxsatli APK -> suspicious (avtomatik karantin emas)
+        p2 = os.path.join(work, "tool.apk")
+        make_apk(p2, ["SEND_SMS", "READ_SMS"])
+        r2 = analyze_file(p2, filename="tool.apk")
+        assert r2["verdict_hint"] == "suspicious" and r2["score"] >= 60, r2
+
+        # 3) ruxsatsiz oddiy APK -> baribir suspicious (kompyuterda APK odatiy emas), lekin past ball
+        p3 = os.path.join(work, "plain.apk")
+        make_apk(p3, [])
+        r3 = analyze_file(p3, filename="plain.apk")
+        assert r3["verdict_hint"] == "suspicious" and r3["score"] == 40, r3
+
+        # 4) oddiy ZIP (APK emas) - aralashib ketmaydi
+        p4 = os.path.join(work, "docs.zip")
+        with zipfile.ZipFile(p4, "w") as zf:
+            zf.writestr("a.txt", "salom")
+        assert scan_apk(p4) is None
+        assert analyze_file(p4, filename="docs.zip")["verdict_hint"] == "clean"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+check("Heuristika: ikki kengaytma niqobi + APK ruxsatlari (malicious/suspicious/clean chegaralari)", _test_double_extension_and_apk)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("YAKUNIY HISOBOT")
 print("=" * 60)

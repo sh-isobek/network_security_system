@@ -41,7 +41,17 @@
     <tr>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
         <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
-        <td class="mono" style="font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ f.device_file_path or '' }}">{{ f.device_file_path or '-' }}</td>
+        <td class="mono" style="font-size: 11px; min-width: 240px; max-width: 460px; white-space: normal; word-break: break-all;" title="{{ f.device_file_path or '' }}">
+            {%- if f.device_file_path -%}
+                {{ f.device_file_path }}
+            {%- elif f.channel == 'endpoint_agent' -%}
+                <span style="color:#95a5a6;">yo'l noma'lum (eski agent versiyasi yubormagan)</span>
+            {%- elif f.dest_ip -%}
+                <span style="color:#95a5a6;">tarmoq orqali: {{ f.src_ip }} &rarr; {{ f.dest_ip }}</span>
+            {%- else -%}
+                -
+            {%- endif -%}
+        </td>
         <td class="mono">{{ f.src_ip }}</td>
         <td>{% if f.channel == 'endpoint_agent' %}<span class="badge" style="background:#2980b9;">Endpoint Agent</span>{% else %}{{ f.channel or '-' }}{% endif %}</td>
         <td>

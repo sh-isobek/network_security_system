@@ -39,6 +39,7 @@ soxta "clean" yorlig'i berishdan ko'ra halolroq.
 """
 import math
 import re
+import zipfile
 from collections import Counter
 from typing import Optional
 
@@ -68,6 +69,64 @@ _SUSPICIOUS_SCRIPT_PATTERNS = [
 # faqat "suspicious". Bu chegaradan yuqori ball "unknown"ni "suspicious"ga
 # hal qilish uchun ishlatiladi (`api/server.py`, `engine/deep_scan_engine.py`).
 SUSPICIOUS_SCORE_THRESHOLD = 40
+
+# --- Ikki kengaytma niqobi (masalan "video.mp4.apk", "hisobot.pdf.exe") ---
+# Hujumchi foydalanuvchi ko'radigan "hujjat/media" kengaytmasi orqasiga
+# bajariladigan/o'rnatiladigan kengaytmani yashiradi. Bunday nom qonuniy
+# fayllarda deyarli uchramaydi - DETERMINISTIK signal.
+_EXECUTABLE_EXTS = {
+    "apk", "exe", "scr", "com", "bat", "cmd", "js", "jse", "vbs", "vbe", "wsf",
+    "ps1", "msi", "jar", "lnk", "hta", "pif", "dll", "xapk", "apks",
+}
+_DECOY_EXTS = {
+    "mp4", "mp3", "avi", "mkv", "mov", "wav", "3gp", "jpg", "jpeg", "png", "gif",
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv", "zip", "rar", "7z",
+}
+
+# Android'da SMS/kirish (accessibility)/o'rnatish kabi zararli dasturlar (masalan
+# "To'y taklifnomasi.apk" turkumidagi Telegram orqali tarqaladigan) suiiste'mol
+# qiladigan ruxsatlar.
+_RISKY_ANDROID_PERMISSIONS = [
+    "SEND_SMS", "READ_SMS", "RECEIVE_SMS", "WRITE_SMS", "BIND_ACCESSIBILITY_SERVICE",
+    "REQUEST_INSTALL_PACKAGES", "SYSTEM_ALERT_WINDOW", "BIND_DEVICE_ADMIN",
+    "READ_CONTACTS", "READ_CALL_LOG", "RECORD_AUDIO", "QUERY_ALL_PACKAGES", "RECEIVE_BOOT_COMPLETED",
+]
+
+
+def check_double_extension(filename: Optional[str]) -> Optional[str]:
+    """`nom.mp4.apk` kabi (media/hujjat kengaytmasi + bajariladigan kengaytma) nomni aniqlaydi.
+    Topilsa tushuntirish matnini, aks holda None qaytaradi."""
+    if not filename:
+        return None
+    base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1].lower()
+    parts = base.split(".")
+    if len(parts) >= 3 and parts[-1].strip() in _EXECUTABLE_EXTS and parts[-2].strip() in _DECOY_EXTS:
+        return (f"Ikki kengaytma niqobi: '.{parts[-2].strip()}.{parts[-1].strip()}' - fayl "
+                f"'{parts[-2].strip()}' ko'rinishida, aslida bajariladigan/o'rnatiladigan '.{parts[-1].strip()}'")
+    return None
+
+
+def scan_apk(filepath: str) -> Optional[dict]:
+    """
+    Fayl Android paketi (ZIP ichida AndroidManifest.xml + classes.dex) bo'lsa, xavfli
+    ruxsatlarni sanaydi. APK bo'lmasa None. ZIP markaziy katalogini o'qiydi (fayl hajmidan
+    qat'iy nazar), manifest 2 MB bilan cheklanadi.
+    Qaytaradi: {"risky": [ruxsat nomlari]}
+    """
+    try:
+        with zipfile.ZipFile(filepath) as zf:
+            names = set(zf.namelist())
+            if "AndroidManifest.xml" not in names:
+                return None
+            manifest = zf.read("AndroidManifest.xml")[:2 * 1024 * 1024]
+    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError):
+        return None
+    risky = []
+    for perm in _RISKY_ANDROID_PERMISSIONS:
+        needle = ("android.permission." + perm)
+        if needle.encode("utf-8") in manifest or needle.encode("utf-16-le") in manifest:
+            risky.append(perm)
+    return {"risky": risky}
 
 READ_LIMIT_BYTES = 5 * 1024 * 1024  # 5 MB - "zip bomb"ga o'xshash cheksiz o'qishdan himoya
 
@@ -146,6 +205,16 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
 
     findings = []
 
+    # 0) Ikki kengaytma niqobi (masalan "video.mp4.apk") - deterministik
+    dbl = check_double_extension(name)
+    if dbl:
+        findings.append(dbl)
+        apk_info = scan_apk(filepath)
+        if apk_info is not None:
+            findings.append("Fayl haqiqatan Android paketi (APK)" + (
+                f"; xavfli ruxsatlar: {', '.join(apk_info['risky'])}" if apk_info["risky"] else ""))
+        return {"score": 100, "findings": findings, "verdict_hint": "malicious", "magic": magic_label}
+
     # 1) Kengaytma nomuvofiqligi - deterministik
     mismatch = check_extension_mismatch(file_ext, magic_label)
     if mismatch["severity"] == "critical":
@@ -167,10 +236,20 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
             findings.extend(pdf_result.get("findings", []))
             return {"score": 100, "findings": findings, "verdict_hint": "malicious", "magic": magic_label or "PDF"}
 
+    # 2b) Android paketi (APK) Windows/Linux kompyuterda - odatiy emas; xavfli ruxsatlar bilan
+    # kuchliroq signal (ehtimoliy - faqat "suspicious", hech qachon avtomatik "malicious" emas)
+    apk_score = 0
+    if magic_label == "ZIP" or file_ext in ("apk", "xapk", "apks"):
+        apk_info = scan_apk(filepath)
+        if apk_info is not None:
+            apk_score = 40 + 10 * min(len(apk_info["risky"]), 3)
+            findings.append("Android paketi (APK) kompyuterda topildi" + (
+                f"; xavfli ruxsatlar: {', '.join(apk_info['risky'])}" if apk_info["risky"] else ""))
+
     # 3) Ehtimoliy (statistik) signallar
     soft = scan_bytes_heuristic(data, magic_label, file_ext)
     findings.extend(soft["findings"])
-    score = soft["score"]
+    score = min(100, soft["score"] + apk_score)
     verdict_hint = "suspicious" if score >= SUSPICIOUS_SCORE_THRESHOLD else "clean"
 
     return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label}
