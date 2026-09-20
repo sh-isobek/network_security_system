@@ -17,6 +17,9 @@ on:
       - ".github/workflows/build-windows-agent.yml"
   workflow_dispatch: {}   # qo'lda ham ishga tushirish mumkin
 
+permissions:
+  contents: write   # GitHub Release yaratish uchun
+
 jobs:
   build:
     runs-on: windows-latest
@@ -131,6 +134,8 @@ jobs:
           Copy-Item "windows_agent/VERSION" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Deploy-NetworkSecurityAgent.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1" -Destination $releaseDir -ErrorAction SilentlyContinue
+          Copy-Item "deploy/windows_agent_gpo/Sync-AgentFromGitHub.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Install-AgentAutoUpdate.ps1" -Destination $releaseDir
           Compress-Archive -Path $releaseDir -DestinationPath "NetworkSecurityAgent-$($env:AGENT_VERSION).zip" -Force
         env:
           AGENT_VERSION: ${{ steps.version.outputs.version }}
@@ -141,3 +146,21 @@ jobs:
           name: NetworkSecurityAgent-${{ steps.version.outputs.version }}
           path: NetworkSecurityAgent-*.zip
           retention-days: 90
+
+      - name: GitHub Release e'lon qilish (AD serverdagi avto-yangilovchi shundan oladi)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $zip = "NetworkSecurityAgent-$($env:AGENT_VERSION).zip"
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File -Encoding ascii "$zip.sha256"
+          $tag = "agent-v$($env:AGENT_VERSION)"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag allaqachon mavjud - o'zgartirilmaydi (versiya o'zgarmagan)"
+            exit 0
+          }
+          gh release create $tag $zip "$zip.sha256" --title "Windows Agent $($env:AGENT_VERSION)" --notes "Avtomatik yig'ilgan agent $($env:AGENT_VERSION) (commit ${{ github.sha }})" --latest

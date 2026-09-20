@@ -8591,6 +8591,27 @@ def _test_agent_rescan_flag():
 
 check("Agent: rescan.flag mavjud fayllarni bir marta qayta tekshiradi", _test_agent_rescan_flag)
 
+print("\n=== 109) DC avto-yangilash: CI Release e'lon qiladi, sync skripti SHA256/versiya/zaxira/VERSION-oxirida tartibini saqlaydi ===")
+
+
+def _test_agent_autoupdate_static():
+    wf = open("/app/.github/workflows/build-windows-agent.yml" if False else os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github/workflows/build-windows-agent.yml"), encoding="utf-8").read()
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", "windows_agent_gpo")
+    sync = open(os.path.join(base, "Sync-AgentFromGitHub.ps1"), encoding="utf-8").read()
+    inst = open(os.path.join(base, "Install-AgentAutoUpdate.ps1"), encoding="utf-8").read()
+    assert "contents: write" in wf and "gh release create" in wf and ".sha256" in wf
+    assert "Sync-AgentFromGitHub.ps1" in wf, "release paketiga sync skripti kirishi kerak"
+    assert "releases/latest" in sync and "Get-FileHash" in sync and "SHA256 mos emas" in sync
+    assert "_backup_" in sync and "Deploy-NetworkSecurityAgent.ps1" in sync
+    # VERSION eng oxirida yoziladi (yarim ko'chirilgan holatda agentlar yangilanmasin)
+    assert sync.index('Where-Object { $_.Name -ne "VERSION" }') < sync.index('Copy-Item (Join-Path $pkg "VERSION")')
+    assert "Register-ScheduledTask" in inst and "SYSTEM" in inst
+    for f in (sync, inst):
+        assert f.count("{") == f.count("}")
+
+
+check("DC avto-yangilash: workflow Release + Sync/Install skriptlari (statik tekshiruv)", _test_agent_autoupdate_static)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
