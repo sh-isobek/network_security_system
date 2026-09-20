@@ -7814,6 +7814,8 @@ def _test_threat_intel_skips_shared_platforms():
     assert tis.is_shared_platform_host("raw.githubusercontent.com")
     assert tis.is_shared_platform_host("lb-140-82-112-22-iad.github.com")
     assert tis.is_shared_platform_host("drive.google.com")
+    assert tis.is_shared_platform_host("cdn.jsdelivr.net") and tis.is_shared_platform_host("testingcf.jsdelivr.net")
+    assert not tis.is_shared_platform_host("evil-jsdelivr.net")
     assert not tis.is_shared_platform_host("notgithub.com"), "label chegarasi: notgithub.com mos kelmasligi kerak"
     assert not tis.is_shared_platform_host("evil-github.com.attacker.example")
     assert not tis.is_shared_platform_host("update.googlecert.help")

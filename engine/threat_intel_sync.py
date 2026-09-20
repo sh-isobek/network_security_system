@@ -49,6 +49,11 @@ SHARED_PLATFORM_DOMAINS = {
     "dropbox.com", "dropboxusercontent.com",
     "onedrive.live.com", "sharepoint.com", "microsoft.com",
     "telegram.org", "t.me", "whatsapp.com", "youtube.com", "facebook.com",
+    # Ommaviy CDN/paket registrlari va keng tarqalgan xizmatlar (production'da
+    # cdn.jsdelivr.net alertlari 61 marta soxta-pozitiv berdi)
+    "jsdelivr.net", "cdnjs.com", "unpkg.com", "npmjs.org", "npmjs.com", "pypi.org",
+    "sourceforge.net", "live.com", "office.com", "apple.com", "icloud.com", "mozilla.org",
+    "wordpress.com", "blogspot.com", "discord.com", "discordapp.com",
 }
 
 
