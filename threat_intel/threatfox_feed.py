@@ -39,15 +39,8 @@ def _extract_value(ioc: str, ioc_type: str) -> str:
     return ioc
 
 
-def fetch_recent_iocs(days: int = 1):
-    """
-    So'nggi `days` kunlik IOC'larni qaytaradi (domain/url/ip:port
-    turlaridan, mos `value`ga normallashtirilgan holda).
-
-    Har biri: {"value", "ioc_type", "malware", "confidence_level",
-    "first_seen", "reference"} kalitlariga ega dict. Kalit sozlanmagan
-    yoki so'rov muvaffaqiyatsiz bo'lsa - `None`.
-    """
+def _fetch_items(days: int = 1):
+    """ThreatFox `get_iocs` javobidagi xom yozuvlar ro'yxati; kalit yo'q/xato bo'lsa `None`."""
     auth_key = os.getenv("THREATFOX_AUTH_KEY", "")
     if not auth_key:
         return None
@@ -75,7 +68,38 @@ def fetch_recent_iocs(days: int = 1):
         logger.warning(f"ThreatFox query_status='{query_status}' - kutilmagan javob")
         return None
 
-    items = data.get("data") or []
+    return data.get("data") or []
+
+
+def fetch_recent_hashes(days: int = 1):
+    """
+    So'nggi `days` kunlik `sha256_hash` IOC'lari: [{"sha256", "malware"}]. Bular
+    `HashBlacklist`ga (mahalliy hash bazasi) qo'shiladi - fayl tekshiruvi tarmoqqa
+    chiqmasdan, darhol aniqlaydi. Kalit yo'q/xato bo'lsa `None`.
+    """
+    items = _fetch_items(days)
+    if items is None:
+        return None
+    out = []
+    for item in items:
+        h = (item.get("ioc") or "").strip().lower()
+        if item.get("ioc_type") == "sha256_hash" and len(h) == 64 and all(c in "0123456789abcdef" for c in h):
+            out.append({"sha256": h, "malware": item.get("malware_printable") or item.get("malware") or "ThreatFox"})
+    return out
+
+
+def fetch_recent_iocs(days: int = 1):
+    """
+    So'nggi `days` kunlik IOC'larni qaytaradi (domain/url/ip:port
+    turlaridan, mos `value`ga normallashtirilgan holda).
+
+    Har biri: {"value", "ioc_type", "malware", "confidence_level",
+    "first_seen", "reference"} kalitlariga ega dict. Kalit sozlanmagan
+    yoki so'rov muvaffaqiyatsiz bo'lsa - `None`.
+    """
+    items = _fetch_items(days)
+    if items is None:
+        return None
     results = []
     for item in items:
         ioc_type = item.get("ioc_type")

@@ -6492,6 +6492,25 @@ def _test_threat_intel_checkers_dont_conflate_not_found_with_clean():
             result = vt_mod.check_virustotal("d" * 64)
         assert result["malicious"] is True and result["positives"] == 5
 
+    # --- MalwareBazaar: kalit (Auth-Key) yuboriladi; kalitsiz so'rov umuman yuborilmaydi ---
+    os.environ.pop("MALWAREBAZAAR_AUTH_KEY", None); os.environ.pop("THREATFOX_AUTH_KEY", None)
+    os.environ.pop("URLHAUS_AUTH_KEY", None); os.environ.pop("ABUSE_CH_AUTH_KEY", None)
+    with patch.object(mb_mod.requests, "post") as mock_no_key:
+        assert mb_mod.check_malwarebazaar("c" * 64) is None
+        assert mock_no_key.call_count == 0, "Kalit sozlanmagan bo'lsa MalwareBazaar'ga so'rov yuborilmasligi kerak"
+    os.environ["THREATFOX_AUTH_KEY"] = "ci-abusech-key"
+    try:
+        fake_mb_ok = Mock(status_code=200)
+        fake_mb_ok.json.return_value = {"query_status": "hash_not_found"}
+        with patch.object(mb_mod.requests, "post", return_value=fake_mb_ok) as mock_keyed:
+            mb_mod.check_malwarebazaar("c" * 64)
+            assert mock_keyed.call_args.kwargs["headers"]["Auth-Key"] == "ci-abusech-key", "Auth-Key sarlavhasi yuborilmadi"
+        fake_mb_401 = Mock(status_code=401)
+        with patch.object(mb_mod.requests, "post", return_value=fake_mb_401):
+            assert mb_mod.check_malwarebazaar("c" * 64) is None
+    finally:
+        pass
+
     # --- MalwareBazaar: "hash_not_found" -> None, "clean" EMAS ---
     fake_mb_not_found = Mock(status_code=200)
     fake_mb_not_found.json.return_value = {"query_status": "hash_not_found"}
@@ -6507,6 +6526,7 @@ def _test_threat_intel_checkers_dont_conflate_not_found_with_clean():
     with patch.object(mb_mod.requests, "post", return_value=fake_mb_found):
         result = mb_mod.check_malwarebazaar("f" * 64)
     assert result is not None and result["malicious"] is True and result["threat_name"] == "Emotet"
+    os.environ.pop("THREATFOX_AUTH_KEY", None)
 
 
 check("VirusTotal/MalwareBazaar checker'lari: 'topilmadi' endi 'toza' deb hisoblanmaydi (real production xatosi tuzatilgan)", _test_threat_intel_checkers_dont_conflate_not_found_with_clean)
@@ -7855,6 +7875,36 @@ def _test_urlhaus_disabled_by_default():
 
 
 check("Threat Intelligence: URLhaus standart holatda o'chiq (URLHAUS_ENABLED=true bo'lmasa so'rov yuborilmaydi)", _test_urlhaus_disabled_by_default)
+
+
+def _test_threatfox_hash_iocs_to_hash_blacklist():
+    from unittest.mock import MagicMock, patch
+    from db.models import HashBlacklist
+    import threat_intel.threatfox_feed as tf
+    import engine.threat_intel_sync as tis
+    os.environ["THREATFOX_AUTH_KEY"] = "test-threatfox-key"
+    os.environ.pop("URLHAUS_ENABLED", None)
+    good = "ab12" * 16
+    try:
+        resp = MagicMock(); resp.raise_for_status = lambda: None
+        resp.json.return_value = {"query_status": "ok", "data": [
+            {"ioc": good, "ioc_type": "sha256_hash", "malware_printable": "Lumma"},
+            {"ioc": "2151c4b970eff0071948dbbc19066aa4", "ioc_type": "md5_hash", "malware_printable": "X"},
+            {"ioc": "zz" * 32, "ioc_type": "sha256_hash", "malware_printable": "Bad"},
+        ]}
+        with patch.object(tf.requests, "post", return_value=resp):
+            hashes = tf.fetch_recent_hashes()
+            assert [h["sha256"] for h in hashes] == [good], hashes
+            tis.run_once(); tis.run_once()
+        s = get_session()
+        rows = s.query(HashBlacklist).filter(HashBlacklist.sha256 == good).all()
+        assert len(rows) == 1 and rows[0].threat_name == "Lumma" and rows[0].source == "threatfox", "sha256 IOC hash_blacklist'ga 1 marta yozilishi kerak"
+        s.close()
+    finally:
+        os.environ.pop("THREATFOX_AUTH_KEY", None)
+
+
+check("Threat Intelligence: ThreatFox sha256 IOC -> mahalliy hash_blacklist (idempotent)", _test_threatfox_hash_iocs_to_hash_blacklist)
 
 # ---------------------------------------------------------------------------
 print("\n=== 101) Heuristik tahlil moduli (entropiya/skript naqshi/kengaytma-nomuvofiqlik/PDF) - 'unknown' hech qachon qolmasin ===")

@@ -27,9 +27,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import LOG_LEVEL, THREAT_INTEL_POLL_INTERVAL
 from db.database import get_session
-from db.models import BlacklistEntry, utcnow
+from db.models import BlacklistEntry, HashBlacklist, utcnow
 from threat_intel.urlhaus_feed import fetch_recent_urls, is_configured as urlhaus_configured
-from threat_intel.threatfox_feed import fetch_recent_iocs, is_configured as threatfox_configured
+from threat_intel.threatfox_feed import fetch_recent_iocs, fetch_recent_hashes, is_configured as threatfox_configured
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("threat_intel_sync")
@@ -147,13 +147,33 @@ def sync_threatfox(session) -> int:
     return added
 
 
+def sync_threatfox_hashes(session) -> int:
+    """ThreatFox sha256_hash IOC'larini mahalliy HashBlacklist'ga qo'shadi (idempotent)."""
+    if not threatfox_configured():
+        return 0
+    hashes = fetch_recent_hashes()
+    if not hashes:
+        return 0
+    incoming = {h["sha256"] for h in hashes}
+    existing = {v for (v,) in session.query(HashBlacklist.sha256).filter(HashBlacklist.sha256.in_(incoming)).all()}
+    added, seen = 0, set()
+    for h in hashes:
+        if h["sha256"] in existing or h["sha256"] in seen:
+            continue
+        seen.add(h["sha256"])
+        session.add(HashBlacklist(sha256=h["sha256"], threat_name=h["malware"], source="threatfox"))
+        added += 1
+    logger.info(f"ThreatFox: {len(hashes)} ta sha256 IOC ko'rildi, {added} ta YANGI hash_blacklist yozuvi qo'shildi")
+    return added
+
+
 def run_once() -> int:
     if not (urlhaus_enabled() and urlhaus_configured()) and not threatfox_configured():
         return 0
 
     session = get_session()
     try:
-        total = sync_urlhaus(session) + sync_threatfox(session)
+        total = sync_urlhaus(session) + sync_threatfox(session) + sync_threatfox_hashes(session)
         session.commit()
         return total
     except Exception:
