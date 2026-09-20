@@ -7322,7 +7322,25 @@ def _test_alembic_postgres_upgrade_head():
             time.sleep(1)
         assert ready, "Vaqtinchalik PostgreSQL konteyneri 30 soniyada tayyor bo'lmadi"
 
-        from sqlalchemy import create_engine
+        # MUHIM (CI'da uchraydigan flake): postgres docker entrypoint'i initdb paytida VAQTINCHALIK
+        # server ko'taradi - `pg_isready` shunda ham "tayyor" deydi, so'ng server qayta ishga tushib
+        # ulanishni uzadi ("server closed the connection unexpectedly"). Haqiqiy ulanish ikki marta
+        # ketma-ket (oraliq bilan) muvaffaqiyatli bo'lguncha kutamiz.
+        from sqlalchemy import create_engine, text as _sqltext
+        _ok = 0
+        for _ in range(40):
+            try:
+                _e = create_engine(db_url)
+                with _e.connect() as _c:
+                    _c.execute(_sqltext("SELECT 1"))
+                _e.dispose()
+                _ok += 1
+                if _ok >= 2:
+                    break
+            except Exception:
+                _ok = 0
+            time.sleep(2 if _ok else 1)
+        assert _ok >= 2, "PostgreSQL barqaror ulanishni qabul qilmadi"
         _run_alembic(["upgrade", "head"], db_url)
         engine = create_engine(db_url)
         _assert_alembic_schema_matches_models(engine, "PostgreSQL/upgrade-head")
