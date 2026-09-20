@@ -28,7 +28,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import timedelta
 
 from db.database import get_session
-from db.models import Device, Alert, Event, FileEvent, WebAccessLog, User, Incident, utcnow
+from db.models import Device, Alert, Event, FileEvent, FileDecision, HashBlacklist, WebAccessLog, User, Incident, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
 from dashboard.audit import log_action
@@ -298,6 +298,7 @@ def alerts():
 
         all_alerts = query.order_by(Alert.timestamp.desc()).limit(200).all()
         alerts_data = [_alert_to_dict(session, a) for a in all_alerts]
+        _attach_file_decisions(session, all_alerts, alerts_data)
         return render_template(
             "alerts.html", alerts=alerts_data, severity_filter=severity_filter,
             ack_filter=ack_filter, hostname_filter=hostname_filter, ip_filter=ip_filter,
@@ -305,6 +306,24 @@ def alerts():
         )
     finally:
         session.close()
+
+
+def _attach_file_decisions(session, alert_objs, alert_dicts):
+    """Virus deb topilgan FAYL alertlariga admin qarori tugmalari uchun sha256 va joriy qarorni biriktiradi."""
+    fe_ids = [a.file_event_id for a in alert_objs if a.file_event_id]
+    sha_by_fe = {}
+    if fe_ids:
+        sha_by_fe = dict(session.query(FileEvent.id, FileEvent.sha256).filter(FileEvent.id.in_(fe_ids)).all())
+    shas = [v for v in sha_by_fe.values() if v]
+    decisions = {}
+    if shas:
+        decisions = dict(session.query(FileDecision.sha256, FileDecision.decision).filter(FileDecision.sha256.in_(shas)).all())
+    for obj, d in zip(alert_objs, alert_dicts):
+        sha = sha_by_fe.get(obj.file_event_id)
+        d["file_sha256"] = sha
+        d["file_decision"] = decisions.get(sha)
+        # tugma FAQAT virus deb topilgan (critical/high) fayl alertlarida
+        d["show_decision"] = bool(sha) and obj.severity in ("critical", "high")
 
 
 @app.route("/alerts/<int:alert_id>/acknowledge", methods=["POST"])
@@ -712,10 +731,61 @@ def files():
             query = query.filter(FileEvent.sha256.ilike(f"{sha256_filter}%"))
 
         all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
+        _shas = [f.sha256 for f in all_files if f.sha256]
+        file_decisions = dict(session.query(FileDecision.sha256, FileDecision.decision).filter(FileDecision.sha256.in_(_shas)).all()) if _shas else {}
         return render_template(
-            "files.html", files=all_files, verdict_filter=verdict_filter, channel_filter=channel_filter,
+            "files.html", files=all_files, file_decisions=file_decisions, verdict_filter=verdict_filter, channel_filter=channel_filter,
             filename_filter=filename_filter, path_filter=path_filter, ip_filter=ip_filter, sha256_filter=sha256_filter,
         )
+    finally:
+        session.close()
+
+
+@app.route("/files/decision", methods=["POST"])
+@role_required("analyst")
+def file_decision():
+    """
+    Admin qarori (SHA256 bo'yicha, BARCHA qurilmalar uchun):
+      safe      - "virus emas": hech qayerda chora ko'rilmaydi, oldingi qora ro'yxat yozuvlari olib tashlanadi;
+      malicious - "virusni o'chirish": istalgan qurilmada aniqlansa o'chiriladi va karantinga olinadi.
+    """
+    sha = (request.form.get("sha256") or "").lower().strip()
+    decision = request.form.get("decision")
+    if len(sha) != 64 or decision not in ("safe", "malicious"):
+        flash("Noto'g'ri so'rov", "error")
+        return redirect(request.referrer or url_for("files"))
+    session = get_session()
+    try:
+        fe = session.query(FileEvent).filter(FileEvent.sha256 == sha).order_by(FileEvent.id.desc()).first()
+        row = session.query(FileDecision).filter_by(sha256=sha).first()
+        if row is None:
+            row = FileDecision(sha256=sha)
+            session.add(row)
+        row.decision = decision
+        row.filename = fe.filename if fe else None
+        row.decided_by = current_user.username
+        row.decided_at = utcnow()
+        row.note = f"Admin ({current_user.username}) zararli deb belgiladi"[:500] if decision == "malicious" else "Admin zararsiz deb belgiladi"
+
+        session.query(FileEvent).filter(FileEvent.sha256 == sha).update(
+            {"verdict": "clean" if decision == "safe" else "malicious"}, synchronize_session=False)
+        bl = session.query(HashBlacklist).filter_by(sha256=sha)
+        if decision == "safe":
+            bl.delete(synchronize_session=False)
+        elif bl.first() is None:
+            session.add(HashBlacklist(sha256=sha, threat_name=row.note, source="admin"))
+
+        note = ("ADMIN: zararsiz deb belgilandi (" if decision == "safe" else "ADMIN: virus deb belgilandi - o'chirish/karantin qo'llanadi (") + current_user.username + ")"
+        for a in session.query(Alert).filter(Alert.reason.like(f"%SHA256={sha}%")).all():
+            a.action_taken = ((a.action_taken or "") + " | " + note).strip(" |")
+            a.acknowledged = True
+            a.acknowledged_by = current_user.username
+            a.acknowledged_at = utcnow()
+        session.commit()
+        log_action(current_user.username, "file_decision", target_type="File", details=f"{decision} sha256={sha}",
+                   ip_address=request.remote_addr)
+        flash("Qaror saqlandi: " + ("zararsiz" if decision == "safe" else "virus (barcha qurilmalarda o'chiriladi)"), "success")
+        return redirect(request.referrer or url_for("files"))
     finally:
         session.close()
 

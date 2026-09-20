@@ -37,7 +37,7 @@ from flask_limiter import Limiter
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
-from db.models import HashBlacklist, Alert, Device, FileEvent, utcnow
+from db.models import HashBlacklist, Alert, Device, FileEvent, FileDecision, utcnow
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal, vt_slot_busy
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
@@ -48,6 +48,11 @@ from scanners.upload_scanner import scan_upload, MAX_UPLOAD_BYTES
 import logging
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("api_server")
+
+# VT 'tasdiqlangan' chegarasi: mashhur qonuniy dasturlar (WinRAR/AnyDesk/...) ham 3-5 dvigatelda PUA/riskware
+# sifatida belgilanadi - avtomatik o'chirish uchun ancha yuqori ishonch kerak.
+VT_CONFIRM_MIN_ENGINES = int(os.getenv("VT_CONFIRM_MIN_ENGINES", "10"))
+VT_CONFIRM_MIN_RATIO = float(os.getenv("VT_CONFIRM_MIN_RATIO", "0.15"))
 
 app = Flask(__name__)
 app.config["UPLOAD_SCAN_ROOT"] = os.getenv("UPLOAD_SCAN_ROOT", "/tmp/endpoint-scans")
@@ -317,6 +322,19 @@ def check_hash():
 
     session = get_session()
     try:
+        # ADMIN QARORI (SHA256 bo'yicha, barcha qurilmalar uchun) - eng yuqori ustuvorlik.
+        decision = session.query(FileDecision).filter_by(sha256=sha256).first()
+        if decision is not None and decision.decision == "safe":
+            _log_endpoint_scan(session, data, sha256, "clean", 0, None, "admin_decision")
+            session.commit()
+            return jsonify({"malicious": False, "confirmed": False, "threat_name": None,
+                            "source": "admin_decision", "admin_decision": "safe"})
+        if decision is not None and decision.decision == "malicious":
+            _log_endpoint_scan(session, data, sha256, "malicious", 100, decision.note or "Admin: zararli", "admin_decision")
+            session.commit()
+            return jsonify({"malicious": True, "confirmed": True, "threat_name": decision.note or "Admin qarori: zararli",
+                            "source": "admin_decision", "admin_decision": "malicious", "admin_action": "quarantine"})
+
         local_result = check_local(session, sha256)
         if local_result:
             _log_endpoint_scan(session, data, sha256, "malicious", 100,
@@ -337,7 +355,7 @@ def check_hash():
         if vt is not None and vt.get("malicious"):
             positives = int(vt.get("positives") or 0)
             total = int(vt.get("total") or 0)
-            confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
+            confirmed = positives >= VT_CONFIRM_MIN_ENGINES and (total == 0 or positives / max(total, 1) >= VT_CONFIRM_MIN_RATIO)
             if confirmed:
                 _add_to_blacklist(session, sha256, vt.get("threat_name"), "virustotal")
             _log_endpoint_scan(session, data, sha256, "malicious" if confirmed else "suspicious",
@@ -481,16 +499,32 @@ def report_incident():
         threat_name = data.get("threat_name", "nomalum")
         filepath = data.get("filepath")
         path_note = f" | Yo'l: {filepath}" if filepath else ""
-        alert = Alert(
-            device_id=device.id,
-            severity="critical",
-            reason=(
-                f"Endpoint Agent TASDIQLANGAN zararli faylni aniqladi: {data['filename']} "
-                f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"
-            ),
-            action_taken=action_summary,
-            notified=False,
-        )
+        awaiting = bool(data.get("awaiting_admin"))
+        fe_link = (session.query(FileEvent.id).filter(FileEvent.sha256 == data["sha256"], FileEvent.channel == "endpoint_agent")
+                   .order_by(FileEvent.id.desc()).first())
+        if awaiting:
+            # Fayl O'CHIRILMAGAN - admin qarorini kutadi. Bir xil (qurilma, hash) uchun takroriy alert yo'q.
+            dup = session.query(Alert.id).filter(Alert.device_id == device.id, Alert.reason.like(f"%SHA256={data['sha256']}%")).first()
+            if dup is not None:
+                return jsonify({"status": "duplicate", "alert_id": dup[0]})
+            alert = Alert(
+                device_id=device.id, severity="high", file_event_id=fe_link[0] if fe_link else None,
+                reason=(f"Endpoint Agent zararli deb GUMON QILGAN fayl: {data['filename']} "
+                        f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"),
+                action_taken="Fayl tegilmadi - ADMIN QARORI kutilmoqda (Zararsiz / Zararli tugmalari)",
+                notified=False,
+            )
+        else:
+            alert = Alert(
+                device_id=device.id,
+                severity="critical", file_event_id=fe_link[0] if fe_link else None,
+                reason=(
+                    f"Endpoint Agent TASDIQLANGAN zararli faylni aniqladi: {data['filename']} "
+                    f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"
+                ),
+                action_taken=action_summary,
+                notified=False,
+            )
         session.add(alert)
         session.commit()
 

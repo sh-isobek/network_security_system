@@ -48,7 +48,7 @@ def scan_upload(stream, expected_sha256, filename, root, max_bytes=MAX_UPLOAD_BY
         clam = clamav_scan(path, temp_dir=work)
         findings = list(heuristic["findings"])
         findings.extend("YARA: " + hit["rule"] for hit in hits)
-        confirmed = any(hit["severity"] in ("high", "critical") for hit in hits)
+        confirmed = any(hit["severity"] == "critical" for hit in hits)
         confirmed = confirmed or bool(clam.get("infected"))
         if clam.get("infected"):
             findings.append("ClamAV: " + str(clam.get("signature")))

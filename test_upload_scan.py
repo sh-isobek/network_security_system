@@ -37,7 +37,7 @@ class UploadLifecycleTests(unittest.TestCase):
 
     def test_real_yara_match_is_deleted(self):
         # Inert text that matches an existing rule, never executed.
-        self.content = b"-EncodedCommand IEX(New-Object DownloadString"
+        self.content = b"your files have been encrypted. send bitcoin"
         self.sha = hashlib.sha256(self.content).hexdigest()
         result = self.scan()
         self.assertTrue(result["confirmed"])
@@ -197,7 +197,7 @@ class UploadAPITests(unittest.TestCase):
         cases = [(None, None, True), ({"malicious": False}, None, False),
                  ({"malicious": False}, "suspicious", True),
                  ({"malicious": True, "positives": 1, "total": 70}, None, True),
-                 ({"malicious": True, "positives": 10, "total": 70}, None, False)]
+                 ({"malicious": True, "positives": 12, "total": 70}, None, False)]
         for vt, heuristic, expected in cases:
             with self.subTest(vt=vt, heuristic=heuristic), \
                     patch.object(self.server, "check_local", return_value=None), \

@@ -11,6 +11,8 @@ ishlatiladigan) bilan sinash uchun:
 
 (Bu loyiha PostgreSQL'da ham to'liq 14/14 test bilan sinovdan o'tkazilgan.)
 """
+import os as _os0
+_os0.environ.setdefault("AGENT_AUTO_REMOVE", "confirmed")   # eski testlar: avtomatik chora rejimi (yangi test admin rejimini alohida sinaydi)
 import os
 import sys
 import traceback
@@ -227,7 +229,7 @@ def _test_file_pipeline():
     fes = {fe.filename: fe for fe in s.query(FileEvent).all()}
 
     assert fes["invoice.exe"].verdict == "malicious", "invoice.exe (hash blacklist) malicious deb topilishi kerak edi"
-    assert fes["archive.zip"].verdict == "malicious", "archive.zip (ichida PE bor) malicious deb topilishi kerak edi"
+    assert fes["archive.zip"].verdict != "malicious", "ichida oddiy PE bor arxiv yolg'on-ijobiy bo'lib 'malicious' bo'lmasligi kerak edi (YARA Embedded_PE qoidasi tuzatilgan)"
     assert fes["report.pdf"].verdict == "malicious", "report.pdf (ichida JS bor) malicious deb topilishi kerak edi"
     # MUHIM (verdict taksonomiyasi tuzatilgan): bu sandbox'da VT_API_KEY
     # sozlanmagan va MalwareBazaar'ga tarmoq kirish yo'q - ya'ni HECH
@@ -245,13 +247,13 @@ def _test_file_pipeline():
     payload = s.query(FileEvent).filter(FileEvent.filename == "payload.exe").first()
     assert payload is not None, "ZIP ichidan payload.exe chiqarilmagan"
     assert payload.parent_file_event_id == fes["archive.zip"].id, "payload.exe parent_id noto'g'ri"
-    assert payload.verdict == "malicious", "payload.exe malicious deb topilishi kerak edi"
+    assert payload.verdict != "malicious", "oddiy PE (arxiv ichida) yolg'on-ijobiy bo'lib malicious bo'lmasligi kerak edi"
 
     readme = s.query(FileEvent).filter(FileEvent.filename == "readme.txt").first()
     assert readme is not None and readme.verdict == "clean", "readme.txt deep scan'dan keyin 'clean' bo'lishi kerak edi (hech narsa topilmagan)"
 
     file_alerts = s.query(Alert).filter(Alert.file_event_id.isnot(None)).all()
-    assert len(file_alerts) >= 3, f"Kamida 3 ta fayl-alert kutilgan, {len(file_alerts)} ta topildi"
+    assert len(file_alerts) >= 2, f"Kamida 2 ta fayl-alert kutilgan, {len(file_alerts)} ta topildi"
     for a in file_alerts:
         assert a.device_id is not None, f"Alert {a.id} device_id bilan bog'lanmagan"
     s.close()
@@ -4430,12 +4432,12 @@ def _test_file_analysis_confirmed_threshold():
     assert "SHUBHALI" in alert2.action_taken
     s.close()
 
-    # 3) VirusTotal yuqori ishonch (5/70, >=3 VA >=5%) - "tasdiqlangan"
+    # 3) VirusTotal yuqori ishonch (20/70, >=10 VA >=15%) - "tasdiqlangan"
     s = get_session()
     fe3 = FileEvent(src_ip="172.16.62.3", filename="high_confidence.exe", sha256="3" * 64, checked=False)
     s.add(fe3)
     s.commit()
-    with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 5, "total": 70, "threat_name": "Trojan.Confirmed"}), \
+    with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 20, "total": 70, "threat_name": "Trojan.Confirmed"}), \
          patch.object(fae, "check_malwarebazaar", return_value=None):
         fae.analyze_one(s, fe3)
         s.commit()
@@ -8715,6 +8717,151 @@ def _test_check_hash_vt_busy_defers():
 
 
 check("check_hash: VT slot band -> kutmaydi, fon tekshiruviga qoldiriladi", _test_check_hash_vt_busy_defers)
+
+print("\n=== 113) Yolg'on-ijobiy himoyasi: oddiy .exe YARA'da 'critical' emas, VT 3-5 dvigatel tasdiqlanmaydi, imzolangan fayl o'chirilmaydi ===")
+
+
+def _test_false_positive_guards():
+    import os, tempfile
+    from unittest.mock import patch
+    import api.server as api_server
+    import agent_core.agent as am
+    # 1) YARA: haqiqiy PE (MZ + DOS stub) qoidaga tushmasligi, hujjat ichidagi PE esa tushishi (medium)
+    try:
+        import yara
+        rules = yara.compile(filepath=os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules", "malware_rules.yar"))
+        pe = b"MZ" + b"\0" * 58 + b"\x80\0\0\0" + b"\0" * 64 + b"This program cannot be run in DOS mode." + b"\0" * 100
+        assert not [m for m in rules.match(data=pe) if m.rule == "Embedded_PE_In_Document"], "oddiy .exe 'ichki PE' bo'lmasligi kerak"
+        doc = b"%PDF-1.4 junk This program cannot be run in DOS mode. more"
+        hit = [m for m in rules.match(data=doc) if m.rule == "Embedded_PE_In_Document"]
+        assert hit and hit[0].meta["severity"] == "medium"
+    except ImportError:
+        pass  # yara bu muhitda o'rnatilmagan (CI'da bor)
+    # 2) VT: 4/70 (WinRAR/AnyDesk kabi PUA) tasdiqlanmaydi, 40/70 tasdiqlanadi
+    api_server.AGENT_API_KEY = "test-key-fp"
+    c = api_server.app.test_client()
+    h = {"X-API-Key": "test-key-fp"}
+    import hashlib
+    def call(name, pos):
+        sha = hashlib.sha256(name).hexdigest()
+        with patch.object(api_server, "vt_slot_busy", return_value=False), \
+             patch.object(api_server, "check_virustotal", return_value={"malicious": True, "positives": pos, "total": 70, "threat_name": "PUA.Generic"}), \
+             patch.object(api_server, "check_malwarebazaar", return_value=None):
+            return c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "WinRAR.exe", "hostname": "T-FP", "ip_address": "172.16.98.1"}, headers=h).get_json()
+    assert call(b"fp_winrar_like", 4)["confirmed"] is False
+    assert call(b"fp_real_malware_like", 40)["confirmed"] is True
+    # 3) Agent: imzolangan PE + faqat server signali -> o'chirilmaydi
+    d = tempfile.mkdtemp(prefix="nsa_fp_"); f = os.path.join(d, "AnyDesk.exe"); open(f, "wb").write(b"x")
+    old = am.LOCAL_CACHE_FILE; am.LOCAL_CACHE_FILE = os.path.join(d, "c.json")
+    try:
+        ag = am.EndpointAgent([d])
+        class R:
+            status_code = 200
+            def json(self): return {"malicious": True, "confirmed": True, "threat_name": None, "source": "server_upload_scan"}
+        with patch.object(am, "analyze_file", return_value={"score": 30, "findings": ["Authenticode imzosi mavjud"], "verdict_hint": "clean", "magic": "PE", "signed": True}), \
+             patch.object(am.requests, "post", return_value=R()), \
+             patch.object(am, "quarantine_file") as q, patch.object(am, "kill_process_holding_file") as k:
+            ag._on_new_file(f)
+            assert not q.called and not k.called and os.path.isfile(f), "imzolangan dastur faqat server signali bilan o'chirilmasligi kerak"
+        # imzosiz + confirmed -> chora ko'riladi (regressiya)
+        with patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": False}), \
+             patch.object(am.requests, "post", return_value=R()), \
+             patch.object(am, "quarantine_file", return_value={"quarantined": True, "source_removed": True, "quarantine_path": "x"}) as q, \
+             patch.object(am, "kill_process_holding_file"), patch.object(am, "report_incident"):
+            ag._on_new_file(f)
+            assert q.called, "imzosiz + tasdiqlangan -> karantin"
+    finally:
+        am.LOCAL_CACHE_FILE = old
+
+
+check("Yolg'on-ijobiy himoyasi: YARA .exe, VT chegarasi, imzolangan fayl", _test_false_positive_guards)
+
+print("\n=== 114) Admin qarori: avtomatik o'chirish yo'q; 'virus emas' hamma qurilmada toza, 'virus' hamma qurilmada o'chirish ===")
+
+
+def _test_admin_file_decisions():
+    import hashlib, os, tempfile
+    from unittest.mock import patch
+    import api.server as api_server
+    import agent_core.agent as am
+    from dashboard.app import app as dash_app
+    from db.models import FileDecision, HashBlacklist
+    os.environ["AGENT_AUTO_REMOVE"] = "admin"
+    try:
+        sha = hashlib.sha256(b"admin_decision_file").hexdigest()
+        api_server.AGENT_API_KEY = "test-key-decision"
+        c = api_server.app.test_client(); h = {"X-API-Key": "test-key-decision"}
+        s = get_session()
+        d1 = Device(ip_address="172.16.197.51", hostname="PC-A", source="test"); s.add(d1)
+        s.add(HashBlacklist(sha256=sha, threat_name="FP", source="upload_scan")); s.commit(); s.close()
+
+        # 1) agent: gumon fayl -> tegilmaydi, faqat 'awaiting_admin' alert
+        d = tempfile.mkdtemp(prefix="nsa_dec_"); f = os.path.join(d, "AnyDesk.exe"); open(f, "wb").write(b"x")
+        old = am.LOCAL_CACHE_FILE; am.LOCAL_CACHE_FILE = os.path.join(d, "c.json")
+        ag = am.EndpointAgent([d])
+        class R:
+            def __init__(self, j): self._j = j; self.status_code = 200
+            def json(self): return self._j
+        confirmed = R({"malicious": True, "confirmed": True, "threat_name": "VT", "source": "virustotal"})
+        with patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": False}), \
+             patch.object(am.requests, "post", return_value=confirmed), \
+             patch.object(am, "quarantine_file") as q, patch.object(am, "report_incident") as rep:
+            ag._on_new_file(f)
+            assert not q.called and os.path.isfile(f), "admin qarorisiz fayl o'chirilmasligi kerak"
+            assert rep.call_args.kwargs.get("awaiting_admin") is True
+        # server alert (awaiting)
+        r = c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "172.16.197.51", "filename": "AnyDesk.exe", "sha256": sha,
+                   "threat_name": "VT", "file_deleted": False, "process_killed": False, "awaiting_admin": True}, headers=h)
+        assert r.get_json()["status"] == "recorded"
+        assert c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "172.16.197.51", "filename": "AnyDesk.exe", "sha256": sha,
+                   "awaiting_admin": True}, headers=h).get_json()["status"] == "duplicate"
+
+        # 2) Dashboard: tugmalar faqat virus deb topilganda; 'virus emas' -> qaror saqlanadi
+        s = get_session()
+        fe = FileEvent(src_ip="172.16.197.51", filename="AnyDesk.exe", sha256=sha, channel="endpoint_agent", verdict="malicious"); s.add(fe); s.commit()
+        al = s.query(Alert).filter(Alert.reason.like(f"%SHA256={sha}%")).first(); al.file_event_id = fe.id
+        clean_fe = FileEvent(src_ip="172.16.197.51", filename="ok.txt", sha256=hashlib.sha256(b"ok").hexdigest(), channel="endpoint_agent", verdict="clean")
+        s.add(clean_fe); s.commit(); s.close()
+        cl = dash_app.test_client()
+        with cl.session_transaction() as sess:
+            sess["_user_id"] = "1"; sess["_fresh"] = True; sess["csrf_token"] = "tok"
+        s = get_session()
+        from db.models import User
+        if not s.query(User).filter_by(id=1).first():
+            u = User(username="decadm", role="admin", is_active=True); u.set_password("Xx123456789!"); s.add(u); s.commit()
+            with cl.session_transaction() as sess: sess["_user_id"] = str(u.id)
+        s.close()
+        page = cl.get("/alerts").get_data(as_text=True)
+        assert "Virusni o'chirish" in page and "Virus emas" in page
+        files_page = cl.get("/files").get_data(as_text=True)
+        rows = files_page.split("<tr")
+        ok_row = next(r for r in rows if "ok.txt" in r)
+        any_row = next(r for r in rows if "AnyDesk.exe" in r)
+        assert "Virusni o'chirish" not in ok_row, "toza faylda tugma bo'lmasligi kerak"
+        assert "Virusni o'chirish" in any_row, "virus deb topilgan faylda tugma bo'lishi kerak"
+        r = cl.post("/files/decision", data={"sha256": sha, "decision": "safe", "csrf_token": "tok"})
+        assert r.status_code in (302, 303), r.status_code
+        # 3) boshqa qurilma: shu hash endi toza, qora ro'yxat tozalandi
+        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "172.16.197.52"}, headers=h).get_json()
+        assert out["admin_decision"] == "safe" and not out["malicious"]
+        s = get_session(); assert s.query(HashBlacklist).filter_by(sha256=sha).first() is None; s.close()
+        # agent: safe -> tegmaydi
+        with patch.object(am.requests, "post", return_value=R(out)), patch.object(am, "quarantine_file") as q:
+            ag._on_new_file(f); assert not q.called and os.path.isfile(f)
+        # 4) admin 'virus' desa -> boshqa qurilmada o'chirish/karantin
+        r = cl.post("/files/decision", data={"sha256": sha, "decision": "malicious", "csrf_token": "tok"})
+        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "172.16.197.52"}, headers=h).get_json()
+        assert out["admin_action"] == "quarantine" and out["confirmed"]
+        with patch.object(am.requests, "post", return_value=R(out)), patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": True}), \
+             patch.object(am, "quarantine_file", return_value={"quarantined": True, "source_removed": True, "quarantine_path": "q"}) as q, \
+             patch.object(am, "kill_process_holding_file"), patch.object(am, "report_incident"):
+            ag._on_new_file(f); assert q.called, "admin 'virus' qarori (imzolangan bo'lsa ham) o'chirishga olib kelishi kerak"
+        am.LOCAL_CACHE_FILE = old
+    finally:
+        os.environ["AGENT_AUTO_REMOVE"] = "confirmed"
+
+
+check("Admin qarori: avto-o'chirish yo'q, 'virus emas'/'virus' barcha qurilmalarda, tugmalar faqat virusda", _test_admin_file_decisions)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

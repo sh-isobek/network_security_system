@@ -221,11 +221,13 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
     score = soft["score"]
 
     # 3b) PE (.exe/.dll) chuqur statik tahlili: bo'limlar, importlar, paketlovchi (scanners/pe_analyzer.py)
+    signed = False
     if magic_label == "PE":
         pe = analyze_pe(data)
         if pe is not None:
+            signed = bool(pe.get("signed"))
             findings.extend(f for f in pe["findings"] if f not in findings)
             score = min(100, max(score, pe["score"]))
     verdict_hint = "suspicious" if score >= SUSPICIOUS_SCORE_THRESHOLD else "clean"
 
-    return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label}
+    return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label, "signed": signed}

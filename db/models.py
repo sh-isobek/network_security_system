@@ -343,6 +343,23 @@ class HashBlacklist(Base):
     added_at = Column(DateTime, default=utcnow)
 
 
+class FileDecision(Base):
+    """
+    Admin qarori (SHA256 bo'yicha, BARCHA qurilmalar uchun): 'safe' - zararsiz (hech qayerda chora
+    ko'rilmaydi), 'malicious' - zararli (istalgan qurilmada aniqlansa o'chiriladi/karantinga olinadi).
+    Avtomatik o'chirish FAQAT shu qaror asosida - yolg'on-ijobiy tufayli kerakli fayl yo'qolmasligi uchun.
+    """
+    __tablename__ = "file_decisions"
+
+    id = Column(Integer, primary_key=True)
+    sha256 = Column(String(64), nullable=False, unique=True, index=True)
+    decision = Column(String(20), nullable=False)       # "safe" | "malicious"
+    filename = Column(String(512))
+    decided_by = Column(String(100))
+    decided_at = Column(DateTime, default=utcnow)
+    note = Column(String(500))
+
+
 class DeviceHistory(Base):
     """
     Asset History - qurilma qachon birinchi topilgani, qachon

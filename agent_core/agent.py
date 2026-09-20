@@ -132,6 +132,7 @@ UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 MAX_SCAN_BYTES = int(os.getenv("AGENT_MAX_SCAN_BYTES", str(1024 * 1024 * 1024)))  # 1 GB
 DRIVE_POLL_SECONDS = int(os.getenv("AGENT_DRIVE_POLL_SECONDS", "30"))
 BULK_SERVER_DELAY = float(os.getenv("AGENT_BULK_SERVER_DELAY", "0.7"))  # server chegarasi (100/daq) ostida qolish uchun
+AUTO_REMOVE_SIGNED = os.getenv("AGENT_AUTO_REMOVE_SIGNED", "false").lower() == "true"
 RECHECK_INTERVAL_SECONDS = int(os.getenv("AGENT_RECHECK_INTERVAL_SECONDS", "60"))
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
@@ -326,7 +327,7 @@ def upload_for_scan(filepath: str, sha256: str, hostname: str):
 def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
                      threat_name: str, file_deleted: bool, process_killed: bool,
                      process_name: str = None, quarantined: bool = False,
-                     quarantine_path: str = None):
+                     quarantine_path: str = None, awaiting_admin: bool = False):
     payload = {
         "hostname": hostname,
         "ip_address": ip_address,
@@ -339,6 +340,7 @@ def report_incident(hostname: str, ip_address: str, filepath: str, sha256: str,
         "process_name": process_name,
         "quarantined": quarantined,
         "quarantine_path": quarantine_path,
+        "awaiting_admin": awaiting_admin,
     }
     try:
         resp = requests.post(
@@ -406,6 +408,7 @@ class EndpointAgent:
         self.cache = _load_cache()
         self.watch_dirs = list(watch_dirs)
         self._pending_recheck = set()
+        self._reported_awaiting = set()
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
@@ -477,16 +480,33 @@ class EndpointAgent:
 
         server_confirmed = bool(result.get("confirmed"))
         local_confirmed = heuristic.get("verdict_hint") == "malicious"
+        admin_action = result.get("admin_action") == "quarantine"
 
-        if not server_confirmed and not local_confirmed:
-            if result.get("malicious"):
-                logger.warning(
-                    f"SHUBHALI (tasdiqlanmagan): {filepath} [{result.get('threat_name')}] - "
-                    "avtomatik chora ko'rilmadi, qo'lda tekshirish tavsiya etiladi"
-                )
-            else:
-                logger.info(f"Toza: {filepath}")
+        if result.get("admin_decision") == "safe":
+            logger.info(f"Toza (admin zararsiz deb belgilagan): {filepath}")
             return contacted
+
+        # XAVFSIZLIK (real xato: WinRAR/AnyDesk/Chrome/MicroSIP kabi qonuniy dasturlar o'chirilgan):
+        # avtomatik O'CHIRISH/KARANTIN FAQAT admin "zararli" qarori bo'lganda. Boshqa har qanday
+        # gumon (VT/YARA/heuristika) faqat alert yozadi va admin qarorini kutadi.
+        # AGENT_AUTO_REMOVE=confirmed - eski (xavfliroq) xatti-harakat, faqat maxsus holatlar uchun.
+        mode = os.getenv("AGENT_AUTO_REMOVE", "admin").lower()
+        if not admin_action:
+            suspicious_any = server_confirmed or local_confirmed
+            allow_legacy = (mode == "confirmed" and (server_confirmed or local_confirmed)
+                            and (local_confirmed or not heuristic.get("signed") or AUTO_REMOVE_SIGNED))
+            if not allow_legacy:
+                if suspicious_any:
+                    tn = result.get("threat_name") or "; ".join(heuristic.get("findings", [])[:3]) or "Gumonli fayl"
+                    logger.warning(f"GUMONLI (chora ko'rilmadi, admin qarori kutilmoqda): {filepath} [{tn}]")
+                    if filepath not in self._reported_awaiting:
+                        self._reported_awaiting.add(filepath)
+                        report_incident(hostname=self.hostname, ip_address=self.ip_address, filepath=filepath,
+                                        sha256=sha256, threat_name=tn, file_deleted=False, process_killed=False,
+                                        awaiting_admin=True)
+                else:
+                    logger.info(f"Toza: {filepath}")
+                return contacted
 
         threat_name = result.get("threat_name") or (
             "; ".join(heuristic.get("findings", [])) or "Noma'lum tahdid"

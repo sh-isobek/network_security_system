@@ -86,7 +86,7 @@ def deep_scan_one(session, fe: FileEvent):
         yara_hits = yara_scan_file(fe.stored_path)
         for hit in yara_hits:
             findings.append(f"YARA[{hit['severity']}]: {hit['rule']} - {hit['description']}")
-            if hit["severity"] in ("high", "critical"):
+            if hit["severity"] == "critical":
                 is_malicious = True
 
         # 1b) ClamAV - imzo-asosli antivirus (YARA'ga qo'shimcha qatlam)

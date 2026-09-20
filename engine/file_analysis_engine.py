@@ -49,6 +49,11 @@ from scanners.file_type_detector import detect_magic_from_text, check_extension_
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("file_analysis_engine")
 
+# VT 'tasdiqlangan' chegarasi: mashhur qonuniy dasturlar (WinRAR/AnyDesk/...) ham 3-5 dvigatelda PUA/riskware
+# sifatida belgilanadi - avtomatik o'chirish uchun ancha yuqori ishonch kerak.
+VT_CONFIRM_MIN_ENGINES = int(os.getenv("VT_CONFIRM_MIN_ENGINES", "10"))
+VT_CONFIRM_MIN_RATIO = float(os.getenv("VT_CONFIRM_MIN_RATIO", "0.15"))
+
 BATCH_SIZE = 50
 
 # Zararli deb topilgan file turlariga qarab og'irlik darajasi (loglash/xabarnoma uchun)
@@ -119,7 +124,7 @@ def analyze_one(session, fe: FileEvent):
                 # talab qilinadi.
                 positives = int(vt_result.get("positives") or 0)
                 total = int(vt_result.get("total") or 0)
-                confirmed = positives >= 3 and (total == 0 or positives / max(total, 1) >= 0.05)
+                confirmed = positives >= VT_CONFIRM_MIN_ENGINES and (total == 0 or positives / max(total, 1) >= VT_CONFIRM_MIN_RATIO)
                 result = {"malicious": True, "confirmed": confirmed, "threat_name": vt_result.get("threat_name") or "Malicious (VirusTotal)"}
             else:
                 # VT hashni HAQIQATAN tekshirdi va hech qaysi dvigatel
