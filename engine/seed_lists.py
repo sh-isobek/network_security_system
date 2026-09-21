@@ -20,6 +20,11 @@ from db.models import WhitelistEntry, BlacklistEntry
 WHITELIST_IPS = [
     ("172.16.0.10", "1C Server (asosiy)"),
     ("172.16.0.11", "Domen kontroller / AD DNS server"),
+    # O'zbekiston davlat xizmatlari (OneID/E-gov SSO) - ierarxiya bo'yicha subdomenlarni ham qamraydi
+    ("egov.uz", "E-gov (sso.egov.uz, id.egov.uz - OneID)"),
+    ("sso.egov.uz", "E-gov SSO"),
+    ("id.egov.uz", "OneID"),
+    ("my.gov.uz", "my.gov.uz davlat xizmatlari portali"),
 ]
 
 BLACKLIST_DOMAINS = [

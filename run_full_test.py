@@ -8881,6 +8881,23 @@ def _test_admin_file_decisions():
 
 check("Admin qarori: avto-o'chirish yo'q, 'virus emas'/'virus' barcha qurilmalarda, tugmalar faqat virusda", _test_admin_file_decisions)
 
+print("\n=== 115) Whitelist: domen ierarxiyasi (egov.uz -> sso.egov.uz), 'notegov.uz' mos kelmaydi ===")
+
+
+def _test_whitelist_domain_hierarchy():
+    from engine.parser_engine import _is_whitelisted
+    from db.models import WhitelistEntry
+    s = get_session()
+    s.add(WhitelistEntry(value="egov-test.uz", description="test")); s.commit()
+    assert _is_whitelisted(s, "egov-test.uz")
+    assert _is_whitelisted(s, "sso.egov-test.uz") and _is_whitelisted(s, "a.b.egov-test.uz")
+    assert not _is_whitelisted(s, "notegov-test.uz"), "label chegarasi: 'notegov-test.uz' mos kelmasligi kerak"
+    assert not _is_whitelisted(s, "egov-test.uz.evil.com")
+    s.close()
+
+
+check("Whitelist: domen ierarxiyasi (subdomen ruxsat, o'xshash domen emas)", _test_whitelist_domain_hierarchy)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

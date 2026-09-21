@@ -57,7 +57,15 @@ BATCH_SIZE = 200
 def _is_whitelisted(session, value: str) -> bool:
     if not value:
         return False
-    return session.query(WhitelistEntry).filter(WhitelistEntry.value == value).first() is not None
+    if session.query(WhitelistEntry).filter(WhitelistEntry.value == value).first() is not None:
+        return True
+    # Domen ierarxiyasi: whitelist'da `egov.uz` bo'lsa, `sso.egov.uz`/`id.egov.uz` ham ruxsat etilgan
+    # (LABEL chegaralari bo'yicha - "notegov.uz" mos kelmaydi).
+    if not _is_ip(value):
+        for candidate in domain_parent_candidates(value)[1:]:
+            if session.query(WhitelistEntry).filter(WhitelistEntry.value == candidate).first() is not None:
+                return True
+    return False
 
 
 def _is_ip(value: str) -> bool:

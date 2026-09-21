@@ -36,7 +36,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import LOG_LEVEL
 from db.database import get_session
+import ipaddress
 from db.models import Device, Event, Alert, FileEvent, WebAccessLog, WhitelistEntry, BlacklistEntry, utcnow
+from threat_intel.url_intel import domain_parent_candidates
 
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("zeek_reader")
@@ -68,7 +70,20 @@ def _upsert_device(session, ip: str) -> Device:
 def _is_whitelisted(session, value: str) -> bool:
     if not value:
         return False
-    return session.query(WhitelistEntry).filter(WhitelistEntry.value == value).first() is not None
+    if session.query(WhitelistEntry).filter(WhitelistEntry.value == value).first() is not None:
+        return True
+    # Domen ierarxiyasi: whitelist'da `egov.uz` bo'lsa, `sso.egov.uz`/`id.egov.uz` ham ruxsat etilgan
+    # (LABEL chegaralari bo'yicha - "notegov.uz" mos kelmaydi).
+    try:
+        ipaddress.ip_address(value)
+        return False
+    except ValueError:
+        pass
+    if True:
+        for candidate in domain_parent_candidates(value)[1:]:
+            if session.query(WhitelistEntry).filter(WhitelistEntry.value == candidate).first() is not None:
+                return True
+    return False
 
 
 def _is_blacklisted(session, value: str):
