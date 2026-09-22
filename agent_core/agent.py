@@ -132,7 +132,6 @@ UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 MAX_SCAN_BYTES = int(os.getenv("AGENT_MAX_SCAN_BYTES", str(1024 * 1024 * 1024)))  # 1 GB
 DRIVE_POLL_SECONDS = int(os.getenv("AGENT_DRIVE_POLL_SECONDS", "30"))
 BULK_SERVER_DELAY = float(os.getenv("AGENT_BULK_SERVER_DELAY", "0.7"))  # server chegarasi (100/daq) ostida qolish uchun
-AUTO_REMOVE_SIGNED = os.getenv("AGENT_AUTO_REMOVE_SIGNED", "false").lower() == "true"
 RECHECK_INTERVAL_SECONDS = int(os.getenv("AGENT_RECHECK_INTERVAL_SECONDS", "60"))
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
@@ -486,17 +485,23 @@ class EndpointAgent:
             logger.info(f"Toza (admin zararsiz deb belgilagan): {filepath}")
             return contacted
 
-        # XAVFSIZLIK (real xato: WinRAR/AnyDesk/Chrome/MicroSIP kabi qonuniy dasturlar o'chirilgan):
-        # avtomatik O'CHIRISH/KARANTIN FAQAT admin "zararli" qarori bo'lganda. Boshqa har qanday
-        # gumon (VT/YARA/heuristika) faqat alert yozadi va admin qarorini kutadi.
-        # AGENT_AUTO_REMOVE=confirmed - eski (xavfliroq) xatti-harakat, faqat maxsus holatlar uchun.
+        # XAVFSIZLIK (real xato: WinRAR/AnyDesk/Chrome/MicroSIP/gcapi.dll kabi qonuniy dasturlar
+        # o'chirilgan): avtomatik O'CHIRISH/KARANTIN FAQAT quyidagi ISHONCHLI hollarda:
+        #   (a) admin aniq "zararli" qarori bergan (`admin_action`), YOKI
+        #   (b) mahalliy DETERMINISTIK heuristika (`local_confirmed` - ikki kengaytma niqobi,
+        #       zararli PDF/APK tuzilishi) - bular soxta-pozitiv xavfi deyarli yo'q, hujumchi
+        #       nazorat qilolmaydigan aniq belgilar, shuning uchun ADMIN QARORINI KUTMAYDI.
+        # Boshqa har qanday gumon (faqat VT/YARA/MalwareBazaar - tashqi/serverdagi signal, hech
+        # qanday mahalliy tasdiqlovsiz) faqat alert yozadi va ADMIN QARORINI kutadi - fayl
+        # tegilmaydi. `AGENT_AUTO_REMOVE=confirmed` - eski, xavfliroq to'liq-avtomatik rejim
+        # (standart EMAS, faqat orqaga moslik/maxsus holatlar uchun opt-in).
         mode = os.getenv("AGENT_AUTO_REMOVE", "admin").lower()
-        if not admin_action:
-            suspicious_any = server_confirmed or local_confirmed
-            allow_legacy = (mode == "confirmed" and (server_confirmed or local_confirmed)
-                            and (local_confirmed or not heuristic.get("signed") or AUTO_REMOVE_SIGNED))
-            if not allow_legacy:
-                if suspicious_any:
+        if not admin_action and not local_confirmed:
+            if not (server_confirmed and mode == "confirmed"):
+                if server_confirmed:
+                    # KUCHLI, LEKIN mahalliy tasdiqlovsiz signal (masalan MalwareBazaar/hash
+                    # blacklist/yuqori-ishonchli VT) - admin qarori uchun ALERT yaratiladi
+                    # (Dashboard'da "Virusni o'chirish"/"Virus emas" tugmalari bilan).
                     tn = result.get("threat_name") or "; ".join(heuristic.get("findings", [])[:3]) or "Gumonli fayl"
                     logger.warning(f"GUMONLI (chora ko'rilmadi, admin qarori kutilmoqda): {filepath} [{tn}]")
                     if filepath not in self._reported_awaiting:
@@ -504,6 +509,13 @@ class EndpointAgent:
                         report_incident(hostname=self.hostname, ip_address=self.ip_address, filepath=filepath,
                                         sha256=sha256, threat_name=tn, file_deleted=False, process_killed=False,
                                         awaiting_admin=True)
+                elif result.get("malicious"):
+                    # ZAIF, TASDIQLANMAGAN signal (masalan VT 1/70) - soxta-pozitiv xavfi yuqori,
+                    # shovqin qilmasdan FAQAT mahalliy logga yoziladi (markazga xabar YO'Q).
+                    logger.warning(
+                        f"SHUBHALI (tasdiqlanmagan): {filepath} [{result.get('threat_name')}] - "
+                        "avtomatik chora ko'rilmadi, qo'lda tekshirish tavsiya etiladi"
+                    )
                 else:
                     logger.info(f"Toza: {filepath}")
                 return contacted

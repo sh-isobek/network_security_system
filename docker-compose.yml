@@ -234,6 +234,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
       CLAMAV_DB_DIR: /var/lib/clamav
+      # clamd (doimiy jarayon, `clamav_updater` ichida) - bor bo'lsa BIRINCHI ishlatiladi (baza
+      # xotirada oldindan yuklangan, `clamscan` CLI'dan sezilarli tezroq); clamd javob bermasa
+      # yuqoridagi `CLAMAV_DB_DIR` + `clamscan` CLI zaxira sifatida ishlaydi.
+      CLAMD_HOST: clamav_updater
+      CLAMD_PORT: "3310"
       QUARANTINE_DIR: /var/lib/network-security/quarantine
     volumes:
       - clamav_db:/var/lib/clamav
@@ -246,19 +251,23 @@ services:
       clamav_updater:
         condition: service_started
 
-  # ClamAV virus bazasini muntazam yangilab turuvchi alohida xizmat
+  # ClamAV: baza yangilash (freshclam) VA doimiy skanerlash daemoni (clamd) - rasmiy image'ning
+  # standart ishga tushirish tartibi (ikkalasini ham fon jarayoni sifatida boshlaydi). clamd
+  # TCP 3310'da ICHKI docker tarmog'ida tinglaydi (hostga OCHIQ EMAS - `ports:` yo'q, faqat
+  # boshqa xizmatlar konteyner nomi orqali murojaat qiladi). Boshqa xizmatlar (deep_scan_engine/
+  # agent_api) clamd javob bermasa avvalgi `clamscan` CLI'ga avtomatik qaytadi - bu xizmat
+  # to'xtab qolsa ham chuqur tekshiruv butunlay to'xtamaydi.
   clamav_updater:
     image: clamav/clamav:stable
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    mem_limit: 1g
     environment:
       TZ: ${TZ:-Asia/Tashkent}
+      FRESHCLAM_CHECKS: "12"
     volumes:
       - clamav_db:/var/lib/clamav
-    entrypoint: >
-      sh -c "freshclam --daemon --checks=12 --foreground=false;
-             while true; do sleep 3600; freshclam --quiet || true; done"
 
   # ---------------------------------------------------------------------
   # 5-bosqich: Avtomatik javob choralari (UniFi/switch)
@@ -292,6 +301,12 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+      # clamd - agentdan yuklangan namunalarni (`api/server.py::scan_file_upload`) ClamAV bilan
+      # ham tekshirish uchun. Bu konteynerda `CLAMAV_DB_DIR`/umumiy volume YO'Q (avval shu sabab
+      # ClamAV bosqichi HAR DOIM "baza topilmadi" bilan o'tkazib yuborilardi - real bo'shliq) -
+      # clamd tarmoq orqali (INSTREAM) ishlagani uchun umumiy volume shart emas.
+      CLAMD_HOST: clamav_updater
+      CLAMD_PORT: "3310"
     ports:
       # Standart: LAN'ga to'g'ridan-to'g'ri ochiq (0.0.0.0) - `nginx` TLS
       # proxy hali production'da ATAYLAB ishga tushirilmagan (sertifikat
@@ -302,6 +317,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      clamav_updater:
+        condition: service_started
 
   # ---------------------------------------------------------------------
   # 7-bosqich: Bildirishnoma (Email/Telegram)

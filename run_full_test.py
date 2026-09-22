@@ -513,6 +513,12 @@ def _test_linux_agent_e2e():
         # MUHIM: agent endi xom os.remove() o'rniga xavfsiz karantin
         # (nusxa-tasdiqlash-o'chirish) ishlatadi - test uchun alohida papka.
         os.environ["AGENT_QUARANTINE_DIR"] = quarantine_dir
+        # MUHIM (foydalanuvchi so'rovi bilan tuzatilgan yolg'on-ijobiy o'chirishlar - 114-band):
+        # standart holat endi "admin" (server "confirmed" desa ham, admin qarori kutiladi,
+        # tegilmaydi). Bu test aynan xavfsiz-karantin ZANJIRINI (jarayon to'xtatish -> nusxa ->
+        # SHA256 tasdiqlash -> o'chirish) sinaydi - shuning uchun eski, to'g'ridan-to'g'ri
+        # avtomatik chora rejimini ANIQ yoqadi. Admin-qarori rejimi alohida (114-band) sinalgan.
+        os.environ["AGENT_AUTO_REMOVE"] = "confirmed"
         if os.path.exists(os.environ["AGENT_CACHE_FILE"]):
             os.remove(os.environ["AGENT_CACHE_FILE"])
 
@@ -586,7 +592,7 @@ def _test_linux_agent_e2e():
         for f in ["/tmp/_linux_agent_e2e_cache.json", "/tmp/_linux_agent_e2e.log"]:
             if os.path.exists(f):
                 os.remove(f)
-        for k in ["API_SERVER_URL", "AGENT_API_KEY", "AGENT_CACHE_FILE", "AGENT_LOG_FILE", "AGENT_QUARANTINE_DIR"]:
+        for k in ["API_SERVER_URL", "AGENT_API_KEY", "AGENT_CACHE_FILE", "AGENT_LOG_FILE", "AGENT_QUARANTINE_DIR", "AGENT_AUTO_REMOVE"]:
             os.environ.pop(k, None)
 
 
@@ -8768,28 +8774,43 @@ def _test_false_positive_guards():
             return c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "WinRAR.exe", "hostname": "T-FP", "ip_address": "172.16.98.1"}, headers=h).get_json()
     assert call(b"fp_winrar_like", 4)["confirmed"] is False
     assert call(b"fp_real_malware_like", 40)["confirmed"] is True
-    # 3) Agent: imzolangan PE + faqat server signali -> o'chirilmaydi
-    d = tempfile.mkdtemp(prefix="nsa_fp_"); f = os.path.join(d, "AnyDesk.exe"); open(f, "wb").write(b"x")
+    # 3) Agent: FAQAT server signali (mahalliy deterministik topilma YO'Q, admin qarori YO'Q) -
+    # YANGI, qattiqroq siyosat (114-band): imzolangan HAM, imzosiz HAM bo'lsin - hech biri
+    # avtomatik o'chirilmaydi, admin qarori kutiladi (faqat "gumon" sifatida xabar qilinadi).
+    # Eski (signed-ga qarab farqlash) mantiq endi umuman ISHLATILMAYDI - bitta qat'iy qoida bilan
+    # ALMASHTIRILDI, chunki aynan shu farqlash (WinRAR/AnyDesk kabi haqiqiy production hodisalarida)
+    # yolg'on-ijobiy o'chirishga olib kelgan edi.
+    d = tempfile.mkdtemp(prefix="nsa_fp_")
     old = am.LOCAL_CACHE_FILE; am.LOCAL_CACHE_FILE = os.path.join(d, "c.json")
+    old_mode = os.environ.get("AGENT_AUTO_REMOVE")
+    os.environ["AGENT_AUTO_REMOVE"] = "admin"
     try:
-        ag = am.EndpointAgent([d])
         class R:
             status_code = 200
             def json(self): return {"malicious": True, "confirmed": True, "threat_name": None, "source": "server_upload_scan"}
-        with patch.object(am, "analyze_file", return_value={"score": 30, "findings": ["Authenticode imzosi mavjud"], "verdict_hint": "clean", "magic": "PE", "signed": True}), \
-             patch.object(am.requests, "post", return_value=R()), \
-             patch.object(am, "quarantine_file") as q, patch.object(am, "kill_process_holding_file") as k:
-            ag._on_new_file(f)
-            assert not q.called and not k.called and os.path.isfile(f), "imzolangan dastur faqat server signali bilan o'chirilmasligi kerak"
-        # imzosiz + confirmed -> chora ko'riladi (regressiya)
-        with patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": False}), \
-             patch.object(am.requests, "post", return_value=R()), \
-             patch.object(am, "quarantine_file", return_value={"quarantined": True, "source_removed": True, "quarantine_path": "x"}) as q, \
-             patch.object(am, "kill_process_holding_file"), patch.object(am, "report_incident"):
-            ag._on_new_file(f)
-            assert q.called, "imzosiz + tasdiqlangan -> karantin"
+        # MUHIM: har bir stsenariy uchun YANGI agent + YANGI fayl - `_reported_awaiting` (bir xil
+        # faylni qayta-qayta xabar qilmaslik uchun dedup to'plami) ikkinchi chaqiruvni
+        # o'tkazib yubormasligi kerak.
+        for signed in (True, False):
+            ag = am.EndpointAgent([d])
+            f = os.path.join(d, f"AnyDesk_{signed}.exe"); open(f, "wb").write(b"x")
+            with patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": signed}), \
+                 patch.object(am.requests, "post", return_value=R()), \
+                 patch.object(am, "quarantine_file") as q, \
+                 patch.object(am, "kill_process_holding_file") as k, patch.object(am, "report_incident") as rep:
+                ag._on_new_file(f)
+                assert not q.called and not k.called and os.path.isfile(f), (
+                    f"FAQAT server signali (signed={signed}) admin qarorisiz o'chirilmasligi kerak"
+                )
+                assert rep.call_args.kwargs.get("awaiting_admin") is True, (
+                    "gumon fayl uchun admin qarori kutilayotgani markazga xabar qilinishi kerak"
+                )
     finally:
         am.LOCAL_CACHE_FILE = old
+        if old_mode is None:
+            os.environ.pop("AGENT_AUTO_REMOVE", None)
+        else:
+            os.environ["AGENT_AUTO_REMOVE"] = old_mode
 
 
 check("Yolg'on-ijobiy himoyasi: YARA .exe, VT chegarasi, imzolangan fayl", _test_false_positive_guards)
@@ -8880,6 +8901,113 @@ def _test_admin_file_decisions():
 
 
 check("Admin qarori: avto-o'chirish yo'q, 'virus emas'/'virus' barcha qurilmalarda, tugmalar faqat virusda", _test_admin_file_decisions)
+
+print("\n=== 116) ClamAV: haqiqiy clamd daemon (INSTREAM) - EICAR/toza fayl, clamscan CLI'ga zaxira, real deep-scan zanjiri ===")
+
+
+def _test_clamav_clamd_integration():
+    """
+    Foydalanuvchi so'rovi: ClamAV'ni `clamd` doimiy jarayoni orqali integratsiya qilish
+    (`clamscan` CLI'ning har chaqiruvda butun bazani qayta yuklashi o'rniga). HAQIQIY, vaqtinchalik
+    Docker `clamav/clamav:stable` konteynerida (bu image bazani o'zi bilan olib keladi - internetga
+    ehtiyoj yo'q) - EICAR test signaturasi orqali (haqiqiy antivirus test standarti, zararli KOD
+    EMAS) aniqlash, toza fayl, xato holatda CLI'ga zaxira, va TO'LIQ `deep_scan_one()` zanjiri
+    (Hash -> YARA -> ClamAV) real DB orqali tekshiriladi.
+    """
+    import subprocess, uuid, socket, time as _t, hashlib
+    import importlib
+
+    if subprocess.run(["which", "docker"], capture_output=True).returncode != 0:
+        print("   (o'tkazib yuborildi - bu muhitda docker yo'q)")
+        return
+
+    container = f"nss-clamd-test-{uuid.uuid4().hex[:8]}"
+    subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+    run_result = subprocess.run(["docker", "run", "-d", "--name", container, "clamav/clamav:stable"],
+                                 capture_output=True, text=True)
+    if run_result.returncode != 0:
+        print(f"   (o'tkazib yuborildi - clamd konteyneri ko'tarilmadi: {run_result.stderr.strip()[:200]})")
+        return
+
+    try:
+        ip = subprocess.run(
+            ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container],
+            capture_output=True, text=True).stdout.strip()
+        assert ip, "konteyner IP manzili topilmadi"
+
+        # clamd bazani yuklab, TCP 3310'ni ochguncha kutamiz (baza image ichida tayyor - internet
+        # kerak emas, lekin yuklash ~1-2 daqiqa davom etadi)
+        ready = False
+        t0 = _t.time()
+        for attempt in range(150):
+            try:
+                with socket.create_connection((ip, 3310), timeout=2) as sock:
+                    sock.sendall(b"zPING\0")
+                    if sock.recv(64).startswith(b"PONG"):
+                        ready = True
+                        break
+            except OSError:
+                pass
+            if attempt and attempt % 15 == 0:
+                print(f"   ... clamd hali tayyor emas, {int(_t.time() - t0)}s o'tdi")
+            _t.sleep(2)
+        assert ready, f"clamd {int(_t.time() - t0)}s ichida tayyor bo'lmadi (yuklangan diskda signatura nusxalash sekin bo'lishi mumkin - production'da bu FAQAT bir marta, doimiy xizmatning birinchi ishga tushishida sodir bo'ladi)"
+
+        os.environ["CLAMD_HOST"] = ip
+        os.environ["CLAMD_PORT"] = "3310"
+        import scanners.clamav_scanner as cs
+        importlib.reload(cs)
+
+        assert cs.clamd_available() is True
+
+        eicar = rb"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+        eicar_path, clean_path = "/tmp/_rft_clamd_eicar.txt", "/tmp/_rft_clamd_clean.txt"
+        open(eicar_path, "wb").write(eicar)
+        open(clean_path, "wb").write(b"real clamd integration test - clean file\n")
+
+        r_bad = cs.scan_file(eicar_path)
+        assert r_bad["scanned"] and r_bad["infected"] and "Eicar" in r_bad["signature"], r_bad
+        r_clean = cs.scan_file(clean_path)
+        assert r_clean["scanned"] and not r_clean["infected"], r_clean
+
+        # noto'g'ri port - ulanib bo'lmaydi -> None (chaqiruvchi CLI'ga zaxira sifatida o'tishi kerak)
+        assert cs.scan_file_via_clamd(clean_path, host=ip, port=9999, timeout=2) is None
+        assert cs.clamd_available(host=ip, port=9999, timeout=2) is False
+
+        # `extra_db_dir` beruvchi chaqiruvchilar clamd'ni chetlab o'tib, har doim CLI ishlatishi kerak
+        # (mahalliy `clamscan` bu sandbox'da yo'q bo'lsa ham - "topilmadi" xatosi CLI yo'lidan
+        # kelganini isbotlaydi, clamd'dan emas).
+        r_extra = cs.scan_file(clean_path, extra_db_dir="/tmp/_rft_extra_test_missing_db_dir")
+        assert r_extra["scanned"] is False and not (r_extra["error"] or "").startswith("clamd:"), r_extra
+
+        # TO'LIQ real zanjir: Hash -> YARA -> ClamAV (clamd) - `deep_scan_one()` orqali, real DB'ga
+        import engine.deep_scan_engine as dse
+        importlib.reload(dse)
+        sha = hashlib.sha256(eicar).hexdigest()
+        s = get_session()
+        fe = FileEvent(src_ip="172.16.201.1", filename="eicar_clamd_test.txt", file_ext="txt",
+                       size=len(eicar), sha256=sha, md5="x", stored_path=eicar_path, checked=False)
+        s.add(fe)
+        s.commit()
+        dse.deep_scan_one(s, fe)
+        s.commit()
+        s.refresh(fe)
+        assert fe.verdict == "malicious", f"clamd orqali EICAR malicious deb topilishi kerak edi: {fe.verdict}"
+        assert "Eicar-Test-Signature" in (fe.deep_scan_findings or ""), fe.deep_scan_findings
+        s.close()
+
+        if os.path.exists(eicar_path):
+            os.remove(eicar_path)  # deep_scan_one() odatda uni karantinga olib, allaqachon o'chirgan bo'ladi
+        os.remove(clean_path)
+    finally:
+        os.environ.pop("CLAMD_HOST", None)
+        os.environ.pop("CLAMD_PORT", None)
+        import scanners.clamav_scanner as cs
+        importlib.reload(cs)
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+
+
+check("ClamAV: haqiqiy clamd daemon (INSTREAM, EICAR/toza/zaxira/to'liq deep-scan zanjiri)", _test_clamav_clamd_integration)
 
 print("\n=== 115) Whitelist: domen ierarxiyasi (egov.uz -> sso.egov.uz), 'notegov.uz' mos kelmaydi ===")
 
