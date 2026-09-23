@@ -9049,6 +9049,64 @@ def _test_clamav_updater_memory_limit():
 
 check("docker-compose: clamav_updater xotira chegarasi (baza qayta yuklash uchun yetarli)", _test_clamav_updater_memory_limit)
 
+print("\n=== 118) Alert: agent internetga marshrutsiz bo'lsa ham haqiqiy IP, va alert matnida foydalanuvchi nomi ===")
+
+
+def _test_agent_ip_and_username_in_alert():
+    """
+    Real production'da topilgan xato: bir nechta HAQIQIY qurilmada (SHP-278, SPH-027) Alert
+    IP=127.0.0.1 ko'rsatgan - sabab `_get_local_ip()` FAQAT ochiq internet (8.8.8.8)ga yo'l
+    (route) borligiga tayanardi; ko'p korxona ish stansiyalarida bunday yo'l UMUMAN yo'q.
+    Ikkinchisi: Alert matnida qaysi FOYDALANUVCHI ekanligi UMUMAN ko'rinmasdi.
+    """
+    import socket as _socket
+    from unittest.mock import patch
+    import agent_core.agent as am
+    import api.server as api_server
+
+    # 1) IP: 8.8.8.8'ga yo'l yo'q (real "faqat ichki tarmoq" holati) - lekin agent serveriga
+    # (API_SERVER_URL) yo'l bor - shundan foydalanish kerak, 127.0.0.1'ga tushmasligi kerak.
+    real_connect = _socket.socket.connect
+    def fake_connect(self, addr):
+        if addr[0] == "8.8.8.8":
+            raise OSError("Network is unreachable")
+        return real_connect(self, addr)
+    with patch.object(am, "API_SERVER_URL", "http://172.16.55.9:8443"), \
+         patch.object(_socket.socket, "connect", fake_connect):
+        ip = am._get_local_ip()
+    assert ip != "127.0.0.1", f"internetga yo'l yo'q bo'lsa ham server manziliga yo'l orqali haqiqiy IP topilishi kerak edi, {ip!r} keldi"
+
+    # 2) Alert matnida foydalanuvchi nomi (Windows yo'lidan)
+    assert api_server._extract_username_from_path(r"C:\Users\d.turgunbaev-su\Downloads\x.exe") == "d.turgunbaev-su"
+    assert api_server._extract_username_from_path("/home/jsmith/Downloads/x") == "jsmith"
+    assert api_server._extract_username_from_path(None) is None
+    assert api_server._extract_username_from_path("C:\\Windows\\Temp\\x") is None
+
+    api_server.AGENT_API_KEY = "test-key-user"
+    c = api_server.app.test_client(); h = {"X-API-Key": "test-key-user"}
+    s = get_session()
+    s.add(Device(ip_address="172.16.199.1", hostname="SHP-278", source="test")); s.commit(); s.close()
+    import hashlib
+    sha = hashlib.sha256(b"pdf_username_test_file").hexdigest()
+    with patch.object(api_server, "vt_slot_busy", return_value=False), \
+         patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        c.post("/api/v1/check_hash", json={
+            "sha256": sha, "filename": "invoice.pdf",
+            "filepath": r"C:\Users\d.turgunbaev-su\Downloads\invoice.pdf",
+            "hostname": "SHP-278", "ip_address": "172.16.199.1",
+            "heuristic_score": 90, "heuristic_findings": ["PDF strukturasi: JavaScript topildi"],
+            "heuristic_verdict": "malicious",
+        }, headers=h)
+    s = get_session()
+    alert = s.query(Alert).filter(Alert.reason.like(f"%SHA256={sha}%")).first()
+    assert alert is not None and "Foydalanuvchi: d.turgunbaev-su" in alert.reason, alert.reason if alert else None
+    assert r"Downloads\invoice.pdf" in alert.reason
+    s.close()
+
+
+check("Alert: agentning haqiqiy IP'i (server yo'li orqali) va matnida foydalanuvchi nomi", _test_agent_ip_and_username_in_alert)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

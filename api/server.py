@@ -27,6 +27,7 @@ import hmac
 import os
 import sys
 import json
+import re
 from urllib.parse import unquote
 from functools import wraps
 
@@ -219,6 +220,24 @@ def scan_file_upload():
     return jsonify(result)
 
 
+def _extract_username_from_path(filepath):
+    """
+    Qurilmadagi to'liq fayl yo'lidan (masalan "C:\\Users\\d.turgunbaev-su\\Downloads\\x.exe")
+    foydalanuvchi login nomini ajratib oladi - Alert matnida "IP=127.0.0.1" kabi holatlarda ham
+    QAYSI foydalanuvchi ekanligini ko'rsatish uchun (Windows/macOS "Users", Linux "home").
+    Yo'l yo'q yoki naqshga mos kelmasa - None.
+    """
+    if not filepath:
+        return None
+    m = re.search(r"[\\/][Uu]sers[\\/]([^\\/]+)[\\/]", filepath)
+    if m:
+        return m.group(1)
+    m = re.search(r"/home/([^/]+)/", filepath)
+    if m:
+        return m.group(1)
+    return None
+
+
 def _log_endpoint_scan(session, data: dict, sha256: str, verdict: str, threat_score: int,
                         threat_name: str, source: str):
     """
@@ -405,12 +424,16 @@ def check_hash():
             _log_endpoint_scan(session, data, sha256, log_verdict, threat_score, None, "heuristic")
             device = session.query(Device).filter(Device.ip_address == data.get("ip_address")).first()
             if device is not None and data.get("filename"):
+                _fp = data.get("filepath")
+                _user = _extract_username_from_path(_fp)
+                _path_note = f" | Yo'l: {_fp}" if _fp else ""
+                _user_note = f" | Foydalanuvchi: {_user}" if _user else ""
                 session.add(Alert(
                     device_id=device.id,
                     severity=severity,
                     reason=(
                         f"Endpoint heuristik tahlilida {'tasdiqlangan' if heuristic_verdict == 'malicious' else 'shubhali'} "
-                        f"fayl: {data.get('filename')} | Host: {data.get('hostname')} | SHA256={sha256}\n"
+                        f"fayl: {data.get('filename')} | Host: {data.get('hostname')}{_user_note} | SHA256={sha256}{_path_note}\n"
                         + "\n".join(heuristic_findings)
                     ),
                     action_taken=(
@@ -499,6 +522,8 @@ def report_incident():
         threat_name = data.get("threat_name", "nomalum")
         filepath = data.get("filepath")
         path_note = f" | Yo'l: {filepath}" if filepath else ""
+        username = _extract_username_from_path(filepath)
+        user_note = f" | Foydalanuvchi: {username}" if username else ""
         awaiting = bool(data.get("awaiting_admin"))
         fe_link = (session.query(FileEvent.id).filter(FileEvent.sha256 == data["sha256"], FileEvent.channel == "endpoint_agent")
                    .order_by(FileEvent.id.desc()).first())
@@ -510,7 +535,7 @@ def report_incident():
             alert = Alert(
                 device_id=device.id, severity="high", file_event_id=fe_link[0] if fe_link else None,
                 reason=(f"Endpoint Agent zararli deb GUMON QILGAN fayl: {data['filename']} "
-                        f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"),
+                        f"[{threat_name}] | Host: {data['hostname']}{user_note} | SHA256={data['sha256']}{path_note}"),
                 action_taken="Fayl tegilmadi - ADMIN QARORI kutilmoqda (Zararsiz / Zararli tugmalari)",
                 notified=False,
             )
@@ -520,7 +545,7 @@ def report_incident():
                 severity="critical", file_event_id=fe_link[0] if fe_link else None,
                 reason=(
                     f"Endpoint Agent TASDIQLANGAN zararli faylni aniqladi: {data['filename']} "
-                    f"[{threat_name}] | Host: {data['hostname']} | SHA256={data['sha256']}{path_note}"
+                    f"[{threat_name}] | Host: {data['hostname']}{user_note} | SHA256={data['sha256']}{path_note}"
                 ),
                 action_taken=action_summary,
                 notified=False,

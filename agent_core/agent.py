@@ -36,7 +36,7 @@ import socket
 import sys
 import time
 import threading
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -390,14 +390,37 @@ def send_heartbeat(hostname: str, ip_address: str) -> bool:
 
 
 def _get_local_ip() -> str:
+    """
+    MUHIM (real production'da topilgan xato): bu funksiya UDP "connect" hiylasi bilan ishlaydi
+    (haqiqiy paket yubormaydi - faqat OS'dan "shu manzilga borish uchun qaysi interfeys
+    ishlatilardi" deb so'raydi). Avval FAQAT ochiq internetdagi `8.8.8.8`ga urinilardi - ko'p
+    korxona tarmoqlarida oddiy ish stansiyalari internetga UMUMAN yo'nalishga (route) ega emas
+    (faqat ichki serverlarga), shuning uchun bu urinish ENOENT/ENETUNREACH bilan muvaffaqiyatsiz
+    bo'lib, IP HAR DOIM "127.0.0.1" bo'lib qolar edi (SHP-278/SPH-027 kabi bir nechta real
+    qurilmada kuzatilgan - bitta emas, tizimli muammo). Endi avval agentning O'Z markaziy
+    serveriga (`API_SERVER_URL`) yo'l so'raladi - bu manzilga agent ALLAQACHON muvaffaqiyatli
+    ulanib turgani uchun (check_hash/heartbeat) bu yo'l DEYARLI HAR DOIM mavjud - so'ng ochiq
+    internetga, aks holda "127.0.0.1"ga qaytiladi.
+    """
+    candidates = []
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except OSError:
-        return "127.0.0.1"
+        host = urlsplit(API_SERVER_URL).hostname
+        if host:
+            candidates.append((host, 80))
+    except ValueError:
+        pass
+    candidates.append(("8.8.8.8", 80))
+    for host, port in candidates:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((host, port))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and ip != "0.0.0.0":
+                return ip
+        except OSError:
+            continue
+    return "127.0.0.1"
 
 
 class EndpointAgent:
