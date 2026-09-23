@@ -8616,6 +8616,111 @@ def _test_agent_rescan_flag():
 
 check("Agent: rescan.flag mavjud fayllarni bir marta qayta tekshiradi", _test_agent_rescan_flag)
 
+# ---------------------------------------------------------------------------
+print("\n=== 108b) Agent: qayta skanerlash TEZLASHTIRILDI - disklar PARALLEL, ishonchli imzo serverga so'rovsiz (real production muammosi) ===")
+
+
+def _test_agent_bulk_scan_speedup():
+    """
+    Foydalanuvchi: "fayillarni tekshirishda navbat ko'payib ketayabdi ...
+    agent faqat C disk va tizim fayllarni tekshirayabdi, D E F G H
+    tekshirmayabdi". Ildiz sabab ikkita mustaqil narsa edi:
+      (1) `_rescan_existing()` disklarni KETMA-KET aylanardi - katta C:
+          disk (Windows/Program Files, yuz minglab fayl) tugamaguncha
+          keyingi disk UMUMAN boshlanmasdi.
+      (2) HAR BIR fayl (hatto Microsoft imzolagan tizim fayli ham)
+          serverga alohida so'rov + 0.7s kechikish bilan yuborilardi.
+    Tuzatish: disklar endi PARALLEL oqimda skanerlanadi (umumiy
+    `_RateLimiter` orqali server chastotasi baribir bitta chegarada
+    tutiladi), va ommaviy rejimda `trusted_signature=True` (Authenticode
+    orqali mahalliy tasdiqlangan) fayllar serverga UMUMAN so'rov
+    yubormasdan mahalliy keshga "toza" deb yoziladi.
+    """
+    import os, tempfile, time, threading, json as _json
+    from unittest.mock import patch
+    import agent_core.agent as am
+
+    # --- 1) Disklar PARALLEL ishlashi (ketma-ket bo'lsa 3x sekinroq bo'lardi) ---
+    d = tempfile.mkdtemp(prefix="nsa_bulk_parallel_")
+    drives = []
+    for name in ("A", "B", "C"):
+        p = os.path.join(d, name)
+        os.makedirs(p)
+        drives.append(p)
+    old_cache = am.LOCAL_CACHE_FILE
+    am.LOCAL_CACHE_FILE = os.path.join(d, "cache.json")
+    try:
+        ag = am.EndpointAgent(drives)
+        starts = []
+        lock = threading.Lock()
+
+        def fake_rescan_tree(root_dir):
+            with lock:
+                starts.append(time.monotonic())
+            time.sleep(0.4)
+            return 0
+
+        with patch.object(ag, "_rescan_tree", side_effect=fake_rescan_tree):
+            t0 = time.monotonic()
+            ag._rescan_existing()
+            elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.7, f"3 ta disk PARALLEL bo'lishi kerak edi (ketma-ket ~1.2s+ bo'lardi): {elapsed:.2f}s"
+        assert max(starts) - min(starts) < 0.3, f"barcha disklar deyarli bir vaqtda boshlanishi kerak edi: {starts}"
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+
+    # --- 2) Ishonchli imzo -> serverga so'rovsiz, oddiy fayl -> so'rov boradi ---
+    d2 = tempfile.mkdtemp(prefix="nsa_bulk_trusted_")
+    watch = os.path.join(d2, "drv")
+    os.makedirs(watch)
+    open(os.path.join(watch, "trusted0.bin"), "wb").write(b"t0")
+    open(os.path.join(watch, "trusted1.bin"), "wb").write(b"t1")
+    open(os.path.join(watch, "plain0.bin"), "wb").write(b"p0")
+    am.LOCAL_CACHE_FILE = os.path.join(d2, "cache.json")
+    old_delay = am.BULK_SERVER_DELAY
+    am.BULK_SERVER_DELAY = 0.05
+    try:
+        ag2 = am.EndpointAgent([watch])
+        ag2._bulk_rate_limiter = am._RateLimiter(0.05)
+
+        def fake_analyze_file(filepath, filename=None):
+            trusted = "trusted" in os.path.basename(filepath)
+            return {"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE",
+                    "signed": trusted, "trusted_signature": trusted}
+
+        call_log = []
+
+        class FakeResp:
+            status_code = 200
+
+            def json(self):
+                return {"malicious": False, "confirmed": False, "threat_name": None}
+
+        def fake_post(*a, **k):
+            call_log.append(k.get("json", {}).get("filename"))
+            return FakeResp()
+
+        with patch.object(am, "analyze_file", side_effect=fake_analyze_file), \
+             patch.object(am.requests, "post", side_effect=fake_post):
+            ag2._rescan_existing()
+
+        assert call_log == ["plain0.bin"], f"faqat ishonchsiz fayl serverga yuborilishi kerak edi: {call_log}"
+
+        with open(am.LOCAL_CACHE_FILE) as f:
+            cache_on_disk = _json.load(f)
+        trusted_shas = [am.compute_sha256(os.path.join(watch, n)) for n in ("trusted0.bin", "trusted1.bin")]
+        for sha in trusted_shas:
+            assert cache_on_disk.get(sha, {}).get("source") == "local_authenticode", (
+                f"ishonchli imzo fayli mahalliy keshga 'toza' deb yozilishi kerak edi: {cache_on_disk.get(sha)}"
+            )
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+        am.BULK_SERVER_DELAY = old_delay
+
+
+check("Agent: qayta skanerlash tezlashtirildi - disklar parallel, ishonchli imzo serverga so'rovsiz", _test_agent_bulk_scan_speedup)
+
 print("\n=== 109) DC avto-yangilash: CI Release e'lon qiladi, sync skripti SHA256/versiya/zaxira/VERSION-oxirida tartibini saqlaydi ===")
 
 

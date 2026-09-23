@@ -174,6 +174,30 @@ def _save_cache(cache: dict):
         logger.error(f"Keshni saqlab bo'lmadi: {exc}")
 
 
+class _RateLimiter:
+    """
+    Bir nechta disk PARALLEL qayta skanerlanganda (`_rescan_existing`), har bir
+    oqim mustaqil `time.sleep(BULK_SERVER_DELAY)` qilsa, umumiy so'rov chastotasi
+    oqimlar soniga ko'paytirilib, server chegarasidan (masalan 100/daq) oshib
+    ketishi mumkin edi. Bitta umumiy limiter barcha oqimlar orasida bo'lishiladi -
+    haqiqiy tarmoqqa chiqadigan (keshda topilmagan) so'rovlar oldidan chaqiriladi.
+    """
+
+    def __init__(self, min_interval: float):
+        self._min_interval = min_interval
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def wait(self):
+        with self._lock:
+            now = time.monotonic()
+            delay = self._next_allowed - now
+            if delay > 0:
+                time.sleep(delay)
+                now = time.monotonic()
+            self._next_allowed = now + self._min_interval
+
+
 def _tls_request_kwargs() -> dict:
     """
     `requests.post()`ga qo'shiladigan TLS parametrlarini bir joyda
@@ -201,7 +225,8 @@ def compute_sha256(filepath: str) -> str:
 def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = None,
                                      hostname: str = None, ip_address: str = None,
                                      filepath: str = None, heuristic: dict = None,
-                                     prefer_cache: bool = False) -> dict:
+                                     prefer_cache: bool = False, rate_limiter: "_RateLimiter" = None,
+                                     cache_lock: threading.Lock = None) -> dict:
     """
     Avval markaziy serverga so'raydi. Server bilan bog'lanib bo'lmasa
     (offline holat) - mahalliy keshga tayanadi (fail-safe).
@@ -229,6 +254,13 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
     "suspicious"ga hal qilish) uchun yuboriladi - Agent'ga qaytariladigan
     `malicious`/`confirmed` javobiga ta'sir qilmaydi (`_on_new_file()`
     heuristikni MUSTAQIL, mahalliy ravishda hisobga oladi).
+
+    `rate_limiter`/`cache_lock` - faqat ommaviy (bulk) qayta skanerlashda,
+    bir nechta disk PARALLEL ishlaganda ishlatiladi (`_rescan_existing`):
+    `rate_limiter` tarmoqqa HAQIQATAN chiqadigan so'rovlarni umumiy
+    chegarada tutadi (har bir oqim mustaqil kutish o'rniga), `cache_lock`
+    esa bir nechta oqim BIR XIL `cache` dict'ni bir vaqtda yozishi/
+    saqlashi paytida poyga holatining oldini oladi.
     """
     # MUHIM: kesh endi FAQAT server bilan aloqa uzilganda ishlatiladi. Avval kesh
     # birinchi tekshirilardi - shu sababli bir xil fayl (xesh) boshqa joyda paydo
@@ -240,6 +272,8 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
         return {**cached, "from_cache": True}   # ommaviy skanerlash: allaqachon toza deb ma'lum xesh
 
     heuristic = heuristic or {}
+    if rate_limiter is not None:
+        rate_limiter.wait()
     try:
         resp = requests.post(
             f"{API_SERVER_URL}/api/v1/check_hash",
@@ -278,8 +312,13 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
                 uploaded = upload_for_scan(filepath, sha256, hostname)
                 if uploaded is not None:
                     result = uploaded
-            cache[sha256] = result
-            _save_cache(cache)
+            if cache_lock is not None:
+                with cache_lock:
+                    cache[sha256] = result
+                    _save_cache(cache)
+            else:
+                cache[sha256] = result
+                _save_cache(cache)
             return result
         logger.warning(f"Server xatoligi: HTTP {resp.status_code}")
     except requests.RequestException as exc:
@@ -435,6 +474,12 @@ class EndpointAgent:
         self.monitor = FileMonitor(watch_dirs, self._on_new_file)
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread = None
+        # Ommaviy (bulk) qayta skanerlash endi HAR BIR diskni PARALLEL oqimda
+        # ishlaydi (pastga, `_rescan_existing` qarang) - shu sabab bir nechta
+        # oqim BIR XIL `self.cache`ni bir vaqtda yozishi mumkin.
+        self._cache_lock = threading.Lock()
+        self._bulk_rate_limiter = _RateLimiter(BULK_SERVER_DELAY)
+        self._bulk_cache_dirty = 0
         if not AGENT_API_KEY:
             logger.warning(
                 "AGENT_API_KEY sozlanmagan - serverga barcha so'rovlar (check_hash/"
@@ -469,6 +514,33 @@ class EndpointAgent:
             logger.warning(f"Heuristik tahlil muvaffaqiyatsiz (davom etiladi): {filepath} - {exc}")
             heuristic = {}
 
+        # TEZLASHTIRISH (foydalanuvchi so'rovi: navbat ko'payib ketishi/boshqa
+        # disklarga yetib bormaslik): ommaviy qayta skanerlashda (`bulk=True`,
+        # `rescan.flag`) ishonchli imzolangan (masalan Microsoft) tizim fayli
+        # uchun serverga ALOHIDA so'rov YUBORILMAYDI. `heuristic_analyzer.py`
+        # `trusted_signature=True` bo'lganda allaqachon butun natijani "clean"
+        # deb qaytaradi - shuning uchun bu yerda hech qanday tekshiruv
+        # yo'qotilmaydi, faqat serverga tarmoq so'rovi (va uning 0.7s kechikishi)
+        # tejaladi. C:\Windows / Program Files kabi papkalarda bunday fayl
+        # YUZ MINGLAB bo'lishi mumkin - bu ularning barchasini serverga
+        # yubormasdan darhol "toza" deb belgilaydi, shu bilan qayta skanerlash
+        # D:/E:/F:/... disklarga ANCHA tezroq yetib boradi. Haqiqiy vaqtdagi
+        # (bulk=False, yangi yaratilgan) fayllar hamon TO'LIQ serverga
+        # yuboriladi - Dashboard ko'rinishi/audit yo'qolmaydi.
+        if bulk and heuristic.get("trusted_signature"):
+            with self._cache_lock:
+                self.cache[sha256] = {
+                    "malicious": False, "confirmed": False,
+                    "source": "local_authenticode", "threat_name": None,
+                }
+                self._bulk_cache_dirty += 1
+                if self._bulk_cache_dirty >= 500:
+                    _save_cache(self.cache)
+                    self._bulk_cache_dirty = 0
+            logger.debug(f"Ishonchli imzo - serverga so'rovsiz toza deb belgilandi: {filepath}")
+            self._pending_recheck.discard(filepath)
+            return False
+
         logger.info(f"Tekshirilmoqda: {filepath} (SHA256={sha256[:16]}...)")
         result = check_hash_with_server_or_cache(
             sha256, self.cache,
@@ -478,6 +550,8 @@ class EndpointAgent:
             filepath=filepath,
             heuristic=heuristic,
             prefer_cache=bulk,
+            rate_limiter=self._bulk_rate_limiter if bulk else None,
+            cache_lock=self._cache_lock if bulk else None,
         )
         contacted = not result.get("from_cache") and not result.get("offline")
 
@@ -669,7 +743,13 @@ class EndpointAgent:
         threading.Thread(target=self._rescan_existing, name="AgentRescan", daemon=True).start()
 
     def _rescan_tree(self, root_dir: str) -> int:
-        """Bitta papka/diskdagi MAVJUD barcha fayllarni tekshiradi (tizim shovqini o'tkazib yuboriladi)."""
+        """
+        Bitta papka/diskdagi MAVJUD barcha fayllarni tekshiradi (tizim shovqini
+        o'tkazib yuboriladi). Serverga HAQIQATAN chiqadigan so'rovlar orasidagi
+        kechikish endi bu yerda emas, `self._bulk_rate_limiter` orqali (barcha
+        PARALLEL ishlayotgan disk-oqimlari o'rtasida UMUMIY chegara sifatida)
+        boshqariladi - shu sabab bu yerda alohida `time.sleep()` shart emas.
+        """
         count = 0
         for dirpath, dirs, files in os.walk(root_dir):
             dirs[:] = [d for d in dirs if not is_excluded(os.path.join(dirpath, d))]
@@ -680,20 +760,44 @@ class EndpointAgent:
                 if is_excluded(path):
                     continue
                 try:
-                    contacted = self._on_new_file(path, bulk=True)
+                    self._on_new_file(path, bulk=True)
                     count += 1
-                    if contacted:
-                        time.sleep(BULK_SERVER_DELAY)   # server so'rov chegarasi (daqiqasiga) ostida qolish
                 except Exception as exc:
                     logger.warning(f"Qayta skanerlashda xato ({name}): {exc}")
         return count
 
     def _rescan_existing(self):
-        logger.info("Qayta skanerlash boshlandi: mavjud fayllar tekshirilmoqda...")
-        count = 0
-        for root_dir in list(self.monitor.watch_dirs):
-            count += self._rescan_tree(root_dir)
-        logger.info(f"Qayta skanerlash tugadi: {count} ta fayl tekshirildi")
+        """
+        TEZLASHTIRISH (foydalanuvchi so'rovi: "D E F G H disklar tekshirilmayapti"):
+        avval disklar KETMA-KET skanerlanardi - C: (Windows/Program Files bilan
+        yuz minglab fayl) tugagunicha D:/E:/F:/... UMUMAN boshlanmasdi. Endi HAR
+        BIR disk (watch_dir) O'Z ALOHIDA oqimida PARALLEL ishlaydi - barcha
+        disklar bir vaqtda boshlanadi, server so'rov chastotasi esa umumiy
+        `self._bulk_rate_limiter` orqali bitta chegarada tutiladi (oqimlar
+        soniga ko'paytirilmaydi).
+        """
+        logger.info("Qayta skanerlash boshlandi: mavjud fayllar tekshirilmoqda (barcha disklar parallel)...")
+        watch_dirs = list(self.monitor.watch_dirs)
+        counts = [0] * len(watch_dirs)
+
+        def _scan_one(idx: int, root_dir: str):
+            try:
+                counts[idx] = self._rescan_tree(root_dir)
+            except Exception as exc:
+                logger.warning(f"Disk qayta skanerlashda xato ({root_dir}): {exc}")
+
+        threads = [
+            threading.Thread(target=_scan_one, args=(i, d), name=f"AgentRescan-{d}", daemon=True)
+            for i, d in enumerate(watch_dirs)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        with self._cache_lock:
+            _save_cache(self.cache)   # yakuniy flush - bulk rejimdagi ba'zi yozuvlar hali diskka tushmagan bo'lishi mumkin
+        logger.info(f"Qayta skanerlash tugadi: {sum(counts)} ta fayl tekshirildi")
 
     def _drive_watch_once(self):
         """Yangi ulangan disk (USB/flesh) topilsa - kuzatuvga qo'shadi va undagi mavjud fayllarni tekshiradi."""
