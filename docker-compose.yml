@@ -262,7 +262,15 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1g
+    # XAVFSIZLIK/BARQARORLIK (real production'da topilgan xato): `clamd` to'liq imzo bazasini
+    # (main.cvd+daily.cvd, ~3.6 million imzo) xotiraga yuklab, doimiy ~940MB (1GB chegaraning
+    # 92%) ishlatadi - bu FAQAT muvozanatli holat. `freshclam` bazani yangilab, `clamd`ga
+    # qayta yuklashni buyurganda (odatda kuniga bir necha marta) ESKI VA YANGI nusxa BIR VAQTDA
+    # xotirada bo'ladi - 1GB chegara YETARLI EMAS edi: qayta yuklash muvaffaqiyatsiz tugab,
+    # `clamd` jarayoni "tirik" ko'rinsa-da (ps'da bor), TCP 3310 tinglovchisi jimgina o'chib
+    # qolgan (`agent_api`/`deep_scan_engine` clamd bilan ~20 soat ulanolmagan, sezilmasdan
+    # `clamscan` CLI'ga - yoki `agent_api`da hech narsaga - qaytgan). Xotira 2g'ga oshirildi.
+    mem_limit: 2g
     environment:
       TZ: ${TZ:-Asia/Tashkent}
       FRESHCLAM_CHECKS: "12"

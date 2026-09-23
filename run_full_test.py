@@ -9026,6 +9026,29 @@ def _test_whitelist_domain_hierarchy():
 
 check("Whitelist: domen ierarxiyasi (subdomen ruxsat, o'xshash domen emas)", _test_whitelist_domain_hierarchy)
 
+print("\n=== 117) docker-compose: clamav_updater xotira chegarasi haqiqiy ehtiyojdan yuqori (real production o'chishi tuzatilgan) ===")
+
+
+def _test_clamav_updater_memory_limit():
+    """
+    Real production'da topilgan xato: `clamav_updater` (`clamd` + `freshclam`) 1g xotira
+    chegarasida doimiy ~940MB (92%) ishlatgan - baza QAYTA YUKLANGANDA (freshclam signal
+    berganda, kuniga bir necha marta) eski+yangi nusxa BIR VAQTDA xotirada bo'lgani uchun
+    chegaraga yetib, `clamd` TCP tinglovchisi ~20 soat davomida jimgina o'chib qolgan (jarayon
+    "tirik" ko'ringan bo'lsa-da) - `agent_api`/`deep_scan_engine` sezmasdan ClamAV'siz qolgan.
+    """
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "docker-compose.yml")) as f:
+        compose = yaml.safe_load(f)
+    mem = compose["services"]["clamav_updater"].get("mem_limit", "")
+    assert mem and mem.endswith("g") and int(mem[:-1]) >= 2, (
+        f"clamav_updater mem_limit kamida 2g bo'lishi kerak (baza qayta yuklanganda ikki nusxa "
+        f"xotirada bo'ladi, joriy: {mem!r})"
+    )
+
+
+check("docker-compose: clamav_updater xotira chegarasi (baza qayta yuklash uchun yetarli)", _test_clamav_updater_memory_limit)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
