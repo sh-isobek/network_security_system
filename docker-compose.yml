@@ -576,3 +576,67 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # Xodimlar Davomat Monitoring Platformasi (Hikvision Face ID, DS-K1T342MFWX)
+  # ---------------------------------------------------------------------
+  # Asosiy tarmoq xavfsizligi domenidan MUSTAQIL subtizim - o'z jadvallari
+  # (attn_*), o'z Dashboard'i (super_admin/hr_admin/viewer RBAC), lekin
+  # BIR XIL PostgreSQL bazasiga yoziladi (kod o'zgarishisiz SQLite/Postgres).
+  attendance_sync:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    command: python -m attendance.sync_engine --loop
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  attendance_calculator:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    command: python -m attendance.calculator --loop
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  attendance_report:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    command: python -m attendance.report_engine --loop
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  attendance_dashboard:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    command: gunicorn -w 2 -b 0.0.0.0:8090 attendance.dashboard.app:app
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    ports:
+      - "${ATTENDANCE_DASHBOARD_HOST_IP:-0.0.0.0}:8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy

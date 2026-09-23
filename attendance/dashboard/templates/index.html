@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Umumiy - Davomat Dashboard{% endblock %}
+{% block content %}
+<h1>Umumiy statistika</h1>
+
+<div class="filters">
+    <a href="{{ url_for('index', period='today') }}" class="{{ 'active' if period == 'today' }}">Bugun</a>
+    <a href="{{ url_for('index', period='week') }}" class="{{ 'active' if period == 'week' }}">So'nggi 7 kun</a>
+    <a href="{{ url_for('index', period='month') }}" class="{{ 'active' if period == 'month' }}">Shu oy</a>
+</div>
+{% if departments %}
+<form method="get" class="filter-form">
+    <input type="hidden" name="period" value="{{ period }}">
+    <label>Bo'lim
+        <select name="department" onchange="this.form.submit()">
+            <option value="">Barchasi</option>
+            {% for d in departments %}
+            <option value="{{ d }}" {% if d == selected_department %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</form>
+{% endif %}
+
+<p style="color:#5a6673; font-size:12px; margin-bottom: 14px;">
+    Davr: {{ start_date }} — {{ end_date }} · Jami hisoblangan kun-xodim yozuvlari: {{ stats.total_records }}
+</p>
+
+<h2>Kelish holati</h2>
+<div class="card">
+    <div class="bar-row">
+        <div class="bar-label">Vaqtidan oldin keldi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.arrival.erta_keldi.pct }}%; background:#2980b9;"></div></div>
+        <div class="bar-pct">{{ stats.arrival.erta_keldi.pct }}%</div>
+    </div>
+    <div class="bar-row">
+        <div class="bar-label">Vaqtida keldi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.arrival.vaqtida.pct }}%; background:#27ae60;"></div></div>
+        <div class="bar-pct">{{ stats.arrival.vaqtida.pct }}%</div>
+    </div>
+    <div class="bar-row">
+        <div class="bar-label">Kechikdi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.arrival.kechikdi.pct }}%; background:#e67e22;"></div></div>
+        <div class="bar-pct">{{ stats.arrival.kechikdi.pct }}%</div>
+    </div>
+    <div class="bar-row">
+        <div class="bar-label">Kelmadi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.arrival.kelmadi.pct }}%; background:#c0392b;"></div></div>
+        <div class="bar-pct">{{ stats.arrival.kelmadi.pct }}%</div>
+    </div>
+</div>
+
+<h2>Ketish holati</h2>
+<div class="card">
+    <div class="bar-row">
+        <div class="bar-label">Vaqtida ketdi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.departure.vaqtida_ketdi.pct }}%; background:#27ae60;"></div></div>
+        <div class="bar-pct">{{ stats.departure.vaqtida_ketdi.pct }}%</div>
+    </div>
+    <div class="bar-row">
+        <div class="bar-label">Erta ketdi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.departure.erta_ketdi.pct }}%; background:#e67e22;"></div></div>
+        <div class="bar-pct">{{ stats.departure.erta_ketdi.pct }}%</div>
+    </div>
+    <div class="bar-row">
+        <div class="bar-label">Ketish vaqtidan keyin ketdi</div>
+        <div class="bar-track"><div class="bar-fill" style="width:{{ stats.departure.kech_ketdi.pct }}%; background:#2980b9;"></div></div>
+        <div class="bar-pct">{{ stats.departure.kech_ketdi.pct }}%</div>
+    </div>
+</div>
+
+<div class="card-row">
+    <div class="stat-tile"><div class="num">{{ stats.arrival.kechikdi.count }}</div><div class="label">Kechikish holati (kun-xodim)</div></div>
+    <div class="stat-tile"><div class="num">{{ stats.arrival.kelmadi.count }}</div><div class="label">Kelmaslik holati (kun-xodim)</div></div>
+    <div class="stat-tile"><div class="num">{{ stats.arrival.erta_keldi.count }}</div><div class="label">Erta kelish holati (kun-xodim)</div></div>
+</div>
+{% endblock %}

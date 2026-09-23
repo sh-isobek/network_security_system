@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Davomat Dashboard{% endblock %}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #f4f6f8; color: #2c3e50; }
+        nav { background: #123524; padding: 0 24px; display: flex; align-items: center; height: 56px; }
+        nav a { color: #cfe8d8; text-decoration: none; padding: 0 16px; font-size: 14px; height: 56px; display: flex; align-items: center; }
+        nav a:hover, nav a.active { color: #fff; background: #1c4a33; }
+        nav .brand { font-weight: 700; color: #fff; padding-right: 24px; font-size: 15px; }
+        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 20px; margin-bottom: 16px; color: #123524; }
+        h2 { font-size: 15px; margin: 18px 0 10px; color: #123524; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 18px; }
+        th, td { text-align: left; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #eef1f3; }
+        th { background: #f8f9fb; font-weight: 600; color: #5a6673; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #fafbfc; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; color: #fff; }
+        .badge.green { background: #27ae60; }
+        .badge.orange { background: #e67e22; }
+        .badge.red { background: #c0392b; }
+        .badge.gray { background: #95a5a6; }
+        .badge.blue { background: #2980b9; }
+        .card { background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 16px 18px; margin-bottom: 16px; }
+        .card-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+        .stat-tile { flex: 1; min-width: 180px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 16px 18px; }
+        .stat-tile .num { font-size: 26px; font-weight: 700; color: #123524; }
+        .stat-tile .label { font-size: 12px; color: #5a6673; margin-top: 4px; }
+        .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .bar-label { width: 160px; font-size: 12px; color: #5a6673; }
+        .bar-track { flex: 1; height: 18px; background: #eef1f3; border-radius: 9px; overflow: hidden; }
+        .bar-fill { height: 100%; border-radius: 9px; }
+        .bar-pct { width: 60px; text-align: right; font-size: 12px; font-weight: 600; color: #123524; }
+        .filters { margin-bottom: 14px; }
+        .filters a { display: inline-block; padding: 5px 12px; margin-right: 6px; border-radius: 4px; background: #eef1f3; color: #5a6673; text-decoration: none; font-size: 12px; }
+        .filters a.active { background: #123524; color: #fff; }
+        .filter-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; background: #fff; padding: 12px 14px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .filter-form label { display: flex; flex-direction: column; font-size: 11px; color: #5a6673; gap: 4px; }
+        .filter-form input, .filter-form select { padding: 6px 8px; border: 1px solid #dde3e8; border-radius: 4px; font-size: 12px; min-width: 120px; }
+        .filter-form button { padding: 7px 14px; background: #123524; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 13px; }
+        .flash.success { background: #d4efdf; color: #196f3d; }
+        .flash.error { background: #fadbd8; color: #922b21; }
+        .empty { padding: 32px; text-align: center; color: #95a5a6; }
+        details.edit-box { margin-top: 6px; }
+        details.edit-box form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <nav>
+        <span class="brand">🕒 Davomat Monitoring</span>
+        <a href="/" class="{% if request.path == '/' %}active{% endif %}">Umumiy</a>
+        {% if current_user.is_authenticated and current_role in ('hr_admin', 'super_admin') %}
+        <a href="/employees" class="{% if request.path == '/employees' %}active{% endif %}">Xodimlar</a>
+        <a href="/reports" class="{% if request.path == '/reports' %}active{% endif %}">Oylik hisobotlar</a>
+        <a href="/penalties" class="{% if request.path == '/penalties' %}active{% endif %}">Ogohlantirish/Jarima</a>
+        {% endif %}
+        {% if current_user.is_authenticated and current_role == 'super_admin' %}
+        <a href="/users" class="{% if request.path == '/users' %}active{% endif %}">Foydalanuvchilar</a>
+        <a href="/audit" class="{% if request.path == '/audit' %}active{% endif %}">Audit Log</a>
+        {% endif %}
+        {% if current_user.is_authenticated %}
+        <span style="margin-left: auto; color: #cfe8d8; font-size: 12px; display: flex; align-items: center; gap: 10px;">
+            {{ current_user.username }} ({{ current_role }})
+            <a href="/logout" style="color: #f1948a;">Chiqish</a>
+        </span>
+        {% endif %}
+    </nav>
+    <main>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - Davomat Dashboard{% endblock %}
+{% block content %}
+<h1>Audit Log</h1>
+{% if not rows %}
+<div class="empty">Hozircha yozuv yo'q</div>
+{% else %}
+<table>
+    <tr><th>Vaqt</th><th>Foydalanuvchi</th><th>Rol</th><th>Amal</th><th>Nishon</th><th>Tafsilot</th><th>Natija</th></tr>
+    {% for r in rows %}
+    <tr>
+        <td>{{ r.timestamp | local_dt }}</td>
+        <td>{{ r.username }}</td>
+        <td>{{ r.role or '-' }}</td>
+        <td>{{ r.action }}</td>
+        <td>{% if r.target_type %}{{ r.target_type }}#{{ r.target_id }}{% else %}-{% endif %}</td>
+        <td>{{ r.details or '-' }}</td>
+        <td>{% if r.success %}<span class="badge green">OK</span>{% else %}<span class="badge red">Xato</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

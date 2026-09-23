@@ -98,6 +98,24 @@ DEVICE_STALE_HIDE_HOURS = int(os.getenv("DEVICE_STALE_HIDE_HOURS", "72"))
 # kunlar orasidagi alertlarni noto'g'ri ravishda birlashtirmaydi.
 CORRELATION_WINDOW_MINUTES = int(os.getenv("CORRELATION_WINDOW_MINUTES", "30"))
 
+# ---- Xodimlar Davomat platformasi (Face ID, Hikvision ISAPI) ----
+# MUHIM: HIKVISION_HOST/PORT/USER/PASSWORD bu yerda EMAS - loyihada
+# UniFi/Ruijie/threat-intel bilan bir xil naqsh: `attendance/
+# hikvision_client.py` ularni har chaqiruvda `os.getenv()` orqali
+# DINAMIK o'qiydi - bu "muhit o'zgaruvchisi modul import vaqtida
+# muzlab qolishi" xato turkumini oldini oladi (loyihada bir necha
+# marta uchragan, CLAUDE.md'da hujjatlashtirilgan xato).
+ATTENDANCE_SYNC_POLL_SECONDS = int(os.getenv("ATTENDANCE_SYNC_POLL_SECONDS", "60"))
+# Har kuni soat nechada kunlik hisobot (kechikish/kelmaslik) hisoblanib
+# Telegram/Email orqali yuborilsin (24 soatlik format, mahalliy vaqt -
+# TIMEZONE_OFFSET_HOURS bo'yicha).
+ATTENDANCE_REPORT_HOUR_LOCAL = int(os.getenv("ATTENDANCE_REPORT_HOUR_LOCAL", "9"))
+# Standart ish jadvali (WorkSchedule jadvalida yozuv bo'lmasa ishlatiladi)
+ATTENDANCE_DEFAULT_WORK_START = os.getenv("ATTENDANCE_DEFAULT_WORK_START", "09:00")
+ATTENDANCE_DEFAULT_WORK_END = os.getenv("ATTENDANCE_DEFAULT_WORK_END", "18:00")
+ATTENDANCE_DEFAULT_GRACE_LATE_MINUTES = int(os.getenv("ATTENDANCE_DEFAULT_GRACE_LATE_MINUTES", "5"))
+ATTENDANCE_DEFAULT_GRACE_EARLY_LEAVE_MINUTES = int(os.getenv("ATTENDANCE_DEFAULT_GRACE_EARLY_LEAVE_MINUTES", "5"))
+
 # ---- Threat Intelligence feed'lari (URLhaus/ThreatFox, abuse.ch) ----
 # Ikkalasi ham 2024'dan buyon bepul, lekin ro'yxatdan o'tib olinadigan
 # "Auth-Key" talab qiladi (https://auth.abuse.ch/). MUHIM: URLHAUS_AUTH_

@@ -147,6 +147,7 @@ python -m engine.notification_engine --loop
 | RBAC | `dashboard/auth.py`, `dashboard/create_user.py` | 3 rol (admin/analyst/viewer), sessiya-asosli login, parollar xeshlangan. Boshlang'ich foydalanuvchi: `python -m dashboard.create_user --username admin --password '...' --role admin` |
 | TLS + Ichki CA / mTLS | `deploy/pki/`, `deploy/nginx/` | Agent API/Dashboard endi `nginx` orqali HTTPS - ichki CA, ixtiyoriy client-sertifikat (mTLS) - `docs_TLS_SETUP.md` |
 | Ruijie Cloud Discovery | `network_discovery/ruijie_discovery.py` | Reyee/RG switch/AP'larga ulangan klientlar - `python -m network_discovery.asset_inventory --ruijie-only` - `docs_RUIJIE_CLOUD_SETUP.md` |
+| Xodimlar Davomat Monitoring (Face ID) | `attendance/` | MUSTAQIL subtizim - Hikvision DS-K1T342MFWX (ISAPI) orqali kelish/ketish, kechikish/kelmaslik hisoblash, Telegram+Email kunlik hisobot, RBAC (super_admin/hr_admin/viewer) Dashboard (port 8090) - `docs_ATTENDANCE_SETUP.md` |
 
 ## Rasmiy hujjatlar
 

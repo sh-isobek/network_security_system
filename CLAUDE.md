@@ -3574,3 +3574,102 @@ python -m reports.report_generator --period-days 7 --format csv,json,pdf,excel
 To'liq hujjatlar: `README.md` va `docs_*.md` fayllarga qarang (har bir
 katta qism uchun alohida yo'riqnoma bor: SURICATA, WINDOWS_AGENT,
 LINUX_AGENT, MAC_AGENT, DOCKER_DEPLOYMENT, NXLOG_SETUP).
+
+## YANGI SUBTIZIM: Xodimlar Davomat Monitoring Platformasi (`attendance/`)
+
+Foydalanuvchi asosiy tarmoq xavfsizligi domenidan BUTUNLAY MUSTAQIL
+yangi talab qo'ydi: Hikvision Face ID terminali (DS-K1T342MFWX,
+`194.93.24.92:88`) orqali xodimlarning kelish/ketish vaqtini
+kuzatuvchi, kechikish/kelmaslikni Telegram+Email orqali avtomatik
+xabar qiluvchi, RBAC (super_admin/hr_admin/viewer) bilan himoyalangan
+Dashboard. Loyihaning "bir bosqichni to'liq test qilib, keyin
+o'tish" qoidasiga muvofiq, BUTUN subtizim bitta sessiyada, real
+test bilan qurildi (`attendance/` — asosiy `db/models.py`dan
+MUSTAQIL, o'z `attn_*` jadvallari bilan, lekin bir xil `DATABASE_URL`).
+
+**MUHIM, HALOL CHEKLOV**: sandbox'dan `194.93.24.92:88`ga tarmoq
+ulanishi YO'Q (`curl` 8 soniyada timeout berdi — DNS/routing emas,
+sandbox tarmoq siyosati). Shuning uchun `attendance/hikvision_
+client.py` rasmiy Hikvision ISAPI formatiga (deviceInfo, AcsEvent
+qidiruv — `searchResultPosition`/`responseStatusStrg` bilan sahifalab
+olish) mos yozilgan, va **lokal, soxta ISAPI serveri** orqali —
+HAQIQIY HTTP Digest Auth (HA1/HA2/response hisoblash, noto'g'ri
+parolni RAD ETISH bilan) va HAQIQIY ko'p-sahifali javob bilan — test
+qilingan (loyihada UniFi/Ruijie integratsiyalarida ilgari qo'llanilgan
+pattern). Haqiqiy qurilmaga qarshi bir martalik tasdiqlash
+foydalanuvchi tarmog'idan (`docs_ATTENDANCE_SETUP.md`ning 9-bo'limi)
+qilinishi kerak — bu hali BAJARILMAGAN.
+
+**Qurilgan**:
+- `attendance/models.py` — `Employee` (terminal `employeeNoString`
+  bilan bog'lanadi), `AttendanceEvent` (xom hodisa, `device_event_id`
+  UNIQUE — dublikatni oldini oladi), `WorkSchedule`, `DailyAttendance`
+  (kunlik yakuniy status), `AttendanceUser`/`AttendanceAuditLog`
+  (RBAC), `Penalty`, `DailyReportLog` (hisobot idempotentligi).
+- `attendance/hikvision_client.py` — ISAPI mijozi (Digest Auth,
+  sahifalab AcsEvent qidiruv). `get_client_from_env()` muhit
+  o'zgaruvchilarini HAR CHAQIRUVDA dinamik o'qiydi (loyihada bir necha
+  marta uchragan "muzlab qolgan muhit o'zgaruvchisi" xato turkumini
+  oldindan oldini olish uchun — CLAUDE.md'da UniFi/Ruijie/ad_
+  discovery.py bilan bog'liq hujjatlashtirilgan saboq).
+- `attendance/sync_engine.py` (`run_once()`/`run_loop()`) — qurilmadan
+  hodisalarni tortib, `attn_sync_state`da saqlangan kursor (oxirgi
+  sinxronlangan vaqt) orqali faqat YANGI oraliqni so'raydi. Noma'lum
+  `employeeNoString` uchun Xodim avtomatik yaratiladi (F.I.Sh keyinroq
+  HR tomonidan to'ldiriladi).
+- `attendance/calculator.py` — har kun/xodim uchun kunning BIRINCHI
+  hodisasi = kelish, OXIRGI = ketish (HALOL CHEKLOV: terminalning o'zi
+  hozircha kirish/chiqishni ajratmaydi — `docs_ATTENDANCE_SETUP.md`
+  6-bo'lim). Status: `erta_keldi`/`vaqtida`/`kechikdi`/`kelmadi`
+  (kelish), `vaqtida_ketdi`/`erta_ketdi`/`kech_ketdi` (ketish) —
+  `WorkSchedule` (ish boshlanish/tugash + imtiyoz daqiqasi) asosida.
+- `attendance/report_engine.py` — kunlik (standart: ertalab soat 9da,
+  mahalliy vaqt) Telegram+Email hisobot, kechagi kechikish/kelmaslik
+  ro'yxati bilan. **Loyihaning o'z Telegram xatosidan saboq**: xabar
+  HECH QACHON `parse_mode="Markdown"` bilan yuborilmaydi (xodim
+  ismidagi maxsus belgilar "can't parse entities" xatosiga olib
+  kelishi mumkin edi — CLAUDE.md'dagi 7-bosqich yozuviga qarang).
+  `attn_daily_report_log` orqali BIR KUNGA BIR MARTA (idempotent).
+- `attendance/dashboard/app.py` — Flask + flask-login, asosiy
+  Dashboard bilan bir xil CSRF/sessiya pattern'i, LEKIN mustaqil
+  `AttendanceUser`/login (asosiy tizimning admin/analyst/viewer
+  rollari bilan ARALASHTIRILMAYDI). 3 rol: `viewer` (FAQAT bosh
+  sahifa — kelish/ketish % va CSS-asosli diagrammalar, tashqi
+  kutubxonasiz), `hr_admin` (xodim tahrirlash/oylik hisobot/
+  ogohlantirish-jarima — lekin qo'shish/o'chirish ANIQ TAQIQLANGAN,
+  foydalanuvchining o'z talabi), `super_admin` (hammasi + Foydalanuv-
+  chilar + Audit Log). Har bir muhim amal `attn_audit_log`ga
+  username+rol bilan yoziladi.
+- `docker-compose.yml`: yangi `attendance_sync`/`attendance_
+  calculator`/`attendance_report`/`attendance_dashboard` (port 8090)
+  xizmatlari — mavjud xizmatlar bilan bir xil xavfsizlik naqshi
+  (`no-new-privileges`, `mem_limit`).
+- `docs_ATTENDANCE_SETUP.md` — to'liq o'rnatish/sozlash qo'llanmasi.
+
+**Real test qilingan (`attendance/run_attendance_test.py`, 17/17,
+HAM SQLite'da HAM vaqtinchalik PostgreSQL konteynerida)** — asosiy
+`run_full_test.py`ga QO'SHILMADI (mustaqil domen, ataylab alohida
+fayl): (1) Hikvision mijozi — real Digest Auth (deviceInfo), noto'g'ri
+parol RAD ETILISHI, 45 ta hodisani (30tadan ortiq, MAJBURIY 2+
+sahifali `responseStatusStrg=MORE` javob orqali) to'g'ri yig'ib olish;
+(2) Sync Engine — birinchi ishga tushirishda 45 ta hodisa + xodimlar
+avtomatik yaratilishi, ikkinchi chaqiruvda 0 ta (dublikat YO'Q,
+`device_event_id` UNIQUE orqali); (3) Kalkulyator — barcha 4 holat
+(kechikish+kech ketish, erta kelish+erta ketish, hodisasiz=kelmadi,
+`run_once()` barcha faol xodimlarni qamrab olishi) aniq daqiqa
+hisobi bilan; (4) Statistika — % taqsimoti 100%ga yig'ilishi;
+(5) Kunlik hisobot — Telegram+Email MOCK orqali chaqirilishi VA
+ikkinchi chaqiruvda TAKRORLANMASLIGI (idempotentlik); (6) RBAC —
+real HTTP orqali barcha 3 rol: viewer BOSHQA sahifalarga (403),
+hr_admin xodim qo'shish/o'chirishga (403, DB HAQIQATAN o'zgarmasligi
+tekshirilgan holda) kira OLMASLIGI, super_admin hammasini bajara
+OLISHI, va Audit Log FAQAT super_admin'ga ko'rinishi + rollarning
+haqiqiy amallarini qayd etishi.
+
+**Ataylab bu bosqichda QILINMAGAN (halol, keyingi ish)**: haqiqiy
+qurilmaga qarshi live tasdiqlash (yuqoridagi cheklovga qarang);
+terminalning `attendanceStatus` (agar mavjud/yoqilgan bo'lsa) orqali
+kirish/chiqishni aniqroq ajratish; xodim rasmi (`pictureURL`)ni
+Dashboard'da ko'rsatish; oylik hisobotni PDF/Excel qilib eksport
+qilish (hozircha faqat HTML jadval); haftalik/oylik trend grafigi
+(hozircha faqat joriy davr % taqsimoti).

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Ogohlantirish/Jarima - Davomat Dashboard{% endblock %}
+{% block content %}
+<h1>Ogohlantirish / Jarima</h1>
+
+<div class="card">
+    <h2 style="margin-top:0;">Yangi belgilash</h2>
+    <form method="post" action="{{ url_for('penalty_add') }}" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label style="font-size:11px; color:#5a6673;">Xodim<br>
+            <select name="employee_id" required style="padding:6px; border:1px solid #dde3e8; border-radius:4px;">
+                {% for e in employees %}
+                <option value="{{ e.id }}">{{ e.full_name }} ({{ e.employee_no }})</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label style="font-size:11px; color:#5a6673;">Turi<br>
+            <select name="penalty_type" style="padding:6px; border:1px solid #dde3e8; border-radius:4px;">
+                <option value="ogohlantirish">Ogohlantirish</option>
+                <option value="jarima">Jarima</option>
+            </select>
+        </label>
+        <label style="font-size:11px; color:#5a6673;">Summa (faqat jarima)<br>
+            <input type="number" step="0.01" name="amount" style="padding:6px; border:1px solid #dde3e8; border-radius:4px; width:120px;"></label>
+        <label style="font-size:11px; color:#5a6673;">Sabab<br>
+            <input type="text" name="reason" style="padding:6px; border:1px solid #dde3e8; border-radius:4px; min-width:220px;"></label>
+        <button type="submit">Belgilash</button>
+    </form>
+</div>
+
+{% if not penalties %}
+<div class="empty">Hozircha ogohlantirish/jarima yo'q</div>
+{% else %}
+<table>
+    <tr><th>Sana</th><th>Xodim</th><th>Turi</th><th>Summa</th><th>Sabab</th><th>Kim belgiladi</th></tr>
+    {% for p in penalties %}
+    <tr>
+        <td>{{ p.issued_at | local_dt }}</td>
+        <td>{{ p.employee.full_name if p.employee else '-' }}</td>
+        <td>{% if p.penalty_type == 'jarima' %}<span class="badge red">Jarima</span>{% else %}<span class="badge orange">Ogohlantirish</span>{% endif %}</td>
+        <td>{{ p.amount if p.amount else '-' }}</td>
+        <td>{{ p.reason or '-' }}</td>
+        <td>{{ p.issued_by }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
