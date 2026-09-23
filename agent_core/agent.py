@@ -253,6 +253,7 @@ def check_hash_with_server_or_cache(sha256: str, cache: dict, filename: str = No
                 "heuristic_score": heuristic.get("score"),
                 "heuristic_findings": heuristic.get("findings"),
                 "heuristic_verdict": heuristic.get("verdict_hint"),
+                "trusted_signature": heuristic.get("trusted_signature", False),
             },
             headers={"X-API-Key": AGENT_API_KEY},
             timeout=API_TIMEOUT,

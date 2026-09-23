@@ -9107,6 +9107,153 @@ def _test_agent_ip_and_username_in_alert():
 
 check("Alert: agentning haqiqiy IP'i (server yo'li orqali) va matnida foydalanuvchi nomi", _test_agent_ip_and_username_in_alert)
 
+print("\n=== 119) Windows Authenticode: haqiqiy imzo tasdiqlash - 'noma'lum' hech qachon qolmasin ===")
+
+
+def _test_authenticode_verification():
+    """
+    Foydalanuvchi so'rovi: "tekshiruv natijasi hech qachon noma'lum qolmasligi kerak". Agent
+    BARCHA disklarni kuzatgandan beri, ko'p Windows tizim fayli (Microsoft.PowerShell.*.dll va
+    h.k.) hash-intel'da UMUMAN yo'q edi. Endi Windows Authenticode (WinVerifyTrust) orqali
+    HAQIQIY tasdiqlangan Microsoft imzosi - "clean, tasdiqlangan" beradi (tarmoqsiz, darhol).
+    Tampering (HashMismatch) esa - deterministik "malicious" (soxta-pozitiv xavfi juda past).
+    """
+    import platform as _platform
+    from unittest.mock import patch, MagicMock
+    import scanners.authenticode_windows as av
+    import scanners.heuristic_analyzer as ha
+    import api.server as api_server
+
+    # 1) verify_authenticode(): faqat Windows'da ishlaydi
+    with patch.object(_platform, "system", return_value="Linux"):
+        pass  # (haqiqiy platform.system() ni bu yerda o'zgartirib bo'lmaydi - modul ichida chaqiriladi)
+    with patch("scanners.authenticode_windows.platform.system", return_value="Linux"):
+        assert av.verify_authenticode("/tmp/x") is None
+
+    def _fake_run(stdout):
+        m = MagicMock()
+        m.stdout = stdout
+        return m
+
+    with patch("scanners.authenticode_windows.platform.system", return_value="Windows"), \
+         patch("scanners.authenticode_windows.subprocess.run",
+               return_value=_fake_run("Valid|CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US")):
+        sig = av.verify_authenticode("C:\\Windows\\notepad.exe")
+        assert sig["status"] == "Valid" and sig["trusted_publisher"] is True, sig
+
+    with patch("scanners.authenticode_windows.platform.system", return_value="Windows"), \
+         patch("scanners.authenticode_windows.subprocess.run",
+               return_value=_fake_run("Valid|CN=Some Random Vendor LLC, O=Some Random Vendor, C=US")):
+        sig = av.verify_authenticode("C:\\x.exe")
+        assert sig["status"] == "Valid" and sig["trusted_publisher"] is False, "faqat Microsoft ishonchli deb belgilanishi kerak"
+
+    with patch("scanners.authenticode_windows.platform.system", return_value="Windows"), \
+         patch("scanners.authenticode_windows.subprocess.run", return_value=_fake_run("HashMismatch|CN=Microsoft Windows")):
+        sig = av.verify_authenticode("C:\\x.exe")
+        assert sig["status"] == "HashMismatch" and sig["trusted_publisher"] is False
+
+    with patch("scanners.authenticode_windows.platform.system", return_value="Windows"), \
+         patch("scanners.authenticode_windows.subprocess.run", return_value=_fake_run("UnknownError|")):
+        sig = av.verify_authenticode("C:\\x.txt")
+        assert sig["status"] == "UnknownError" and sig["trusted_publisher"] is False
+
+    # 2) analyze_file(): trusted Microsoft imzosi -> 'clean', score=0, boshqa yumshoq signallar bekor qilinadi
+    import tempfile, os as _os
+    code = bytes(range(256)) * 16
+    pe_bytes = _build_pe([(".text", code, 0x60000020)],
+                        imports=["VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "OpenProcess", "CloseHandle", "GetLastError", "ExitProcess"])
+    d = tempfile.mkdtemp(prefix="nsa_auth_")
+    path = _os.path.join(d, "tool.exe")
+    open(path, "wb").write(pe_bytes)
+
+    with patch.object(ha, "verify_authenticode", return_value={"status": "Valid", "publisher": "CN=Microsoft Windows", "trusted_publisher": True}):
+        r = ha.analyze_file(path, filename="tool.exe")
+    assert r["verdict_hint"] == "clean" and r["trusted_signature"] is True and r["score"] == 0, (
+        f"Microsoft imzosi tasdiqlangan bo'lsa, boshqa (masalan injection API) signallar bekor qilinishi kerak edi: {r}"
+    )
+    assert any("Authenticode" in f for f in r["findings"])
+
+    # imzo YO'Q (verify_authenticode None qaytaradi - masalan Linux'da) -> avvalgi xatti-harakat
+    # o'zgarmaydi (regressiya himoyasi): xuddi shu fayl endi 'suspicious' (injection API kombosi)
+    with patch.object(ha, "verify_authenticode", return_value=None):
+        r2 = ha.analyze_file(path, filename="tool.exe")
+    assert r2["verdict_hint"] == "suspicious" and r2.get("trusted_signature") is False, r2
+
+    # imzo BUZILGAN (HashMismatch) -> deterministik 'malicious', imzo yo'qligidan ham qattiqroq
+    with patch.object(ha, "verify_authenticode", return_value={"status": "HashMismatch", "publisher": "CN=Microsoft Windows", "trusted_publisher": False}):
+        r3 = ha.analyze_file(path, filename="tool.exe")
+    assert r3["verdict_hint"] == "malicious" and r3["score"] == 100, r3
+    _os.remove(path)
+
+    # 3) check_hash(): trusted_signature=True -> 'unknown' o'rniga 'clean', upload_required=False
+    api_server.AGENT_API_KEY = "test-key-auth"
+    c = api_server.app.test_client(); h = {"X-API-Key": "test-key-auth"}
+    s = get_session()
+    s.add(Device(ip_address="172.16.202.1", hostname="SYS-PC", source="test")); s.commit(); s.close()
+    import hashlib
+    sha = hashlib.sha256(b"microsoft_signed_system_dll_test").hexdigest()
+    with patch.object(api_server, "vt_slot_busy", return_value=False), \
+         patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        resp = c.post("/api/v1/check_hash", json={
+            "sha256": sha, "filename": "Microsoft.PowerShell.Utility.dll",
+            "hostname": "SYS-PC", "ip_address": "172.16.202.1",
+            "heuristic_verdict": "clean", "trusted_signature": True,
+        }, headers=h).get_json()
+    assert resp["upload_required"] is False, resp
+    s = get_session()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == sha).first()
+    assert fe is not None and fe.verdict == "clean", f"trusted_signature=True bo'lsa 'unknown' emas 'clean' bo'lishi kerak edi: {fe.verdict if fe else None}"
+    s.close()
+
+    # trusted_signature=False (standart) - eski xatti-harakat o'zgarmaydi (regressiya himoyasi)
+    sha2 = hashlib.sha256(b"no_signature_info_test_file").hexdigest()
+    with patch.object(api_server, "vt_slot_busy", return_value=False), \
+         patch.object(api_server, "check_virustotal", return_value=None), \
+         patch.object(api_server, "check_malwarebazaar", return_value=None):
+        resp2 = c.post("/api/v1/check_hash", json={
+            "sha256": sha2, "filename": "unknown.bin", "hostname": "SYS-PC", "ip_address": "172.16.202.1",
+        }, headers=h).get_json()
+    assert resp2["upload_required"] is True
+    s = get_session()
+    fe2 = s.query(FileEvent).filter(FileEvent.sha256 == sha2).first()
+    assert fe2.verdict == "unknown"
+    s.close()
+
+
+check("Windows Authenticode: haqiqiy imzo tasdiqlash - 'unknown' hech qachon qolmasligi kerak bo'lgan holatlar", _test_authenticode_verification)
+
+print("\n=== 120) scan_file: chegara (rate limit) endi 6/daqiqadan yuqori - real HTTP orqali (production bo'shlig'i tuzatilgan) ===")
+
+
+def _test_scan_file_rate_limit_raised():
+    """
+    Real production'da topilgan xato: agent BARCHA disklarni kuzatgani uchun minglab "noma'lum"
+    fayl `upload_required=True` olgan, lekin `/api/v1/scan_file`ning eski "6 per minute"
+    chegarasi DARHOL to'lib, HAR BIR keyingi urinish 429 bilan rad etilgan - shu sabab
+    production bazasida `checked_sources`da "upload"/"server_upload_scan" manbasi HECH QACHON
+    ko'rinmagan (27 000+ "noma'lum" fayl, 0 ta yuklab-tekshirilgan). Bu test 7 marta ketma-ket
+    (bir daqiqa ichida, eski chegaradan BITTA ko'p) real HTTP so'rov yuborib, HECH BIRI 429
+    qaytarmasligini tasdiqlaydi.
+    """
+    import hashlib
+    import api.server as api_server
+    api_server.AGENT_API_KEY = "test-key-scanfile-ratelimit"
+    c = api_server.app.test_client()
+    statuses = []
+    for i in range(7):
+        content = f"clean test content number {i}".encode()
+        sha = hashlib.sha256(content).hexdigest()
+        r = c.post("/api/v1/scan_file", data=content, content_type="application/octet-stream",
+                  headers={"X-API-Key": "test-key-scanfile-ratelimit", "X-File-SHA256": sha,
+                           "X-File-Name": f"f{i}.txt", "X-Agent-Hostname": "RATELIMIT-TEST"})
+        statuses.append(r.status_code)
+    assert 429 not in statuses, f"7 martalik so'rovning bittasi ham 429 bo'lmasligi kerak edi (eski chegara 6/daq edi): {statuses}"
+    assert all(s == 200 for s in statuses), statuses
+
+
+check("scan_file: chegara 6/daqiqadan yuqori - real HTTP orqali (production bo'shlig'i tuzatilgan)", _test_scan_file_rate_limit_raised)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

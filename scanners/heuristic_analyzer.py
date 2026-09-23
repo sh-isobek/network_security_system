@@ -44,6 +44,7 @@ from typing import Optional
 
 from scanners.apk_analyzer import analyze_apk
 from scanners.pe_analyzer import analyze_pe
+from scanners.authenticode_windows import verify_authenticode
 from scanners.file_type_detector import (
     detect_magic_from_bytes,
     check_extension_mismatch,
@@ -228,6 +229,41 @@ def analyze_file(filepath: str, filename: Optional[str] = None) -> dict:
             signed = bool(pe.get("signed"))
             findings.extend(f for f in pe["findings"] if f not in findings)
             score = min(100, max(score, pe["score"]))
+
+    # 3c) Windows Authenticode - HAQIQIY tasdiqlash (Get-AuthenticodeSignature, WinVerifyTrust).
+    # Foydalanuvchi so'rovi: "tekshiruv natijasi hech qachon noma'lum qolmasligi kerak" - ko'p
+    # Windows tizim fayli (endi agent BARCHA disklarni kuzatgani uchun) hash-intel bazasida
+    # UMUMAN yo'q (kam tarqalgan, noyob) - lekin Microsoft tomonidan imzolangan bo'lsa, buni
+    # DARHOL (tarmoqsiz) "toza, tasdiqlangan" deb belgilash mumkin. `pe_analyzer.py`ning
+    # "signed" bayrog'idan farqli - bu yerda imzo YAROQLILIGI (sertifikat zanjiri + fayl
+    # o'zgartirilmaganligi) HAQIQATAN tekshiriladi, faqat mavjudligi emas.
+    trusted_signature = False
+    if magic_label == "PE":
+        sig = verify_authenticode(filepath)
+        if sig is not None:
+            if sig["status"] == "HashMismatch":
+                # Imzolangan fayl KEYINCHALIK o'zgartirilgan - deyarli 100% zararlanish belgisi
+                # (soxta-pozitiv xavfi juda past, qonuniy dastur bunday holatga tushmaydi).
+                findings.append(
+                    f"Authenticode: imzo bilan fayl mos kelmaydi (HashMismatch) - imzolangandan "
+                    f"keyin o'zgartirilgan bo'lishi mumkin (imzolovchi: {sig.get('publisher') or 'nomalum'})"
+                )
+                return {"score": 100, "findings": findings, "verdict_hint": "malicious",
+                        "magic": magic_label, "signed": signed, "trusted_signature": False}
+            if sig["trusted_publisher"]:
+                trusted_signature = True
+                findings.append(f"Authenticode: imzo tasdiqlangan ({sig['publisher']})")
+
+    if trusted_signature:
+        # Haqiqiy tasdiqlangan Microsoft imzosi - yumshoq (statistik) signallarni (masalan
+        # ba'zi qonuniy tizim/administrator vositalarida uchraydigan API kombinatsiyalari)
+        # bekor qiladi. Yuqoridagi DETERMINISTIK tekshiruvlar (ikki kengaytma, PDF, APK) bu
+        # nuqtaga UMUMAN yetib kelmaydi (ular oldinroq, alohida return bilan tugaydi) - shuning
+        # uchun bu yerda "clean"ga qaytarish ularni chetlab o'tmaydi.
+        return {"score": 0, "findings": findings, "verdict_hint": "clean", "magic": magic_label,
+                "signed": signed, "trusted_signature": True}
+
     verdict_hint = "suspicious" if score >= SUSPICIOUS_SCORE_THRESHOLD else "clean"
 
-    return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label, "signed": signed}
+    return {"score": score, "findings": findings, "verdict_hint": verdict_hint, "magic": magic_label,
+            "signed": signed, "trusted_signature": False}

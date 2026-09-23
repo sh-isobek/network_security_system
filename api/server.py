@@ -182,7 +182,14 @@ def health():
 
 
 @app.route("/api/v1/scan_file", methods=["POST"])
-@limiter.limit("6 per minute")
+# XAVFSIZLIK/UNUMDORLIK (real production'da topilgan xato): standart "6 per minute" agent
+# FAQAT Downloads/Desktop/Temp'ni kuzatgan davrda yozilgan edi (kamdan-kam yuklash). Agent
+# endi BARCHA disklarni kuzatgani uchun (minglab tizim fayli "noma'lum" bo'lib, yuklash
+# so'raladi) - bu chegara DARHOL to'lib, HAR BIR urinish 429 bilan rad etilardi (production
+# loglarida tasdiqlandi: `scan_file_upload` soatiga o'nlab marta chegaradan oshgan, natijada
+# `checked_sources`da "upload"/"server_upload_scan" MANBASI HECH QACHON, BIRON MARTA
+# ko'rinmagan - butun fayl-yuklash orqali chuqur tekshirish funksiyasi amalda ISHLAMAGAN).
+@limiter.limit(os.getenv("API_RATE_LIMIT_SCAN_FILE", "60 per minute"))
 @require_api_key
 def scan_file_upload():
     """Raw file bytes, authenticated before reading. No persistent sample copy."""
@@ -447,7 +454,15 @@ def check_hash():
             return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None,
                             "upload_required": True})
 
-        final_verdict = "clean" if vt_scanned_clean else "unknown"
+        # MUHIM (foydalanuvchi so'rovi: "tekshiruv natijasi hech qachon noma'lum qolmasligi
+        # kerak"): VT hashni HAQIQATAN tekshirib toza deb topgani (`vt_scanned_clean`) YOKI
+        # agent Windows Authenticode orqali HAQIQIY tasdiqlangan Microsoft imzosini topgani
+        # (`trusted_signature` - `scanners/authenticode_windows.py`, WinVerifyTrust) - ikkalasi
+        # ham "unknown" o'rniga "clean" berish uchun YETARLI DALIL. Bu ayniqsa agent BARCHA
+        # disklarni kuzatgandan beri (kam tarqalgan Windows tizim fayllari hash-intel'da
+        # UMUMAN yo'q) muhim - ular endi tarmoqsiz, darhol "toza, tasdiqlangan" bo'ladi.
+        trusted_signature = bool(data.get("trusted_signature"))
+        final_verdict = "clean" if (vt_scanned_clean or trusted_signature) else "unknown"
         _log_endpoint_scan(session, data, sha256, final_verdict, 0, None, None)
         if vt_deferred and final_verdict == "unknown":
             # VT slot band edi (bepul tarif) - fon `file_analysis_engine` o'z sur'ati bilan tekshiradi
@@ -458,7 +473,7 @@ def check_hash():
                 _fe.checked = False
         session.commit()
         return jsonify({"malicious": False, "confirmed": False, "threat_name": None, "source": None,
-                        "upload_required": not vt_scanned_clean or heuristic_verdict in ("suspicious", "malicious")})
+                        "upload_required": final_verdict == "unknown" or heuristic_verdict in ("suspicious", "malicious")})
     finally:
         session.close()
 
