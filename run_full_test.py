@@ -7666,11 +7666,14 @@ print("\n=== 99) Dashboard: /incidents ro'yxati, tafsilot sahifasi va holat yang
 
 def _test_incidents_dashboard():
     """
-    `/incidents` (ro'yxat), `/incidents/<id>` (tafsilot - bog'liq
-    alertlar bilan) va `/incidents/<id>/status` (analyst/admin huquqi
-    bilan holat yangilash - resolved/false_positive belgilanganda
-    `resolved_by`/`resolved_at` to'ldirilishi) real HTTP orqali
-    tekshiriladi.
+    `/incidents` (ro'yxat) va `/incidents/<id>` (tafsilot - bog'liq
+    alertlar bilan) real HTTP orqali tekshiriladi. Status boshqaruvi
+    (Ochiq/Tekshirilmoqda/Yechildi/Soxta-pozitiv filtri va qo'lda
+    holat o'zgartirish) foydalanuvchi so'roviga ko'ra UI'dan olib
+    tashlandi - hodisalar endi shunchaki avtomatik qayd etilib
+    boriladigan log (Incident.status DB darajasida hali ham mavjud,
+    faqat correlation_engine.py ICHIDA guruhlash oynasi uchun
+    ishlatiladi - Dashboard'da ko'rsatilmaydi/boshqarilmaydi).
     """
     from db.models import Device, Alert, Incident, utcnow
     import engine.correlation_engine as ce
@@ -7704,25 +7707,21 @@ def _test_incidents_dashboard():
 
     html = client.get(f"/incidents/{incident_id}").get_data(as_text=True)
     assert "Shubhali PowerShell ijrosi (test)" in html, "Tafsilot sahifasida bog'liq alert ko'rinmadi"
+    assert "Holatni yangilash" not in html, "Status-yangilash formasi endi UI'da bo'lmasligi kerak edi"
+    assert "/status" not in html, "Status-yangilash havolasi/formasi endi UI'da bo'lmasligi kerak edi"
 
+    # /incidents/<id>/status POST endi mavjud emas - status boshqaruvi UI'dan olib tashlandi
     resp = client.post(f"/incidents/{incident_id}/status", data={"status": "resolved"})
-    assert resp.status_code in (200, 302)
+    assert resp.status_code == 404, "Status-yangilash route'i endi mavjud bo'lmasligi kerak edi"
 
-    s3 = get_session()
-    inc = s3.query(Incident).filter(Incident.id == incident_id).first()
-    assert inc.status == "resolved", f"status='resolved' bo'lishi kerak edi, bor: {inc.status}"
-    assert inc.resolved_by == "incidenttest_admin", "resolved_by to'g'ri o'rnatilmadi"
-    assert inc.resolved_at is not None, "resolved_at to'g'ri o'rnatilmadi"
-    s3.close()
-
-    # Ro'yxat sahifasida standart (status=open) filtr endi bu Incident'ni yashirishi kerak
-    html = client.get("/incidents?status=open").get_data(as_text=True)
-    assert "INCIDENT-DASH-TEST" not in html, "Yechilgan Incident 'Ochiq' filtrida ko'rinmasligi kerak edi"
-    html = client.get("/incidents?status=resolved").get_data(as_text=True)
-    assert "INCIDENT-DASH-TEST" in html, "Yechilgan Incident 'Yechildi' filtrida ko'rinishi kerak edi"
+    # Severity/hostname filtrlari status'siz ham to'g'ri ishlashi kerak
+    html = client.get("/incidents?severity=high&hostname=INCIDENT-DASH-TEST").get_data(as_text=True)
+    assert "INCIDENT-DASH-TEST" in html, "Severity+hostname filtri bilan Incident ko'rinishi kerak edi"
+    html = client.get("/incidents?severity=low").get_data(as_text=True)
+    assert "INCIDENT-DASH-TEST" not in html, "Mos kelmagan severity filtri Incident'ni yashirishi kerak edi"
 
 
-check("Dashboard: /incidents ro'yxati/tafsilot/holat yangilash real HTTP orqali", _test_incidents_dashboard)
+check("Dashboard: /incidents ro'yxati/tafsilot (status boshqaruvisiz, oddiy log) real HTTP orqali", _test_incidents_dashboard)
 
 # ---------------------------------------------------------------------------
 print("\n=== 100) Threat Intelligence: URLhaus/ThreatFox feed'laridan BlacklistEntry'ni avtomatik boyitish ===")
@@ -8855,12 +8854,14 @@ def _test_admin_file_decisions():
         assert c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "172.16.197.51", "filename": "AnyDesk.exe", "sha256": sha,
                    "awaiting_admin": True}, headers=h).get_json()["status"] == "duplicate"
 
-        # 2) Dashboard: tugmalar faqat virus deb topilganda; 'virus emas' -> qaror saqlanadi
+        # 2) Dashboard: tugmalar virus VA shubhali deb topilganda; 'virus emas' -> qaror saqlanadi
         s = get_session()
         fe = FileEvent(src_ip="172.16.197.51", filename="AnyDesk.exe", sha256=sha, channel="endpoint_agent", verdict="malicious"); s.add(fe); s.commit()
         al = s.query(Alert).filter(Alert.reason.like(f"%SHA256={sha}%")).first(); al.file_event_id = fe.id
         clean_fe = FileEvent(src_ip="172.16.197.51", filename="ok.txt", sha256=hashlib.sha256(b"ok").hexdigest(), channel="endpoint_agent", verdict="clean")
-        s.add(clean_fe); s.commit(); s.close()
+        susp_sha = hashlib.sha256(b"suspicious_decision_file").hexdigest()
+        susp_fe = FileEvent(src_ip="172.16.197.51", filename="suspicious.dll", sha256=susp_sha, channel="endpoint_agent", verdict="suspicious")
+        s.add(clean_fe); s.add(susp_fe); s.commit(); s.close()
         cl = dash_app.test_client()
         with cl.session_transaction() as sess:
             sess["_user_id"] = "1"; sess["_fresh"] = True; sess["csrf_token"] = "tok"
@@ -8876,8 +8877,10 @@ def _test_admin_file_decisions():
         rows = files_page.split("<tr")
         ok_row = next(r for r in rows if "ok.txt" in r)
         any_row = next(r for r in rows if "AnyDesk.exe" in r)
+        susp_row = next(r for r in rows if "suspicious.dll" in r)
         assert "Virusni o'chirish" not in ok_row, "toza faylda tugma bo'lmasligi kerak"
         assert "Virusni o'chirish" in any_row, "virus deb topilgan faylda tugma bo'lishi kerak"
+        assert "Virusni o'chirish" in susp_row, "shubhali deb topilgan faylda ham admin tugmasi bo'lishi kerak"
         r = cl.post("/files/decision", data={"sha256": sha, "decision": "safe", "csrf_token": "tok"})
         assert r.status_code in (302, 303), r.status_code
         # 3) boshqa qurilma: shu hash endi toza, qora ro'yxat tozalandi
@@ -8900,7 +8903,7 @@ def _test_admin_file_decisions():
         os.environ["AGENT_AUTO_REMOVE"] = "confirmed"
 
 
-check("Admin qarori: avto-o'chirish yo'q, 'virus emas'/'virus' barcha qurilmalarda, tugmalar faqat virusda", _test_admin_file_decisions)
+check("Admin qarori: avto-o'chirish yo'q, 'virus emas'/'virus' barcha qurilmalarda, tugmalar virus VA shubhali fayllarda", _test_admin_file_decisions)
 
 print("\n=== 116) ClamAV: haqiqiy clamd daemon (INSTREAM) - EICAR/toza fayl, clamscan CLI'ga zaxira, real deep-scan zanjiri ===")
 

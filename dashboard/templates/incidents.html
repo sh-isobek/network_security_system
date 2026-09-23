@@ -6,16 +6,7 @@
     Bir xil qurilmada, qisqa vaqt oralig'ida kelgan alohida alertlar avtomatik bitta hodisaga birlashtiriladi.
 </p>
 
-<div class="filters">
-    <a href="/incidents?status=open" class="{% if status_filter == 'open' %}active{% endif %}">Ochiq</a>
-    <a href="/incidents?status=investigating" class="{% if status_filter == 'investigating' %}active{% endif %}">Tekshirilmoqda</a>
-    <a href="/incidents?status=resolved" class="{% if status_filter == 'resolved' %}active{% endif %}">Yechildi</a>
-    <a href="/incidents?status=false_positive" class="{% if status_filter == 'false_positive' %}active{% endif %}">Soxta-pozitiv</a>
-    <a href="/incidents?status=" class="{% if not status_filter %}active{% endif %}">Hammasi</a>
-</div>
-
 <form method="GET" action="/incidents" class="filter-form">
-    <input type="hidden" name="status" value="{{ status_filter }}">
     <label>Hostname
         <input type="text" name="hostname" value="{{ hostname_filter }}">
     </label>
@@ -36,7 +27,7 @@
 <table>
     <tr>
         <th>Daraja</th><th>Sarlavha</th><th>Qurilma</th><th>Alertlar</th>
-        <th>Birinchi ko'rilgan</th><th>Oxirgi faollik</th><th>Holat</th>
+        <th>Birinchi ko'rilgan</th><th>Oxirgi faollik</th>
     </tr>
     {% for inc in incidents %}
     <tr>
@@ -46,12 +37,6 @@
         <td>{{ inc.alert_count }}</td>
         <td class="mono">{{ inc.first_seen | local_dt(fallback='') }}</td>
         <td class="mono">{{ inc.last_seen | local_dt(fallback='') }}</td>
-        <td>
-            {% if inc.status == 'open' %}<span style="color:#c0392b;">Ochiq</span>
-            {% elif inc.status == 'investigating' %}<span style="color:#e67e22;">Tekshirilmoqda</span>
-            {% elif inc.status == 'resolved' %}<span style="color:#27ae60;">Yechildi</span>
-            {% else %}<span style="color:#95a5a6;">Soxta-pozitiv</span>{% endif %}
-        </td>
     </tr>
     {% endfor %}
 </table>

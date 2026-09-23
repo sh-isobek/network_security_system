@@ -82,7 +82,7 @@
         <td>{{ f.threat_score }}</td>
         <td class="mono" style="font-size: 11px;">{{ (f.sha256 or '')[:16] }}...</td>
         <td class="mono">{{ f.checked_sources or '-' }}</td>
-        <td>{% if f.verdict in ('malicious',) or file_decisions.get(f.sha256) %}{{ decision_buttons(f.sha256, file_decisions.get(f.sha256)) }}{% else %}-{% endif %}</td>
+        <td>{% if f.verdict in ('malicious', 'suspicious') or file_decisions.get(f.sha256) %}{{ decision_buttons(f.sha256, file_decisions.get(f.sha256)) }}{% else %}-{% endif %}</td>
     </tr>
     {% endfor %}
 </table>

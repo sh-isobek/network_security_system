@@ -246,7 +246,6 @@ def index():
             "event_count": session.query(Event).count(),
             "agents_online": agents_online,
             "agents_offline": agents_installed - agents_online,
-            "open_incidents": session.query(Incident).filter(Incident.status == "open").count(),
         }
         recent_alerts = session.query(Alert).order_by(Alert.timestamp.desc()).limit(10).all()
         recent_alerts_data = [_alert_to_dict(session, a) for a in recent_alerts]
@@ -354,13 +353,10 @@ def acknowledge_alert(alert_id):
 def incidents():
     session = get_session()
     try:
-        status_filter = request.args.get("status", "open")
         severity_filter = request.args.get("severity", "")
         hostname_filter = request.args.get("hostname", "").strip()
 
         query = session.query(Incident)
-        if status_filter:
-            query = query.filter(Incident.status == status_filter)
         if severity_filter:
             query = query.filter(Incident.severity == severity_filter)
         if hostname_filter:
@@ -373,14 +369,14 @@ def incidents():
         for inc in all_incidents:
             device = session.query(Device).filter(Device.id == inc.device_id).first() if inc.device_id else None
             incidents_data.append({
-                "id": inc.id, "title": inc.title, "severity": inc.severity, "status": inc.status,
+                "id": inc.id, "title": inc.title, "severity": inc.severity,
                 "hostname": device.hostname if device else None,
                 "ip_address": device.ip_address if device else None,
                 "alert_count": inc.alert_count, "first_seen": inc.first_seen, "last_seen": inc.last_seen,
             })
         return render_template(
             "incidents.html", incidents=incidents_data,
-            status_filter=status_filter, severity_filter=severity_filter, hostname_filter=hostname_filter,
+            severity_filter=severity_filter, hostname_filter=hostname_filter,
         )
     finally:
         session.close()
@@ -404,41 +400,12 @@ def incident_detail(incident_id):
         alerts_data = [_alert_to_dict(session, a) for a in related_alerts]
         incident_data = {
             "id": incident.id, "title": incident.title, "severity": incident.severity,
-            "status": incident.status, "alert_count": incident.alert_count,
+            "alert_count": incident.alert_count,
             "first_seen": incident.first_seen, "last_seen": incident.last_seen,
             "hostname": device.hostname if device else None,
             "ip_address": device.ip_address if device else None,
-            "resolved_by": incident.resolved_by, "resolved_at": incident.resolved_at,
         }
         return render_template("incident_detail.html", incident=incident_data, alerts=alerts_data)
-    finally:
-        session.close()
-
-
-@app.route("/incidents/<int:incident_id>/status", methods=["POST"])
-@role_required("analyst")
-def update_incident_status(incident_id):
-    new_status = request.form.get("status", "")
-    if new_status not in {"open", "investigating", "resolved", "false_positive"}:
-        flash("Noto'g'ri holat qiymati", "error")
-        return redirect(url_for("incident_detail", incident_id=incident_id))
-
-    session = get_session()
-    try:
-        incident = session.query(Incident).filter(Incident.id == incident_id).first()
-        if incident:
-            incident.status = new_status
-            if new_status in {"resolved", "false_positive"}:
-                incident.resolved_by = current_user.username
-                incident.resolved_at = utcnow()
-            else:
-                incident.resolved_by = None
-                incident.resolved_at = None
-            session.commit()
-            flash(f"Incident #{incident_id} holati '{new_status}'ga o'zgartirildi", "success")
-            log_action(current_user.username, "update_incident_status", target_type="Incident",
-                       target_id=incident_id, ip_address=request.remote_addr, details=new_status)
-        return redirect(url_for("incident_detail", incident_id=incident_id))
     finally:
         session.close()
 

@@ -3,13 +3,7 @@
 {% block content %}
 <h1>Umumiy holat</h1>
 
-<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 14px;">
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <a href="/incidents?status=open" style="text-decoration: none; color: inherit;">
-        <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.open_incidents }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Ochiq hodisalar (Incident)</div>
-        </a>
-    </div>
+<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 14px;">
     <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <a href="/devices" style="text-decoration: none; color: inherit;">
         <div style="font-size: 26px; font-weight: 700;">{{ stats.device_count }}</div>

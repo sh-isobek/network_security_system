@@ -12,28 +12,6 @@
     <p><strong>Birinchi ko'rilgan:</strong> {{ incident.first_seen | local_dt(fallback='') }}</p>
     <p><strong>Oxirgi faollik:</strong> {{ incident.last_seen | local_dt(fallback='') }}</p>
     <p><strong>Jami alert:</strong> {{ incident.alert_count }}</p>
-    <p><strong>Holat:</strong>
-        {% if incident.status == 'open' %}<span style="color:#c0392b;">Ochiq</span>
-        {% elif incident.status == 'investigating' %}<span style="color:#e67e22;">Tekshirilmoqda</span>
-        {% elif incident.status == 'resolved' %}<span style="color:#27ae60;">Yechildi</span>
-        {% else %}<span style="color:#95a5a6;">Soxta-pozitiv</span>{% endif %}
-        {% if incident.resolved_by %}
-        <span style="color:#95a5a6; font-size:12px;">({{ incident.resolved_by }}, {{ incident.resolved_at | local_dt(fallback='') }})</span>
-        {% endif %}
-    </p>
-
-    {% if current_user.role in ('analyst', 'admin') %}
-    <form method="POST" action="/incidents/{{ incident.id }}/status" style="display:flex; gap:8px; align-items:center; margin-top:12px;">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <select name="status">
-            <option value="open" {% if incident.status == 'open' %}selected{% endif %}>Ochiq</option>
-            <option value="investigating" {% if incident.status == 'investigating' %}selected{% endif %}>Tekshirilmoqda</option>
-            <option value="resolved" {% if incident.status == 'resolved' %}selected{% endif %}>Yechildi</option>
-            <option value="false_positive" {% if incident.status == 'false_positive' %}selected{% endif %}>Soxta-pozitiv</option>
-        </select>
-        <button type="submit" style="padding:7px 14px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px;">Holatni yangilash</button>
-    </form>
-    {% endif %}
 </div>
 
 <h2>Bog'liq alertlar ({{ alerts | length }})</h2>
