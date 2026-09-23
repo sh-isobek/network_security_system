@@ -360,5 +360,32 @@ try {
 # --- 7) Versiyani belgilash (keyingi ishga tushishda idempotentlik uchun) ---
 Set-Content -Path (Join-Path $InstallDir "VERSION") -Value $availableVersion
 
+# --- 8) Watchdog: alohida Scheduled Task (foydalanuvchi so'rovi -
+#     "kompyuter qayta yoqilgandan keyin agent ulana olmasa, avtomatik
+#     qayta ulanishga harakat qilinsin"). ASOSIY agent xizmatidan
+#     MUSTAQIL - xizmat o'lik bo'lsa ham har 5 daqiqada ishlab, uni
+#     qayta ishga tushirishga urinadi. Watchdog-NetworkSecurityAgent.ps1
+#     yuqoridagi 3-bosqichda ($ServerShare\* -> $InstallDir) allaqachon
+#     nusxalangan bo'lishi kerak (release paketida mavjud bo'lsa). ---
+$watchdogInstalled = Join-Path $InstallDir "Watchdog-NetworkSecurityAgent.ps1"
+if (Test-Path $watchdogInstalled) {
+    try {
+        $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$watchdogInstalled`""
+        $wdTrigger1 = New-ScheduledTaskTrigger -AtStartup
+        $wdTrigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+        $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $wdSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        Register-ScheduledTask -TaskName "NSA-Agent-Watchdog" -Action $wdAction -Trigger @($wdTrigger1, $wdTrigger2) `
+            -Principal $wdPrincipal -Settings $wdSettings -Force | Out-Null
+        Start-ScheduledTask -TaskName "NSA-Agent-Watchdog"
+        Write-DeployLog "Watchdog vazifasi o'rnatildi/yangilandi (har 5 daqiqada tekshiradi): NSA-Agent-Watchdog"
+    } catch {
+        Write-DeployLog "OGOHLANTIRISH: Watchdog vazifasini ro'yxatga olishda xato (asosiy deploy muvaffaqiyatli, faqat watchdog ta'sirlandi): $_"
+    }
+} else {
+    Write-DeployLog "OGOHLANTIRISH: Watchdog-NetworkSecurityAgent.ps1 SYSVOL paketida topilmadi - watchdog vazifasi o'rnatilmadi (eski paket versiyasi bo'lishi mumkin)"
+}
+
 Write-DeployLog "✅ Deploy muvaffaqiyatli yakunlandi: versiya $availableVersion"
 exit 0

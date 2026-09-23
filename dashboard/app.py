@@ -521,6 +521,7 @@ def devices():
                 "agent_status": _agent_status(d.agent_last_heartbeat),
                 "agent_last_heartbeat": d.agent_last_heartbeat,
                 "agent_version": d.agent_version, "agent_os": d.agent_os,
+                "agent_restart_requested_at": d.agent_restart_requested_at,
             })
         return render_template(
             "devices.html", devices=devices_data, status_filter=status_filter,
@@ -532,6 +533,39 @@ def devices():
             has_alerts_filter=has_alerts_filter,
             show_stale=show_stale, stale_count=stale_count, stale_hide_hours=DEVICE_STALE_HIDE_HOURS,
         )
+    finally:
+        session.close()
+
+
+@app.route("/devices/<int:device_id>/request_agent_restart", methods=["POST"])
+@role_required("analyst")
+def request_agent_restart(device_id):
+    """
+    "Qayta ulanishga urinish" tugmasi (tarmoqda ONLAYN, lekin Endpoint
+    Agent OFFLAYN bo'lgan qurilmalar uchun - masalan kompyuter qayta
+    yoqilgandan keyin agent xizmati avtomatik boshlanmagan holat).
+
+    Serverning o'zi qurilmaga HECH QACHON ulanmaydi/buyruq yubormaydi -
+    bu shunchaki bir bayroqni (`Device.agent_restart_requested_at`)
+    o'rnatadi. Shu kompyuterda GPO orqali o'rnatilgan, ASOSIY agent
+    xizmatidan MUSTAQIL "watchdog" Scheduled Task (xizmat o'zi o'lik
+    bo'lsa ham har necha daqiqada ishlaydi) bu bayroqni o'zi so'rab
+    ko'radi (`/api/v1/agent_watchdog_check`) va True bo'lsa xizmatni
+    majburiy qayta ishga tushiradi.
+    """
+    session = get_session()
+    try:
+        device = session.query(Device).filter(Device.id == device_id).first()
+        if device is None:
+            abort(404)
+        device.agent_restart_requested_at = utcnow()
+        device.agent_restart_requested_by = current_user.username
+        session.commit()
+        log_action(current_user.username, "request_agent_restart", target_type="Device",
+                   target_id=device_id, details=device.hostname, ip_address=request.remote_addr)
+        flash(f"So'ralindi: {device.hostname or device.ip_address} - mahalliy watchdog vazifasi "
+              f"keyingi tekshiruvida (bir necha daqiqa ichida) xizmatni qayta ishga tushiradi.", "success")
+        return redirect(request.referrer or url_for("devices"))
     finally:
         session.close()
 

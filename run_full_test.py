@@ -9363,6 +9363,131 @@ def _test_scan_file_rate_limit_raised():
 check("scan_file: chegara 6/daqiqadan yuqori - real HTTP orqali (production bo'shlig'i tuzatilgan)", _test_scan_file_rate_limit_raised)
 
 # ---------------------------------------------------------------------------
+print("\n=== 121) Agent Watchdog: Dashboard 'qayta ulanishga urinish' tugmasi -> /api/v1/agent_watchdog_check bayrog'i (real HTTP+DB) ===")
+
+
+def _test_agent_watchdog_reconnect_button():
+    """
+    Foydalanuvchi so'rovi: tarmoqda ONLAYN, lekin Endpoint Agent OFFLAYN
+    (masalan kompyuter qayta yoqilgandan keyin agent xizmati avtomatik
+    boshlanmagan) qurilmalar uchun Dashboard'da "qayta ulanishga
+    urinish" tugmasi bo'lsin. Server hech qachon qurilmaga o'zi
+    ulanmaydi/buyruq yubormaydi (bu loyihaning ataylab tanlangan
+    xavfsizlik arxitekturasi) - shuning uchun tugma faqat bir bayroqni
+    (`Device.agent_restart_requested_at`) o'rnatadi, va har bir
+    kompyuterda GPO orqali o'rnatiladigan alohida "watchdog" Scheduled
+    Task (`Watchdog-NetworkSecurityAgent.ps1`, ASOSIY agent xizmatidan
+    MUSTAQIL) bu bayroqni o'zi so'rab (`/api/v1/agent_watchdog_check`)
+    ko'radi - True bo'lsa xizmatni majburiy qayta ishga tushiradi va
+    bayroq bir martalik iste'mol qilinadi (consume-once).
+    """
+    from datetime import timedelta
+    import api.server as api_server
+    from dashboard.app import app as dash_app
+    from dashboard.create_user import create_user
+
+    api_server.AGENT_API_KEY = "test-key-watchdog"
+    api_client = api_server.app.test_client()
+    h = {"X-API-Key": "test-key-watchdog"}
+
+    s = get_session()
+    d = Device(ip_address="172.16.203.51", mac_address="AA:BB:CC:WD:00:01",
+               hostname="WATCHDOG-TEST-PC", connection_type="wifi", source="test",
+               agent_last_heartbeat=utcnow() - timedelta(hours=3))
+    s.add(d)
+    s.commit()
+    device_id = d.id
+    s.close()
+
+    # 1) Bayroq o'rnatilmagan holatda - watchdog False olishi kerak
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
+
+    # 2) Noma'lum hostname ham xavfsiz False qaytarishi kerak (xato emas)
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "NOMALUM-HOST-XYZ"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
+
+    # 3) Dashboard: admin tugmani bosadi -> bayroq o'rnatiladi
+    create_user("watchdogtest_admin", "watchdogtestpass123", "admin")
+    dash_app.secret_key = "test-secret-watchdog-reconnect"
+    client = _dash_client(dash_app)
+    client.post("/login", data={"username": "watchdogtest_admin", "password": "watchdogtestpass123"})
+
+    page = client.get("/devices?hostname=WATCHDOG-TEST-PC").get_data(as_text=True)
+    assert "Qayta ulanishga urinish" in page, "OFFLAYN agent uchun tugma /devices sahifasida ko'rinishi kerak edi"
+
+    resp = client.post(f"/devices/{device_id}/request_agent_restart")
+    assert resp.status_code in (302, 303)
+
+    s2 = get_session()
+    dev = s2.query(Device).filter(Device.id == device_id).first()
+    assert dev.agent_restart_requested_at is not None, "tugma bayroqni o'rnatishi kerak edi"
+    assert dev.agent_restart_requested_by == "watchdogtest_admin"
+    s2.close()
+
+    # Endi tugma o'rniga "So'ralgan" ko'rinishi kerak (qayta-qayta so'rov yubormaslik uchun)
+    page2 = client.get("/devices?hostname=WATCHDOG-TEST-PC").get_data(as_text=True)
+    assert "So'ralgan" in page2 and "Qayta ulanishga urinish" not in page2.split("WATCHDOG-TEST-PC")[1][:600]
+
+    # Audit log'ga yozilganini tekshirish
+    from db.models import AuditLog
+    s3 = get_session()
+    audit = s3.query(AuditLog).filter(AuditLog.action == "request_agent_restart",
+                                       AuditLog.target_id == str(device_id)).first()
+    assert audit is not None and audit.username == "watchdogtest_admin"
+    s3.close()
+
+    # 4) Watchdog (kompyuterning o'zi) endi so'raganda True olishi VA bayroq consume-once o'chirilishi kerak
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["restart_requested"] is True, r.get_json()
+
+    s4 = get_session()
+    dev2 = s4.query(Device).filter(Device.id == device_id).first()
+    assert dev2.agent_restart_requested_at is None, "bayroq bir marta o'qilgandan keyin tozalanishi (consume-once) kerak edi"
+    s4.close()
+
+    # Qayta so'ralganda endi False (bayroq allaqachon iste'mol qilingan)
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
+
+
+check("Agent Watchdog: Dashboard 'qayta ulanishga urinish' tugmasi + /api/v1/agent_watchdog_check (consume-once)", _test_agent_watchdog_reconnect_button)
+
+print("\n=== 121b) Agent Watchdog: GPO skriptlari (Watchdog/Install/Deploy) va release workflow - statik tekshiruv ===")
+
+
+def _test_agent_watchdog_gpo_scripts_static():
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", "windows_agent_gpo")
+    watchdog = open(os.path.join(base, "Watchdog-NetworkSecurityAgent.ps1"), encoding="utf-8").read()
+    install = open(os.path.join(base, "Install-NetworkSecurityAgent.ps1"), encoding="utf-8").read()
+    deploy = open(os.path.join(base, "Deploy-NetworkSecurityAgent.ps1"), encoding="utf-8").read()
+    wf = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github", "workflows", "build-windows-agent.yml"), encoding="utf-8").read()
+
+    # Watchdog skripti: mahalliy tekshiruv (server'siz ham ishlashi) + server bayrog'i
+    assert "Get-Service" in watchdog and "Start-Service" in watchdog, (
+        "Watchdog mahalliy xizmat holatini tekshirib, kerak bo'lsa ishga tushirishi kerak"
+    )
+    assert "agent_watchdog_check" in watchdog and "Restart-Service" in watchdog, (
+        "Watchdog server bayrog'ini so'rab, True bo'lsa majburiy qayta ishga tushirishi kerak"
+    )
+    # Xavfsizlik: watchdog HECH QACHON kiruvchi ulanish/listener ochmasligi kerak (faqat chiquvchi so'rov)
+    assert "Invoke-RestMethod" in watchdog and "-Method Post" in watchdog
+
+    # Install/Deploy: ikkalasi ham NSA-Agent-Watchdog vazifasini ro'yxatga olishi kerak
+    for name, content in (("Install-NetworkSecurityAgent.ps1", install), ("Deploy-NetworkSecurityAgent.ps1", deploy)):
+        assert "Register-ScheduledTask" in content and "NSA-Agent-Watchdog" in content, (
+            f"{name} watchdog vazifasini ro'yxatga olishi kerak"
+        )
+        assert '"SYSTEM"' in content or "'SYSTEM'" in content, f"{name}: watchdog SYSTEM huquqi bilan ishlashi kerak"
+        assert content.count("{") == content.count("}"), f"{name}: muvozanatsiz jingalak qavslar"
+
+    assert "Watchdog-NetworkSecurityAgent.ps1" in wf, "Release paketiga (zip) watchdog skripti kiritilishi kerak"
+    assert watchdog.count("{") == watchdog.count("}")
+
+
+check("Agent Watchdog: GPO skriptlari (mahalliy+server tekshiruvi, Scheduled Task) va release paketi - statik", _test_agent_watchdog_gpo_scripts_static)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
 check("Uploaded samples are deleted on success and failure", run_upload_tests)

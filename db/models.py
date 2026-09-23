@@ -80,6 +80,20 @@ class Device(Base):
     agent_version = Column(String(50))                         # agentning o'zi bildirgan versiyasi
     agent_os = Column(String(20))                                # "windows" | "linux" | "mac"
 
+    # --- Agent watchdog: "qayta ulash" so'rovi (Dashboard tugmasi) ---
+    # Markazdan agentga to'g'ridan-to'g'ri buyruq YUBORILMAYDI (server
+    # hech qachon agentga push qilmaydi - xavfsizlik arxitekturasi).
+    # Buning o'rniga, har bir kompyuterda GPO orqali o'rnatilgan alohida
+    # "watchdog" Scheduled Task (agent xizmatidan MUSTAQIL, xizmat o'zi
+    # o'lik bo'lsa ham ishlaydi) bir necha daqiqada bu bayroqni
+    # (`/api/v1/agent_watchdog_check` orqali) so'raydi - True bo'lsa,
+    # xizmatni majburiy qayta ishga tushiradi. Shu bilan "server buyruq
+    # beradi, agent bajaradi" emas, "agent so'raydi, server javob beradi"
+    # naqshi saqlanadi (yagona kanal - hech qanday yangi masofaviy ijro
+    # imkoniyati qo'shilmaydi).
+    agent_restart_requested_at = Column(DateTime)
+    agent_restart_requested_by = Column(String(100))
+
     events = relationship("Event", back_populates="device")
 
 

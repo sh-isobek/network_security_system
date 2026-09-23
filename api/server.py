@@ -618,6 +618,45 @@ def agent_heartbeat():
         session.close()
 
 
+@app.route("/api/v1/agent_watchdog_check", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_WATCHDOG", "12 per minute"))
+@require_api_key
+def agent_watchdog_check():
+    """
+    Har bir kompyuterda GPO orqali o'rnatilgan, ASOSIY agent xizmatidan
+    MUSTAQIL "watchdog" Scheduled Task (`Watchdog-NetworkSecurityAgent.ps1`)
+    bir necha daqiqada shu endpoint'ni so'raydi: admin Dashboard'dan
+    "qayta ulanishga urinish" tugmasini bosgan bo'lsa, javobda
+    `restart_requested=true` qaytadi - watchdog shundan keyin xizmatni
+    MAJBURIY qayta ishga tushiradi (hozir "Running" ko'rinsa ham -
+    heartbeat osilib qolgan/zombi holatni ham qamrab oladi).
+
+    MUHIM (xavfsizlik): bu ATAYLAB faqat "so'rov-javob" (agent so'raydi,
+    server javob beradi) - server hech qachon o'z-o'zidan agentga
+    ulanmaydi/buyruq yubormaydi (bunday masofaviy ijro kanali bu
+    loyihada ATAYLAB YO'Q). Bayroq o'qilgach DARHOL tozalanadi
+    (consume-once) - aks holda xizmat har tsiklda qayta-qayta
+    o'chib-yonib turaverardi.
+    """
+    data = request.get_json(silent=True) or {}
+    hostname = data.get("hostname")
+    if not hostname:
+        return jsonify({"error": "hostname majburiy"}), 400
+
+    session = get_session()
+    try:
+        device = session.query(Device).filter(Device.hostname == hostname).first()
+        if device is None or device.agent_restart_requested_at is None:
+            return jsonify({"restart_requested": False})
+
+        device.agent_restart_requested_at = None
+        device.agent_restart_requested_by = None
+        session.commit()
+        return jsonify({"restart_requested": True})
+    finally:
+        session.close()
+
+
 @app.route("/api/v1/agent_enroll", methods=["POST"])
 @limiter.limit(os.getenv("API_RATE_LIMIT_ENROLL", "30 per minute"))
 @require_bootstrap_key

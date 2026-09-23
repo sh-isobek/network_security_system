@@ -103,6 +103,10 @@ if (Test-Path $versionSource) {
     Copy-Item -Path $versionSource -Destination $InstallDir -Force
     $installedVersion = (Get-Content $versionSource -Raw).Trim()
 }
+$watchdogSource = Join-Path $ScriptDir "Watchdog-NetworkSecurityAgent.ps1"
+if (Test-Path $watchdogSource) {
+    Copy-Item -Path $watchdogSource -Destination $InstallDir -Force
+}
 Write-Host "Fayllar nusxalandi: $InstallDir"
 
 # --- 4) Muhit o'zgaruvchilarini o'rnatish (agent shu orqali sozlamalarni o'qiydi) ---
@@ -131,4 +135,30 @@ if ($service -and $service.Status -eq "Running") {
     Write-Host "✅ Muvaffaqiyatli o'rnatildi va ishga tushdi: $ServiceName" -ForegroundColor Green
 } else {
     Write-Warning "Xizmat o'rnatildi, lekin holati noaniq: $($service.Status). Windows Event Viewer'da (Application log) xatolarni tekshiring."
+}
+
+# --- 7) Watchdog: alohida Scheduled Task (foydalanuvchi so'rovi -
+#     "kompyuter qayta yoqilgandan keyin agent ulana olmasa, avtomatik
+#     qayta ulanishga harakat qilinsin"). Bu ASOSIY agent xizmatidan
+#     MUSTAQIL - xizmat o'lik bo'lsa ham har 5 daqiqada ishlab, uni
+#     qayta ishga tushirishga urinadi (batafsil: Watchdog-
+#     NetworkSecurityAgent.ps1'ning o'z izohi). ---
+$watchdogInstalled = Join-Path $InstallDir "Watchdog-NetworkSecurityAgent.ps1"
+if (Test-Path $watchdogInstalled) {
+    try {
+        $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$watchdogInstalled`""
+        $wdTrigger1 = New-ScheduledTaskTrigger -AtStartup
+        $wdTrigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+        $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $wdSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        Register-ScheduledTask -TaskName "NSA-Agent-Watchdog" -Action $wdAction -Trigger @($wdTrigger1, $wdTrigger2) `
+            -Principal $wdPrincipal -Settings $wdSettings -Force | Out-Null
+        Start-ScheduledTask -TaskName "NSA-Agent-Watchdog"
+        Write-Host "✅ Watchdog vazifasi o'rnatildi (har 5 daqiqada tekshiradi): NSA-Agent-Watchdog" -ForegroundColor Green
+    } catch {
+        Write-Warning "Watchdog vazifasini ro'yxatga olishda xato (asosiy o'rnatish muvaffaqiyatli, faqat watchdog ta'sirlandi): $_"
+    }
+} else {
+    Write-Warning "Watchdog-NetworkSecurityAgent.ps1 topilmadi - watchdog vazifasi o'rnatilmadi (eski paket versiyasi bo'lishi mumkin)"
 }

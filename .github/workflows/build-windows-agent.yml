@@ -136,6 +136,7 @@ jobs:
           Copy-Item "deploy/windows_agent_gpo/Install-NetworkSecurityAgent.ps1" -Destination $releaseDir -ErrorAction SilentlyContinue
           Copy-Item "deploy/windows_agent_gpo/Sync-AgentFromGitHub.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Install-AgentAutoUpdate.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Watchdog-NetworkSecurityAgent.ps1" -Destination $releaseDir
           Compress-Archive -Path $releaseDir -DestinationPath "NetworkSecurityAgent-$($env:AGENT_VERSION).zip" -Force
         env:
           AGENT_VERSION: ${{ steps.version.outputs.version }}
