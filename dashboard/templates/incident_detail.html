@@ -7,7 +7,7 @@
     {{ incident.title }}
 </h1>
 
-<div style="background:#fff; padding:16px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px;">
+<div class="surface-card" style="background:#fff; padding:16px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px;">
     <p><strong>Qurilma:</strong> {{ incident.hostname or incident.ip_address or "Noma'lum" }}</p>
     <p><strong>Birinchi ko'rilgan:</strong> {{ incident.first_seen | local_dt(fallback='') }}</p>
     <p><strong>Oxirgi faollik:</strong> {{ incident.last_seen | local_dt(fallback='') }}</p>
@@ -16,7 +16,7 @@
 
 <h2>Bog'liq alertlar ({{ alerts | length }})</h2>
 {% if alerts %}
-<table>
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
         <th>Vaqt</th><th>Daraja</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
     </tr>
@@ -31,7 +31,7 @@
         <td>{{ a.action_taken }}</td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 {% else %}
 <div class="empty">Bog'liq alert topilmadi</div>
 {% endif %}

@@ -3,18 +3,18 @@
 {% block content %}
 <h1>Barcha qurilmalar ({{ total_count }})</h1>
 
-<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px;">
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+<div class="summary-grid">
+    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div style="font-size: 26px; font-weight: 700;">{{ total_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Jami qurilmalar</div>
+        <div style="font-size: 12px; color: #65748b;">Jami qurilmalar</div>
     </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ online_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Tarmoqqa ulangan (onlayn)</div>
+        <div style="font-size: 12px; color: #65748b;">Tarmoqqa ulangan (onlayn)</div>
     </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #95a5a6;">{{ offline_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Uzilgan (offlayn)</div>
+    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div style="font-size: 26px; font-weight: 700; color: #65748b;">{{ offline_count }}</div>
+        <div style="font-size: 12px; color: #65748b;">Uzilgan (offlayn)</div>
     </div>
 </div>
 
@@ -71,7 +71,7 @@
         <input type="checkbox" name="show_stale" value="1" {% if show_stale %}checked{% endif %}>
         Eski qurilmalarni ham ko'rsatish ({{ stale_hide_hours }}+ soat oflayn)
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/devices" class="clear-link">Tozalash</a>
 </form>
 
@@ -86,7 +86,7 @@
 {% endif %}
 
 {% if devices %}
-<table>
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
         <th>Holat</th><th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
         <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Endpoint Agent</th><th>Alertlar</th><th>Risk Score</th>
@@ -112,10 +112,10 @@
             {% elif d.agent_status == 'offline' %}
             <span class="badge" style="background: #c0392b;">OFFLINE</span>
             {% else %}
-            <span style="color:#95a5a6;">o'rnatilmagan</span>
+            <span style="color: #65748b;">o'rnatilmagan</span>
             {% endif %}
             {% if d.agent_last_heartbeat %}
-            <div style="font-size:11px; color:#95a5a6; margin-top:2px;">
+            <div style="font-size:11px; color: #65748b; margin-top:2px;">
                 {{ d.agent_os or '' }} {{ d.agent_version or '' }} &middot; {{ d.agent_last_heartbeat | local_dt }}
             </div>
             {% endif %}
@@ -135,7 +135,7 @@
             {% if d.agent_status == 'offline' and current_user.role in ('analyst', 'admin') %}
             <form method="POST" action="/devices/{{ d.id }}/request_agent_restart" style="margin-top:4px;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" style="font-size:11px; padding:3px 8px; background:#2980b9; color:#fff; border:none; border-radius:4px; cursor:pointer;" title="Qurilmadagi watchdog agentni qayta ishga tushiradi; 60 soniyada ulanmasa xabar beriladi">{% if rs == 'failed' %}Yana urinib ko'rish{% else %}Qayta ulanishga urinish{% endif %}</button>
+                <button class="btn btn-primary" type="submit" title="Qurilmadagi watchdog agentni qayta ishga tushiradi; 60 soniyada ulanmasa xabar beriladi">{% if rs == 'failed' %}Yana urinib ko'rish{% else %}Qayta ulanishga urinish{% endif %}</button>
             </form>
             {% endif %}
             {% endif %}
@@ -153,12 +153,12 @@
             {% elif d.risk_score > 0 %}
             <span class="badge" style="background: #f1c40f;">{{ d.risk_score }}</span>
             {% else %}
-            <span style="color:#95a5a6;">0</span>
+            <span style="color: #65748b;">0</span>
             {% endif %}
         </td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 
 {% if total_pages > 1 %}
 {% set pargs = request.args.to_dict() %}
@@ -167,7 +167,7 @@
     {% if page > 1 %}
     <a href="{{ url_for('devices', page=page - 1, **pargs) }}">&laquo; Oldingi</a>
     {% endif %}
-    <span style="color:#95a5a6; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta qurilma)</span>
+    <span style="color: #65748b; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta qurilma)</span>
     {% if page < total_pages %}
     <a href="{{ url_for('devices', page=page + 1, **pargs) }}">Keyingi &raquo;</a>
     {% endif %}

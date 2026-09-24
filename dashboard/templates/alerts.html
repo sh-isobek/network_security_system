@@ -8,10 +8,10 @@
 <form method="POST" action="/files/decision" style="display:flex; gap:4px; flex-direction:column;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="sha256" value="{{ sha }}">
-    <button name="decision" value="malicious" type="submit" style="font-size:11px; padding:4px 8px; background:#c0392b; color:#fff; border:none; border-radius:4px; cursor:pointer;" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
-    <button name="decision" value="safe" type="submit" style="font-size:11px; padding:4px 8px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer;">Virus emas</button>
+    <button class="btn btn-danger" name="decision" value="malicious" type="submit" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
+    <button class="btn btn-success" name="decision" value="safe" type="submit">Virus emas</button>
 </form>
-{% else %}<span style="color:#95a5a6; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
+{% else %}<span style="color: #65748b; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
 {% endmacro %}
 <h1>Barcha alertlar ({{ alerts | length }})</h1>
 
@@ -46,12 +46,12 @@
     <label>Sanagacha
         <input type="date" name="date_to" value="{{ date_to }}">
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/alerts" class="clear-link">Tozalash</a>
 </form>
 
 {% if alerts %}
-<table>
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
         <th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>IP</th><th>Tafsilot</th>
         <th>MITRE</th><th>Chora</th><th>Xabar berildi</th><th>Qaror</th>
@@ -73,7 +73,7 @@
         </td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 {% else %}
 <div class="empty">Hech qanday alert topilmadi</div>
 {% endif %}

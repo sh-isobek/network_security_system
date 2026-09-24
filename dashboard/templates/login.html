@@ -8,7 +8,7 @@
         body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #1a2634; height: 100vh; display: flex; align-items: center; justify-content: center; }
         .card { background: #fff; padding: 36px; border-radius: 8px; width: 340px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
         h1 { font-size: 18px; margin-bottom: 4px; color: #1a2634; }
-        p.subtitle { font-size: 13px; color: #95a5a6; margin-bottom: 20px; }
+        p.subtitle { font-size: 13px; color: #65748b; margin-bottom: 20px; }
         label { display: block; font-size: 12px; color: #5a6673; margin-bottom: 4px; margin-top: 14px; font-weight: 600; }
         input { width: 100%; padding: 9px 12px; border: 1px solid #dde3e8; border-radius: 5px; font-size: 14px; }
         button { width: 100%; margin-top: 20px; padding: 10px; background: #1a2634; color: #fff; border: none; border-radius: 5px; font-size: 14px; cursor: pointer; }
@@ -17,10 +17,12 @@
         .flash.error { background: #fdecea; color: #c0392b; }
         .flash.success { background: #eafaf1; color: #27ae60; }
     </style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
-<body>
-    <div class="card">
-        <h1>🛡 Xavfsizlik Dashboard</h1>
+<body class="auth-page">
+    <div class="card"><div class="auth-brand"><span class="brand-icon" aria-hidden="true">◇</span> NETGUARD</div>
+        <h1>Xush kelibsiz</h1>
         <p class="subtitle">Kirish uchun login/parolingizni kiriting</p>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
@@ -29,11 +31,11 @@
         {% endwith %}
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <label>Login</label>
-            <input type="text" name="username" required autofocus>
-            <label>Parol</label>
-            <input type="password" name="password" required>
-            <button type="submit">Kirish</button>
+            <label for="username">Login</label>
+            <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+            <label for="password">Parol</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required>
+            <button class="btn btn-primary" type="submit">Kirish</button>
         </form>
     </div>
 </body>

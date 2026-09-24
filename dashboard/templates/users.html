@@ -28,11 +28,11 @@
             <option value="0" {% if active_filter == '0' %}selected{% endif %}>Faolsizlantirilgan</option>
         </select>
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/users" class="clear-link">Tozalash</a>
 </form>
 
-<table style="margin-bottom: 24px;">
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table style="margin-bottom: 24px;">
     <tr><th>Login</th><th>Rol</th><th>Holat</th><th>Oxirgi kirish</th><th>Amal</th></tr>
     {% for u in users %}
     <tr>
@@ -53,24 +53,24 @@
                     </select>
                     <label style="display:block; font-size:11px; color:#5a6673; margin-bottom:4px;">Yangi parol (bo'sh = o'zgarmaydi)</label>
                     <input type="password" name="password" style="width:100%; padding:6px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:10px;">
-                    <button type="submit" style="width:100%; padding:7px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px;">Saqlash</button>
+                    <button class="btn btn-primary" type="submit" style="width:100%">Saqlash</button>
                 </form>
             </details>
             {% if u.is_active %}
             <form method="POST" action="/users/{{ u.id }}/deactivate" style="display:inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:12px;">Faolsizlantirish</button>
+                <button class="btn btn-danger" type="submit">Faolsizlantirish</button>
             </form>
             {% else %}
             <form method="POST" action="/users/{{ u.id }}/activate" style="display:inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" style="background:none; border:none; color:#27ae60; cursor:pointer; font-size:12px;">Faollashtirish</button>
+                <button class="btn btn-success" type="submit">Faollashtirish</button>
             </form>
             {% endif %}
         </td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 
 <h1>Yangi foydalanuvchi qo'shish</h1>
 <form method="POST" action="/users/create" style="background:#fff; padding: 18px; border-radius: 6px; max-width: 360px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
@@ -88,6 +88,6 @@
         <option value="admin">Admin (to'liq huquq)</option>
     </select>
 
-    <button type="submit" style="width:100%; padding:9px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer;">Qo'shish</button>
+    <button class="btn btn-primary" type="submit" style="width:100%">Qo'shish</button>
 </form>
 {% endblock %}

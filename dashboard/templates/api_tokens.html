@@ -30,11 +30,11 @@
             <option value="revoked" {% if status_filter == 'revoked' %}selected{% endif %}>Bekor qilingan</option>
         </select>
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/api-tokens" class="clear-link">Tozalash</a>
 </form>
 
-<table style="margin-bottom: 24px;">
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table style="margin-bottom: 24px;">
     <tr><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
     {% for t in tokens %}
     <tr>
@@ -53,13 +53,13 @@
             {% if not t.revoked %}
             <form method="POST" action="/api-tokens/{{ t.id }}/revoke">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button type="submit" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:12px;">Bekor qilish</button>
+                <button class="btn btn-danger" type="submit">Bekor qilish</button>
             </form>
             {% endif %}
         </td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 
 <h1>Yangi token yaratish</h1>
 <form method="POST" action="/api-tokens/create" style="background:#fff; padding: 18px; border-radius: 6px; max-width: 360px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
@@ -70,6 +70,6 @@
     <label style="display:block; font-size:12px; color:#5a6673; margin-bottom:4px;">Muddat (kun, bo'sh = muddatsiz)</label>
     <input type="number" name="expires_days" style="width:100%; padding:8px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:14px;">
 
-    <button type="submit" style="width:100%; padding:9px; background:#1a2634; color:#fff; border:none; border-radius:4px; cursor:pointer;">Yaratish</button>
+    <button class="btn btn-primary" type="submit" style="width:100%">Yaratish</button>
 </form>
 {% endblock %}
