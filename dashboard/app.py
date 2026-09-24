@@ -18,6 +18,7 @@ Ishga tushirish:
 import os
 import secrets
 import sys
+from urllib.parse import urlencode
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -35,6 +36,7 @@ from dashboard.audit import log_action
 from db import agent_restart
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
 from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES
+from dashboard.i18n import SUPPORTED_LANGUAGES, translate_html
 
 
 def _device_online_cutoff():
@@ -51,6 +53,36 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
 )
 login_manager.init_app(app)
+
+
+@app.before_request
+def select_interface_language():
+    """Keep the selected UI language in the existing signed session."""
+    language = request.args.get("lang")
+    if language in SUPPORTED_LANGUAGES:
+        flask_session["interface_language"] = language
+    flask_session.setdefault("interface_language", "uz")
+
+
+@app.context_processor
+def language_context():
+    def language_url(language):
+        query = request.args.to_dict(flat=False)
+        query["lang"] = [language]
+        return f"{request.path}?{urlencode(query, doseq=True)}"
+
+    return {
+        "interface_language": flask_session.get("interface_language", "uz"),
+        "language_url": language_url,
+    }
+
+
+@app.after_request
+def translate_interface(response):
+    """Translate HTML pages while leaving JSON, APIs and downloads intact."""
+    if response.status_code < 400 and response.mimetype == "text/html" and flask_session.get("interface_language") == "ru":
+        response.set_data(translate_html(response.get_data(as_text=True), "ru"))
+    return response
 
 
 @app.context_processor

@@ -1,51 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Umumiy - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
-<h1>Umumiy holat</h1>
-
-<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 14px;">
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <a href="/devices" style="text-decoration: none; color: inherit;">
-        <div style="font-size: 26px; font-weight: 700;">{{ stats.device_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Qurilmalar</div>
-        </a>
-    </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <a href="/devices?status=online" style="text-decoration: none; color: inherit;">
-        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ stats.online_device_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Tarmoqqa ulangan / {{ stats.offline_device_count }} uzilgan</div>
-        </a>
-    </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.critical_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Critical alertlar</div>
-    </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #e67e22;">{{ stats.high_count }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">High alertlar</div>
-    </div>
-    <div style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <a href="/files?verdict=malicious" style="text-decoration: none; color: inherit;">
-        <div style="font-size: 26px; font-weight: 700; color: #c0392b;">{{ stats.malicious_files }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Zararli / {{ stats.suspicious_files }} shubhali / {{ stats.clean_files }} toza / {{ stats.unknown_files }} noma'lum</div>
-        </a>
-    </div>
+<div class="page-heading"><div><p class="eyebrow">TARMOQ MONITORINGI</p><h1>Umumiy holat</h1><p class="page-description">Qurilmalar, agentlar va xavfsizlik hodisalari — barchasi bir joyda.</p></div><a class="button secondary" href="/live-map">Tarmoq xaritasi <span aria-hidden="true">↗</span></a></div>
+<div class="metric-grid">
+    <a class="metric-card" href="/devices"><div class="metric-top">Jami qurilmalar <span class="metric-icon" aria-hidden="true">▦</span></div><strong>{{ stats.device_count }}</strong><span class="metric-note">Tarmoqdagi barcha qurilmalar</span></a>
+    <a class="metric-card" href="/devices?status=online"><div class="metric-top">Onlayn qurilmalar <span class="metric-icon green" aria-hidden="true">↗</span></div><strong>{{ stats.online_device_count }}</strong><span class="metric-note"><i class="dot green"></i> {{ stats.offline_device_count }} ta qurilma uzilgan</span></a>
+    <a class="metric-card" href="/alerts?severity=critical"><div class="metric-top">Critical alertlar <span class="metric-icon red" aria-hidden="true">!</span></div><strong class="text-red">{{ stats.critical_count }}</strong><span class="metric-note">Eng yuqori xavf darajasi</span></a>
+    <a class="metric-card" href="/alerts?severity=high"><div class="metric-top">High alertlar <span class="metric-icon amber" aria-hidden="true">!</span></div><strong class="text-amber">{{ stats.high_count }}</strong><span class="metric-note">Yuqori xavf darajasi</span></a>
 </div>
-
-<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px;">
-    <a href="/devices" style="text-decoration:none; color:inherit; background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ stats.agents_online }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Agent: Online</div>
-    </a>
-    <a href="/devices" style="text-decoration:none; color:inherit; background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: {% if stats.agents_offline > 0 %}#c0392b{% else %}#95a5a6{% endif %};">{{ stats.agents_offline }}</div>
-        <div style="font-size: 12px; color: #95a5a6;">Agent: Offline</div>
-    </a>
+<div class="overview-grid">
+    <section class="panel"><div class="section-heading"><h2>Agentlar holati</h2><a href="/devices">Qurilmalar ↗</a></div><div class="agent-stats"><div><span class="metric-note"><i class="dot green"></i> Onlayn agentlar</span><strong>{{ stats.agents_online }}</strong></div><div><span class="metric-note"><i class="dot gray"></i> Oflayn agentlar</span><strong>{{ stats.agents_offline }}</strong></div></div></section>
+    <section class="panel"><div class="section-heading"><h2>Fayllar tahlili</h2><a href="/files">Barcha fayllar ↗</a></div><div class="file-stats"><a href="/files?verdict=malicious"><strong class="text-red">{{ stats.malicious_files }}</strong><span>Zararli</span></a><a href="/files?verdict=suspicious"><strong class="text-amber">{{ stats.suspicious_files }}</strong><span>Shubhali</span></a><a href="/files?verdict=clean"><strong class="text-green">{{ stats.clean_files }}</strong><span>Toza</span></a><a href="/files?verdict=unknown"><strong>{{ stats.unknown_files }}</strong><span>Noma'lum</span></a></div></section>
 </div>
+<section class="panel alerts-panel">
+<div class="section-heading"><div><h2>So'nggi alertlar</h2><p class="page-description">Oxirgi 10 ta xavfsizlik ogohlantirishi</p></div><a class="button secondary" href="/alerts">Barchasini ko'rish ↗</a></div>
 
-<h1>Oxirgi 10 ta alert</h1>
 {% if recent_alerts %}
-<table>
+<div class="table-scroll" role="region" aria-label="So‘nggi alertlar" tabindex="0"><table>
     <tr>
         <th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
     </tr>
@@ -59,8 +30,9 @@
         <td>{{ (a.action_taken or '')[:50] }}</td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 {% else %}
-<div class="empty">Hozircha hech qanday alert yo'q</div>
+<div class="empty"><span class="empty-icon" aria-hidden="true">◇</span><h3>Hozircha alertlar yo'q</h3><p>Yangi xavfsizlik ogohlantirishlari shu yerda ko'rinadi.</p></div>
 {% endif %}
+</section>
 {% endblock %}

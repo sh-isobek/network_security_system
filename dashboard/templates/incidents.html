@@ -19,12 +19,12 @@
             <option value="low" {% if severity_filter == 'low' %}selected{% endif %}>Low</option>
         </select>
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/incidents" class="clear-link">Tozalash</a>
 </form>
 
 {% if incidents %}
-<table>
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
         <th>Daraja</th><th>Sarlavha</th><th>Qurilma</th><th>Alertlar</th>
         <th>Birinchi ko'rilgan</th><th>Oxirgi faollik</th>
@@ -39,7 +39,7 @@
         <td class="mono">{{ inc.last_seen | local_dt(fallback='') }}</td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 {% else %}
 <div class="empty">Hech qanday hodisa topilmadi</div>
 {% endif %}

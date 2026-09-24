@@ -8,15 +8,18 @@
         body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #1a2634; height: 100vh; display: flex; align-items: center; justify-content: center; }
         .card { background: #fff; padding: 36px; border-radius: 8px; width: 340px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); text-align: center; }
         h1 { font-size: 18px; margin-bottom: 4px; color: #1a2634; }
-        p.subtitle { font-size: 13px; color: #95a5a6; margin-bottom: 20px; }
+        p.subtitle { font-size: 13px; color: #65748b; margin-bottom: 20px; }
         input { width: 100%; padding: 12px; border: 1px solid #dde3e8; border-radius: 5px; font-size: 22px; text-align: center; letter-spacing: 6px; margin-top: 10px; }
         button { width: 100%; margin-top: 20px; padding: 10px; background: #1a2634; color: #fff; border: none; border-radius: 5px; font-size: 14px; cursor: pointer; }
         .flash { padding: 8px 12px; border-radius: 5px; font-size: 13px; margin-bottom: 12px; }
         .flash.error { background: #fdecea; color: #c0392b; }
     </style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
-<body>
-    <div class="card">
+<body class="auth-page">
+    <div class="card"><div class="auth-brand"><span class="brand-icon" aria-hidden="true">◇</span> NETGUARD</div>
+        <div class="auth-language language-switcher" aria-label="Interfeys tili"><span>Til / Язык</span><div><a href="{{ language_url('uz') }}" class="{% if interface_language == 'uz' %}active{% endif %}">UZ</a><a href="{{ language_url('ru') }}" class="{% if interface_language == 'ru' %}active{% endif %}">RU</a></div></div>
         <h1>🔐 Ikki bosqichli tasdiqlash</h1>
         <p class="subtitle">Autentifikator ilovangizdagi 6 xonali kodni kiriting</p>
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -27,7 +30,7 @@
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
-            <button type="submit">Tasdiqlash</button>
+            <button class="btn btn-primary" type="submit">Tasdiqlash</button>
         </form>
     </div>
 </body>

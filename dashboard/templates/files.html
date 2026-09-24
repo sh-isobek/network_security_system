@@ -8,10 +8,10 @@
 <form method="POST" action="/files/decision" style="display:flex; gap:4px; flex-direction:column;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="sha256" value="{{ sha }}">
-    <button name="decision" value="malicious" type="submit" style="font-size:11px; padding:4px 8px; background:#c0392b; color:#fff; border:none; border-radius:4px; cursor:pointer;" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
-    <button name="decision" value="safe" type="submit" style="font-size:11px; padding:4px 8px; background:#27ae60; color:#fff; border:none; border-radius:4px; cursor:pointer;">Virus emas</button>
+    <button class="btn btn-danger" name="decision" value="malicious" type="submit" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
+    <button class="btn btn-success" name="decision" value="safe" type="submit">Virus emas</button>
 </form>
-{% else %}<span style="color:#95a5a6; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
+{% else %}<span style="color: #65748b; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
 {% endmacro %}
 <h1>Tekshirilgan fayllar ({{ files | length }})</h1>
 
@@ -39,12 +39,12 @@
     <label>SHA256
         <input type="text" name="sha256" value="{{ sha256_filter }}" placeholder="hex prefiks">
     </label>
-    <button type="submit">Filtrlash</button>
+    <button class="btn btn-primary" type="submit">Filtrlash</button>
     <a href="/files" class="clear-link">Tozalash</a>
 </form>
 
 {% if files %}
-<table>
+<div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
         <th>Vaqt</th><th>Fayl nomi</th><th>Qurilmadagi yo'l</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
         <th>Score</th><th>SHA256</th><th>Manba</th><th>Qaror</th>
@@ -52,14 +52,14 @@
     {% for f in files %}
     <tr>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
-        <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color:#95a5a6; font-size:11px;">(arxivdan)</span>{% endif %}</td>
+        <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color: #65748b; font-size:11px;">(arxivdan)</span>{% endif %}</td>
         <td class="mono" style="font-size: 11px; min-width: 240px; max-width: 460px; white-space: normal; word-break: break-all;" title="{{ f.device_file_path or '' }}">
             {%- if f.device_file_path -%}
                 {{ f.device_file_path }}
             {%- elif f.channel == 'endpoint_agent' -%}
-                <span style="color:#95a5a6;">yo'l noma'lum (eski agent versiyasi yubormagan)</span>
+                <span style="color: #65748b;">yo'l noma'lum (eski agent versiyasi yubormagan)</span>
             {%- elif f.dest_ip -%}
-                <span style="color:#95a5a6;">tarmoq orqali: {{ f.src_ip }} &rarr; {{ f.dest_ip }}</span>
+                <span style="color: #65748b;">tarmoq orqali: {{ f.src_ip }} &rarr; {{ f.dest_ip }}</span>
             {%- else -%}
                 -
             {%- endif -%}
@@ -85,7 +85,7 @@
         <td>{% if f.verdict in ('malicious', 'suspicious') or file_decisions.get(f.sha256) %}{{ decision_buttons(f.sha256, file_decisions.get(f.sha256)) }}{% else %}-{% endif %}</td>
     </tr>
     {% endfor %}
-</table>
+</table></div>
 {% else %}
 <div class="empty">Hech qanday fayl topilmadi</div>
 {% endif %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Live Map - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
-<h1>Live Network Map <span id="last-update" style="font-size:12px; color:#95a5a6; font-weight:400;"></span></h1>
+<h1>Live Network Map <span id="last-update" style="font-size:12px; color: #65748b; font-weight:400;"></span></h1>
 <p style="font-size:13px; color:#5a6673; margin-bottom:14px;">
     So'nggi 24 soatda faol qurilmalar va ularning tashqi aloqalari.
     Rang = Risk Score (qizil=yuqori, sariq=o'rta, ko'k=past/yo'q). 15 soniyada avtomatik yangilanadi.
@@ -19,10 +19,10 @@
 <div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
 
 <div id="list-view" style="display:none;">
-    <table>
+    <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
         <tr><th>Qurilma</th><th>Manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
         <tbody id="list-view-body"></tbody>
-    </table>
+    </table></div>
     <div id="list-view-empty" class="empty" style="display:none;">Hech qanday aloqa topilmadi</div>
 </div>
 
