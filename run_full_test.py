@@ -1746,7 +1746,7 @@ print("\n=== 24) AUDIT LOG (real HTTP orqali, login/acknowledge/user boshqaruvi)
 
 
 def _test_audit_log():
-    from db.models import AuditLog
+    from db.models import AuditLog, utcnow
     from dashboard import app as dash_app
     from dashboard.create_user import create_user
 
@@ -9626,11 +9626,17 @@ def _test_agent_loopback_ip_normalized():
     s.close()
 
     # check_hash va report_incident ham xuddi shunday (FileEvent.src_ip yaroqli bo'lishi kerak)
-    r = c.post("/api/v1/check_hash", json={"sha256": "ab" * 32, "filename": "x.txt", "hostname": "IPN-PC-A",
-               "ip_address": "127.0.0.1"}, headers=h, environ_base={"REMOTE_ADDR": "172.16.210.11"})
+    # Alohida hash oldingi test yozuvini tasodifan olib qolmasligi uchun noyob qiymat ishlatiladi.
+    import hashlib
+    check_hash_sha = hashlib.sha256(b"ip-normalization-check-hash").hexdigest()
+    # GitHub runnerning o'zi Docker ichida ishlaydi; bu test esa haqiqiy LAN manzilini
+    # almashtirish yo'lini tekshiradi. Docker gateway holati yuqorida alohida tekshirilgan.
+    with patch.object(api_server, "_own_docker_network", return_value=None):
+        r = c.post("/api/v1/check_hash", json={"sha256": check_hash_sha, "filename": "x.txt", "hostname": "IPN-PC-A",
+                   "ip_address": "127.0.0.1"}, headers=h, environ_base={"REMOTE_ADDR": "172.16.210.11"})
     assert r.status_code == 200
     s = get_session()
-    fe = s.query(FileEvent).filter(FileEvent.sha256 == "ab" * 32).first()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == check_hash_sha).order_by(FileEvent.id.desc()).first()
     assert fe is not None and fe.src_ip == "172.16.210.11", fe and fe.src_ip
     s.close()
 
