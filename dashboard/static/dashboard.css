@@ -545,6 +545,46 @@ tr:hover td {
 .metric-card {
     padding:26px}
 }
+.language-switcher {
+    margin-top: 22px;
+    padding: 14px 12px;
+    border-top: 1px solid #263852;
+    color: #8798b3;
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: 1px;
+}
+.language-switcher > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-top: 9px;
+    padding: 4px;
+    border-radius: 9px;
+    background: #0c1728;
+}
+.language-switcher a {
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: #91a2bc;
+    text-align: center;
+    font-size: 10px;
+    text-decoration: none;
+}
+.language-switcher a.active {
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 3px 10px #0003;
+}
+.auth-language {
+    margin: -18px 0 26px;
+    padding: 0;
+    border: 0;
+    color: var(--muted);
+}
+.auth-language > div {
+    background: #eef2f8;
+}
 
 @media(max-width:1150px) {
     .sidebar {
@@ -575,6 +615,15 @@ main {
     font-size:9px}
 .nav-label,.sidebar-footer {
     display:none}
+.sidebar > .language-switcher {
+    margin:8px 0 0;
+    padding:9px 4px 0}
+.sidebar > .language-switcher > span {
+    display:none}
+.sidebar > .language-switcher > div {
+    display:inline-grid;
+    width:112px;
+    margin-top:0}
 nav {
     flex-direction:row;
     overflow-x:auto;

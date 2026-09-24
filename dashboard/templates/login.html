@@ -22,6 +22,7 @@
 </head>
 <body class="auth-page">
     <div class="card"><div class="auth-brand"><span class="brand-icon" aria-hidden="true">◇</span> NETGUARD</div>
+        <div class="auth-language language-switcher" aria-label="Interfeys tili"><span>Til / Язык</span><div><a href="{{ language_url('uz') }}" class="{% if interface_language == 'uz' %}active{% endif %}">UZ</a><a href="{{ language_url('ru') }}" class="{% if interface_language == 'ru' %}active{% endif %}">RU</a></div></div>
         <h1>Xush kelibsiz</h1>
         <p class="subtitle">Kirish uchun login/parolingizni kiriting</p>
         {% with messages = get_flashed_messages(with_categories=true) %}

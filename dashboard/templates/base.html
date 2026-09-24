@@ -30,6 +30,10 @@
         <a href="/api-tokens" class="{% if request.path == '/api-tokens' %}active{% endif %}" {% if request.path == '/api-tokens' %}aria-current="page"{% endif %}><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3a6 6 0 1 1-3 11l-7 7H1v-4l7-7a6 6 0 0 1 6-7z M16 7h1"/></svg>API Tokenlar</a>
         {% endif %}
     </nav>
+    <div class="language-switcher" aria-label="Interfeys tili">
+        <span>Til / Язык</span>
+        <div><a href="{{ language_url('uz') }}" class="{% if interface_language == 'uz' %}active{% endif %}" lang="uz">UZ</a><a href="{{ language_url('ru') }}" class="{% if interface_language == 'ru' %}active{% endif %}" lang="ru">RU</a></div>
+    </div>
     <div class="sidebar-footer"><span class="brand-icon" aria-hidden="true">◇</span><span>Tarmoq xavfsizligi<small>Yagona nazorat markazi</small></span></div>
     </aside>
     <div class="workspace">
