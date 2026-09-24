@@ -9587,6 +9587,56 @@ def _test_dashboard_intermittent_500_fixes():
 
 check("Dashboard 'Internal Server Error': pool_pre_ping (real Postgres, uzilgan ulanish), boot retry, 500 sahifasi, gunicorn", _test_dashboard_intermittent_500_fixes)
 
+print("\n=== 123) Agent IP 127.0.0.1: server yaroqsiz IP'ni haqiqiy manba (remote_addr) bilan almashtiradi (real production muammosi) ===")
+
+
+def _test_agent_loopback_ip_normalized():
+    """
+    Real production: eski agent (1.0.17) internetga marshruti yo'q kompyuterda `127.0.0.1` yuborardi -
+    Dashboard'da bir nechta kompyuter BITTA "127.0.0.1" qatoriga birlashib (hostname/alertlar aralashib)
+    ketardi. Agent 1.0.18 buni tuzatgan, lekin yangilanmagan agentlar uchun server ham himoyalanadi.
+    """
+    from unittest.mock import patch
+    import ipaddress
+    import api.server as api_server
+    api_server.AGENT_API_KEY = "test-key-ipnorm"
+    c = api_server.app.test_client()
+    h = {"X-API-Key": "test-key-ipnorm"}
+
+    def hb(host, reported, remote):
+        return c.post("/api/v1/agent_heartbeat", json={"hostname": host, "ip_address": reported,
+                      "agent_version": "1.0.17", "agent_os": "windows"}, headers=h,
+                      environ_base={"REMOTE_ADDR": remote})
+
+    assert hb("IPN-PC-A", "127.0.0.1", "172.16.210.11").status_code == 200
+    assert hb("IPN-PC-B", "127.0.0.1", "172.16.210.12").status_code == 200
+    assert hb("IPN-PC-C", "172.16.210.13", "172.16.210.99").status_code == 200   # to'g'ri IP o'zgarmaydi
+    s = get_session()
+    rows = {d.hostname: d.ip_address for d in s.query(Device).filter(Device.hostname.like("IPN-PC-%")).all()}
+    assert rows == {"IPN-PC-A": "172.16.210.11", "IPN-PC-B": "172.16.210.12", "IPN-PC-C": "172.16.210.13"}, rows
+    assert s.query(Device).filter(Device.ip_address == "127.0.0.1", Device.hostname.like("IPN-PC-%")).count() == 0
+    s.close()
+
+    # Docker gateway/NAT ortidan kelgan so'rov (remote_addr docker tarmog'ida) - IP taxmin qilinmaydi
+    with patch.object(api_server, "_own_docker_network", return_value=ipaddress.ip_network("172.18.0.0/16")):
+        assert hb("IPN-PC-D", "127.0.0.1", "172.18.0.1").status_code == 200
+    s = get_session()
+    d = s.query(Device).filter(Device.hostname == "IPN-PC-D").first()
+    assert d is not None and d.ip_address == "127.0.0.1", "docker gateway IP'si qurilma IP'si bo'lmasligi kerak edi"
+    s.close()
+
+    # check_hash va report_incident ham xuddi shunday (FileEvent.src_ip yaroqli bo'lishi kerak)
+    r = c.post("/api/v1/check_hash", json={"sha256": "ab" * 32, "filename": "x.txt", "hostname": "IPN-PC-A",
+               "ip_address": "127.0.0.1"}, headers=h, environ_base={"REMOTE_ADDR": "172.16.210.11"})
+    assert r.status_code == 200
+    s = get_session()
+    fe = s.query(FileEvent).filter(FileEvent.sha256 == "ab" * 32).first()
+    assert fe is not None and fe.src_ip == "172.16.210.11", fe and fe.src_ip
+    s.close()
+
+
+check("Agent IP 127.0.0.1: server yaroqsiz IP'ni haqiqiy manba bilan almashtiradi (kompyuterlar birlashib ketmaydi)", _test_agent_loopback_ip_normalized)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

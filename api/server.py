@@ -24,7 +24,9 @@ Ishga tushirish:
 """
 import hashlib
 import hmac
+import ipaddress
 import os
+import socket
 import sys
 import json
 import re
@@ -109,6 +111,46 @@ limiter = Limiter(
     storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
     headers_enabled=True,
 )
+
+
+def _is_unusable_ip(ip) -> bool:
+    try:
+        a = ipaddress.ip_address(str(ip).strip())
+    except ValueError:
+        return True
+    return a.is_loopback or a.is_unspecified or a.is_link_local or a.is_multicast
+
+
+def _own_docker_network():
+    """Konteynerning o'z (docker bridge) tarmog'i - so'rov manzili shu ichida bo'lsa, bu haqiqiy
+    LAN kompyuteri emas, docker gateway/NAT (undan agent IP'sini olib bo'lmaydi)."""
+    if not os.path.exists("/.dockerenv"):
+        return None   # konteynerdan tashqarida (test/dev) - LAN bilan adashtirmaslik uchun
+    try:
+        own = ipaddress.ip_address(socket.gethostbyname(socket.gethostname()))
+        return ipaddress.ip_network(f"{own}/16", strict=False)
+    except (OSError, ValueError):
+        return None
+
+
+def normalize_agent_ip(data: dict) -> dict:
+    """
+    Agent yuborgan `ip_address` yaroqsiz bo'lsa (127.0.0.1, 0.0.0.0, 169.254.x - eski agent
+    versiyalari internetga marshruti yo'q kompyuterda shu qiymatni yuborardi), so'rovning HAQIQIY
+    manbasi (request.remote_addr) ishlatiladi. Aks holda bir nechta kompyuter bitta "127.0.0.1"
+    qatoriga birlashib, hostname/alertlar aralashib ketardi. `data` joyida o'zgartiriladi.
+    """
+    reported = data.get("ip_address")
+    if reported and not _is_unusable_ip(reported):
+        return data
+    remote = request.remote_addr
+    net = _own_docker_network()
+    if remote and not _is_unusable_ip(remote) and not (net and ipaddress.ip_address(remote) in net):
+        logger.info(f"Agent IP tuzatildi: {reported!r} -> {remote} ({data.get('hostname')})")
+        data["ip_address"] = remote
+    elif reported:
+        logger.warning(f"Agent yaroqsiz IP yubordi ({reported}) va haqiqiy manba aniqlanmadi (remote={remote}): {data.get('hostname')}")
+    return data
 
 
 def require_api_key(fn):
@@ -316,6 +358,7 @@ def check_hash():
     (pastdagi `_log_endpoint_scan` orqali).
     """
     data = request.get_json(silent=True) or {}
+    normalize_agent_ip(data)
     sha256 = (data.get("sha256") or "").lower().strip()
 
     if not sha256 or len(sha256) != 64:
@@ -480,6 +523,7 @@ def report_incident():
     }
     """
     data = request.get_json(silent=True) or {}
+    normalize_agent_ip(data)
 
     required = ["hostname", "ip_address", "filename", "sha256"]
     missing = [f for f in required if not data.get(f)]
@@ -567,6 +611,7 @@ def agent_heartbeat():
     }
     """
     data = request.get_json(silent=True) or {}
+    normalize_agent_ip(data)
 
     required = ["hostname", "ip_address"]
     missing = [f for f in required if not data.get(f)]
