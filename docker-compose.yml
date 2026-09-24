@@ -346,6 +346,24 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------
+  # Agent "qayta ulanishga urinish" so'rovlarining 60s muddatini kuzatish
+  # (ulanmasa - Alert -> Telegram/Email)
+  # ---------------------------------------------------------------------
+  agent_restart_monitor:
+    build: .
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    command: python -m engine.agent_restart_monitor --loop --interval 5
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
   # MITRE ATT&CK belgilash
   # ---------------------------------------------------------------------
   mitre_tagging_engine:

@@ -96,6 +96,13 @@ class Device(Base):
     # imkoniyati qo'shilmaydi).
     agent_restart_requested_at = Column(DateTime)
     agent_restart_requested_by = Column(String(100))
+    # Qayta ulanish so'rovining holati (db/agent_restart.py): pending (so'ralgan) ->
+    # picked_up (watchdog oldi) -> restarted (xizmat Running, heartbeat kutilmoqda) ->
+    # success | failed (1 daqiqa ichida ulanmasa - sabab agent_restart_message'da)
+    agent_restart_status = Column(String(20))
+    agent_restart_message = Column(String(500))
+    agent_restart_picked_up_at = Column(DateTime)
+    agent_restart_finished_at = Column(DateTime)
 
     events = relationship("Event", back_populates="device")
 

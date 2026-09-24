@@ -9363,26 +9363,22 @@ def _test_scan_file_rate_limit_raised():
 check("scan_file: chegara 6/daqiqadan yuqori - real HTTP orqali (production bo'shlig'i tuzatilgan)", _test_scan_file_rate_limit_raised)
 
 # ---------------------------------------------------------------------------
-print("\n=== 121) Agent Watchdog: Dashboard 'qayta ulanishga urinish' tugmasi -> /api/v1/agent_watchdog_check bayrog'i (real HTTP+DB) ===")
+print("\n=== 121) Agent 'qayta ulanishga urinish': tugma -> watchdog -> natija; 60s ichida ulanmasa Alert (real HTTP+DB) ===")
 
 
 def _test_agent_watchdog_reconnect_button():
     """
-    Foydalanuvchi so'rovi: tarmoqda ONLAYN, lekin Endpoint Agent OFFLAYN
-    (masalan kompyuter qayta yoqilgandan keyin agent xizmati avtomatik
-    boshlanmagan) qurilmalar uchun Dashboard'da "qayta ulanishga
-    urinish" tugmasi bo'lsin. Server hech qachon qurilmaga o'zi
-    ulanmaydi/buyruq yubormaydi (bu loyihaning ataylab tanlangan
-    xavfsizlik arxitekturasi) - shuning uchun tugma faqat bir bayroqni
-    (`Device.agent_restart_requested_at`) o'rnatadi, va har bir
-    kompyuterda GPO orqali o'rnatiladigan alohida "watchdog" Scheduled
-    Task (`Watchdog-NetworkSecurityAgent.ps1`, ASOSIY agent xizmatidan
-    MUSTAQIL) bu bayroqni o'zi so'rab (`/api/v1/agent_watchdog_check`)
-    ko'radi - True bo'lsa xizmatni majburiy qayta ishga tushiradi va
-    bayroq bir martalik iste'mol qilinadi (consume-once).
+    Foydalanuvchi: tugma bosilganda o'sha qurilmada agentni qayta ishga tushirish skripti
+    (watchdog) ishlasin; 1 daqiqa ichida ulanolmasa xabar berilsin. Server qurilmaga o'zi
+    ulanmaydi - holat mashinasi: pending -> picked_up -> restarted -> success | failed.
+    Kompyuter Dashboard'da turli hostname'lar bilan (Kerio "Isobek a4:d7", agent "ISOBEK")
+    bo'lishi mumkin - MAC/IP/qisqa nom bo'yicha topiladi.
     """
     from datetime import timedelta
     import api.server as api_server
+    import engine.agent_restart_monitor as monitor
+    from db import agent_restart
+    from db.models import AuditLog
     from dashboard.app import app as dash_app
     from dashboard.create_user import create_user
 
@@ -9391,67 +9387,100 @@ def _test_agent_watchdog_reconnect_button():
     h = {"X-API-Key": "test-key-watchdog"}
 
     s = get_session()
-    d = Device(ip_address="172.16.203.51", mac_address="AA:BB:CC:WD:00:01",
-               hostname="WATCHDOG-TEST-PC", connection_type="wifi", source="test",
-               agent_last_heartbeat=utcnow() - timedelta(hours=3))
-    s.add(d)
-    s.commit()
-    device_id = d.id
+    d1 = Device(ip_address="172.16.203.51", mac_address="A0:02:A5:B0:A4:D7", hostname="Isobek a4:d7",
+                connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
+    d2 = Device(ip_address="172.16.203.52", mac_address="AA:BB:CC:00:00:02", hostname="WD-FAIL-PC.corp.local",
+                connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
+    d3 = Device(ip_address="172.16.203.53", mac_address="AA:BB:CC:00:00:03", hostname="WD-SILENT-PC",
+                connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
+    s.add_all([d1, d2, d3]); s.commit()
+    id1, id2, id3 = d1.id, d2.id, d3.id
     s.close()
 
-    # 1) Bayroq o'rnatilmagan holatda - watchdog False olishi kerak
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
-    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
-
-    # 2) Noma'lum hostname ham xavfsiz False qaytarishi kerak (xato emas)
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "NOMALUM-HOST-XYZ"}, headers=h)
-    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
-
-    # 3) Dashboard: admin tugmani bosadi -> bayroq o'rnatiladi
     create_user("watchdogtest_admin", "watchdogtestpass123", "admin")
     dash_app.secret_key = "test-secret-watchdog-reconnect"
     client = _dash_client(dash_app)
     client.post("/login", data={"username": "watchdogtest_admin", "password": "watchdogtestpass123"})
 
-    page = client.get("/devices?hostname=WATCHDOG-TEST-PC").get_data(as_text=True)
-    assert "Qayta ulanishga urinish" in page, "OFFLAYN agent uchun tugma /devices sahifasida ko'rinishi kerak edi"
+    def status_of(dev_id):
+        ss = get_session(); d = ss.query(Device).filter(Device.id == dev_id).first()
+        r = (d.agent_restart_status, d.agent_restart_message); ss.close(); return r
 
-    resp = client.post(f"/devices/{device_id}/request_agent_restart")
-    assert resp.status_code in (302, 303)
+    # Bayroq yo'q -> watchdog False
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["restart_requested"] is False
 
-    s2 = get_session()
-    dev = s2.query(Device).filter(Device.id == device_id).first()
-    assert dev.agent_restart_requested_at is not None, "tugma bayroqni o'rnatishi kerak edi"
-    assert dev.agent_restart_requested_by == "watchdogtest_admin"
-    s2.close()
+    # 1) Tugma ko'rinadi, bosilganda 'pending', ikkinchi marta bosilsa takror yaratilmaydi
+    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
+    assert "Qayta ulanishga urinish" in page
+    assert client.post(f"/devices/{id1}/request_agent_restart").status_code in (302, 303)
+    assert status_of(id1)[0] == "pending"
+    client.post(f"/devices/{id1}/request_agent_restart")
+    ss = get_session()
+    assert ss.query(AuditLog).filter(AuditLog.action == "request_agent_restart", AuditLog.target_id == str(id1)).count() == 1
+    ss.close()
+    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
+    assert "data-restart-poll" in page and "Qayta ulanishga urinish" not in page.split("Isobek a4:d7")[1][:1500]
+    j = client.get(f"/devices/{id1}/restart_status").get_json()
+    assert j["status"] == "pending" and j["in_progress"] is True and j["deadline_seconds"] == 60
 
-    # Endi tugma o'rniga "So'ralgan" ko'rinishi kerak (qayta-qayta so'rov yubormaslik uchun)
-    page2 = client.get("/devices?hostname=WATCHDOG-TEST-PC").get_data(as_text=True)
-    assert "So'ralgan" in page2 and "Qayta ulanishga urinish" not in page2.split("WATCHDOG-TEST-PC")[1][:600]
+    # 2) Watchdog kompyuter nomi ("ISOBEK") DB'dagi ("Isobek a4:d7") ga MOS EMAS - lekin MAC mos
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK", "ips": ["10.9.9.9"],
+                        "macs": ["A0-02-A5-B0-A4-D7"]}, headers=h)
+    assert r.get_json()["restart_requested"] is True, "MAC bo'yicha topilishi kerak edi"
+    assert status_of(id1)[0] == "picked_up"
+    assert api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK", "macs": ["A0-02-A5-B0-A4-D7"]},
+                           headers=h).get_json()["restart_requested"] is False, "consume-once"
 
-    # Audit log'ga yozilganini tekshirish
-    from db.models import AuditLog
-    s3 = get_session()
-    audit = s3.query(AuditLog).filter(AuditLog.action == "request_agent_restart",
-                                       AuditLog.target_id == str(device_id)).first()
-    assert audit is not None and audit.username == "watchdogtest_admin"
-    s3.close()
+    # 3) Watchdog natijasi: xizmat ishga tushdi -> 'restarted'; agent heartbeat -> 'success'
+    r = api_client.post("/api/v1/agent_watchdog_report", json={"hostname": "ISOBEK", "macs": ["A0-02-A5-B0-A4-D7"],
+                        "success": True, "message": "Xizmat qayta ishga tushirildi (Running)"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["updated"] == 1
+    assert status_of(id1)[0] == "restarted"
+    r = api_client.post("/api/v1/agent_heartbeat", json={"hostname": "ISOBEK", "ip_address": "172.16.203.51",
+                        "agent_version": "1.0.22", "agent_os": "windows"}, headers=h)
+    assert r.status_code == 200
+    assert status_of(id1)[0] == "success"
+    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
+    assert "Qayta ulandi" in page
 
-    # 4) Watchdog (kompyuterning o'zi) endi so'raganda True olishi VA bayroq consume-once o'chirilishi kerak
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
-    assert r.status_code == 200 and r.get_json()["restart_requested"] is True, r.get_json()
+    # 4) Watchdog xizmatni ishga tushira olmadi -> darhol 'failed' + high Alert
+    client.post(f"/devices/{id2}/request_agent_restart")
+    api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WD-FAIL-PC"}, headers=h)   # qisqa nom == FQDN'ning boshi
+    assert status_of(id2)[0] == "picked_up"
+    api_client.post("/api/v1/agent_watchdog_report", json={"hostname": "WD-FAIL-PC", "success": False,
+                    "message": "Xizmat ($ServiceName) o'rnatilmagan"}, headers=h)
+    st, msg = status_of(id2)
+    assert st == "failed" and "o'rnatilmagan" in msg, (st, msg)
+    ss = get_session()
+    al = ss.query(Alert).filter(Alert.device_id == id2).first()
+    assert al is not None and al.severity == "high" and "Agent qayta ulanmadi" in al.reason and al.notified is False
+    ss.close()
+    page = client.get("/devices?hostname=WD-FAIL").get_data(as_text=True)
+    assert "Ulanmadi" in page and "Yana urinib ko" in page
 
-    s4 = get_session()
-    dev2 = s4.query(Device).filter(Device.id == device_id).first()
-    assert dev2.agent_restart_requested_at is None, "bayroq bir marta o'qilgandan keyin tozalanishi (consume-once) kerak edi"
-    s4.close()
+    # 5) Watchdog UMUMAN javob bermasa (agent eski/watchdog yo'q): 60s'dan keyin monitor 'failed' qiladi
+    client.post(f"/devices/{id3}/request_agent_restart")
+    assert monitor.run_once() == 0, "muddat hali o'tmagan"
+    ss = get_session(); d = ss.query(Device).filter(Device.id == id3).first()
+    d.agent_restart_requested_at = utcnow() - timedelta(seconds=61); ss.commit(); ss.close()
+    assert monitor.run_once() == 1
+    st, msg = status_of(id3)
+    assert st == "failed" and "watchdog ishlamayapti" in msg, (st, msg)
+    ss = get_session()
+    al = ss.query(Alert).filter(Alert.device_id == id3).first()
+    assert al is not None and al.severity == "high"
+    ss.close()
+    assert monitor.run_once() == 0, "qayta alert yaratilmasligi kerak"
 
-    # Qayta so'ralganda endi False (bayroq allaqachon iste'mol qilingan)
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "WATCHDOG-TEST-PC"}, headers=h)
-    assert r.status_code == 200 and r.get_json()["restart_requested"] is False, r.get_json()
+    # 6) Xizmat ishga tushdi, lekin heartbeat kelmadi -> 60s'dan keyin sababi shu
+    ss = get_session(); d = ss.query(Device).filter(Device.id == id3).first()
+    agent_restart.request_restart(ss, d, "x"); d.agent_restart_status = "restarted"
+    d.agent_restart_requested_at = utcnow() - timedelta(seconds=90); ss.commit(); ss.close()
+    assert monitor.run_once() == 1 and "heartbeat kelmadi" in status_of(id3)[1]
 
 
-check("Agent Watchdog: Dashboard 'qayta ulanishga urinish' tugmasi + /api/v1/agent_watchdog_check (consume-once)", _test_agent_watchdog_reconnect_button)
+check("Agent 'qayta ulanishga urinish': tugma -> watchdog (MAC/IP/nom bo'yicha) -> natija; 60s ichida ulanmasa Alert", _test_agent_watchdog_reconnect_button)
 
 print("\n=== 121b) Agent Watchdog: GPO skriptlari (Watchdog/Install/Deploy) va release workflow - statik tekshiruv ===")
 
@@ -9467,9 +9496,16 @@ def _test_agent_watchdog_gpo_scripts_static():
     assert "Get-Service" in watchdog and "Start-Service" in watchdog, (
         "Watchdog mahalliy xizmat holatini tekshirib, kerak bo'lsa ishga tushirishi kerak"
     )
-    assert "agent_watchdog_check" in watchdog and "Restart-Service" in watchdog, (
-        "Watchdog server bayrog'ini so'rab, True bo'lsa majburiy qayta ishga tushirishi kerak"
+    assert "agent_watchdog_check" in watchdog and "agent_watchdog_report" in watchdog, (
+        "Watchdog server bayrog'ini so'rab, natijani ham xabar qilishi kerak"
     )
+    assert "Stop-Process" in watchdog and "WaitForStatus('Running'" in watchdog, (
+        "Xizmat to'xtamasa jarayonni o'ldirib, Running bo'lishini kutishi kerak"
+    )
+    assert "-Minutes 1)" in install and "-Minutes 1)" in deploy and "IgnoreNew" in install, (
+        "Watchdog vazifasi har 1 daqiqada (60s muddatga sig'ishi uchun) va bir-biriga tushmasdan ishlashi kerak"
+    )
+    assert "agent_restart_monitor" in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "docker-compose.yml")).read()
     # Xavfsizlik: watchdog HECH QACHON kiruvchi ulanish/listener ochmasligi kerak (faqat chiquvchi so'rov)
     assert "Invoke-RestMethod" in watchdog and "-Method Post" in watchdog
 

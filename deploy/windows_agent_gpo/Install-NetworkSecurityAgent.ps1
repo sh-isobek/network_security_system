@@ -140,7 +140,7 @@ if ($service -and $service.Status -eq "Running") {
 # --- 7) Watchdog: alohida Scheduled Task (foydalanuvchi so'rovi -
 #     "kompyuter qayta yoqilgandan keyin agent ulana olmasa, avtomatik
 #     qayta ulanishga harakat qilinsin"). Bu ASOSIY agent xizmatidan
-#     MUSTAQIL - xizmat o'lik bo'lsa ham har 5 daqiqada ishlab, uni
+#     MUSTAQIL - xizmat o'lik bo'lsa ham har 1 daqiqada ishlab, uni
 #     qayta ishga tushirishga urinadi (batafsil: Watchdog-
 #     NetworkSecurityAgent.ps1'ning o'z izohi). ---
 $watchdogInstalled = Join-Path $InstallDir "Watchdog-NetworkSecurityAgent.ps1"
@@ -149,13 +149,13 @@ if (Test-Path $watchdogInstalled) {
         $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" `
             -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$watchdogInstalled`""
         $wdTrigger1 = New-ScheduledTaskTrigger -AtStartup
-        $wdTrigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+        $wdTrigger2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
         $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-        $wdSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable
+        $wdSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -MultipleInstances IgnoreNew
         Register-ScheduledTask -TaskName "NSA-Agent-Watchdog" -Action $wdAction -Trigger @($wdTrigger1, $wdTrigger2) `
             -Principal $wdPrincipal -Settings $wdSettings -Force | Out-Null
         Start-ScheduledTask -TaskName "NSA-Agent-Watchdog"
-        Write-Host "✅ Watchdog vazifasi o'rnatildi (har 5 daqiqada tekshiradi): NSA-Agent-Watchdog" -ForegroundColor Green
+        Write-Host "✅ Watchdog vazifasi o'rnatildi (har 1 daqiqada tekshiradi): NSA-Agent-Watchdog" -ForegroundColor Green
     } catch {
         Write-Warning "Watchdog vazifasini ro'yxatga olishda xato (asosiy o'rnatish muvaffaqiyatli, faqat watchdog ta'sirlandi): $_"
     }

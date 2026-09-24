@@ -39,6 +39,7 @@ from flask_limiter import Limiter
 from config.settings import LOG_LEVEL
 from db.database import get_session
 from db.models import HashBlacklist, Alert, Device, FileEvent, FileDecision, utcnow
+from db import agent_restart
 from threat_intel.local_checker import check_local
 from threat_intel.virustotal_checker import check_virustotal, vt_slot_busy
 from threat_intel.malwarebazaar_checker import check_malwarebazaar
@@ -82,32 +83,6 @@ if not AGENT_API_KEY:
         "Eski Agent'lar bilan orqaga moslik kerak bo'lsa, .env faylida "
         "AGENT_API_KEY'ga kuchli, tasodifiy qiymat bering."
     )
-
-
-# --- Rate limiting (XAVFSIZLIK: agent API'ga hech qanday so'rov chegarasi
-# yo'q edi - bitta buzilgan/zararli agent yoki tokenni o'g'irlagan
-# hujumchi cheksiz `check_hash` so'rovi yuborib, serverni va tashqi
-# VirusTotal/MalwareBazaar API kvotasini ishdan chiqarishi mumkin edi). ---
-def _rate_limit_key() -> str:
-    """
-    Har bir agent/token uchun ALOHIDA chegara (bitta buzilgan agent
-    boshqalarni bloklab qo'ymasin) - autentifikatsiya kaliti mavjud
-    bo'lsa shundan (xeshlab, log/xotirada ochiq saqlanmasin), aks holda
-    so'rov IP manzilidan foydalaniladi.
-    """
-    api_key = request.headers.get("X-API-Key", "")
-    if api_key:
-        return "key:" + hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
-    return "ip:" + (request.remote_addr or "unknown")
-
-
-limiter = Limiter(
-    key_func=_rate_limit_key,
-    app=app,
-    default_limits=[os.getenv("API_RATE_LIMIT_GLOBAL", "1000 per minute")],
-    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
-    headers_enabled=True,
-)
 
 
 # --- Rate limiting (XAVFSIZLIK: agent API'ga hech qanday so'rov chegarasi
@@ -611,6 +586,8 @@ def agent_heartbeat():
         device.agent_last_heartbeat = utcnow()
         device.agent_version = data.get("agent_version")
         device.agent_os = data.get("agent_os")
+        # Dashboard "qayta ulanishga urinish" so'rovi kutilayotgan bo'lsa - endi ulandi
+        agent_restart.mark_heartbeat(session, data["hostname"], ip=data["ip_address"], mac=device.mac_address)
         session.commit()
 
         return jsonify({"status": "ok"})
@@ -618,41 +595,63 @@ def agent_heartbeat():
         session.close()
 
 
+def _watchdog_rate_key():
+    """Watchdog so'rovlari kompyuter nomi bo'yicha cheklanadi (umumiy bootstrap kalitni ulashadigan
+    yuzlab kompyuter bitta chegarani baham ko'rib, bir-birini 429 bilan bloklab qo'ymasligi uchun)."""
+    return "wd:" + str((request.get_json(silent=True) or {}).get("hostname", "?")).lower()
+
+
+def _watchdog_identity(data):
+    return (data.get("hostname"), data.get("ips") or [], data.get("macs") or [])
+
+
 @app.route("/api/v1/agent_watchdog_check", methods=["POST"])
-@limiter.limit(os.getenv("API_RATE_LIMIT_WATCHDOG", "12 per minute"))
+@limiter.limit(os.getenv("API_RATE_LIMIT_WATCHDOG", "20 per minute"), key_func=_watchdog_rate_key)
 @require_api_key
 def agent_watchdog_check():
     """
-    Har bir kompyuterda GPO orqali o'rnatilgan, ASOSIY agent xizmatidan
-    MUSTAQIL "watchdog" Scheduled Task (`Watchdog-NetworkSecurityAgent.ps1`)
-    bir necha daqiqada shu endpoint'ni so'raydi: admin Dashboard'dan
-    "qayta ulanishga urinish" tugmasini bosgan bo'lsa, javobda
-    `restart_requested=true` qaytadi - watchdog shundan keyin xizmatni
-    MAJBURIY qayta ishga tushiradi (hozir "Running" ko'rinsa ham -
-    heartbeat osilib qolgan/zombi holatni ham qamrab oladi).
+    Har bir kompyuterda GPO orqali o'rnatilgan, ASOSIY agent xizmatidan MUSTAQIL "watchdog"
+    Scheduled Task (`Watchdog-NetworkSecurityAgent.ps1`, har daqiqada, ichida ~20s oralig'ida
+    bir necha marta) shu endpoint'ni so'raydi: admin Dashboard'dan "qayta ulanishga urinish"
+    tugmasini bosgan bo'lsa, javobda `restart_requested=true` qaytadi va so'rov `picked_up`
+    holatiga o'tadi (bir marta - consume-once). Watchdog xizmatni majburiy qayta ishga
+    tushirib, natijani `/api/v1/agent_watchdog_report` orqali xabar qiladi.
 
-    MUHIM (xavfsizlik): bu ATAYLAB faqat "so'rov-javob" (agent so'raydi,
-    server javob beradi) - server hech qachon o'z-o'zidan agentga
-    ulanmaydi/buyruq yubormaydi (bunday masofaviy ijro kanali bu
-    loyihada ATAYLAB YO'Q). Bayroq o'qilgach DARHOL tozalanadi
-    (consume-once) - aks holda xizmat har tsiklda qayta-qayta
-    o'chib-yonib turaverardi.
+    Kompyuter Dashboard'da turli hostname'lar bilan bir necha qator bo'lishi mumkin, shuning
+    uchun watchdog `hostname` bilan birga o'z `ips`/`macs` ro'yxatini ham yuboradi.
+
+    MUHIM (xavfsizlik): bu ATAYLAB faqat "so'rov-javob" - server hech qachon o'z-o'zidan
+    agentga ulanmaydi/buyruq yubormaydi (bunday masofaviy ijro kanali ATAYLAB YO'Q).
     """
     data = request.get_json(silent=True) or {}
-    hostname = data.get("hostname")
+    hostname, ips, macs = _watchdog_identity(data)
     if not hostname:
         return jsonify({"error": "hostname majburiy"}), 400
 
     session = get_session()
     try:
-        device = session.query(Device).filter(Device.hostname == hostname).first()
-        if device is None or device.agent_restart_requested_at is None:
-            return jsonify({"restart_requested": False})
-
-        device.agent_restart_requested_at = None
-        device.agent_restart_requested_by = None
+        rows = agent_restart.pick_up(session, hostname, ips, macs)
         session.commit()
-        return jsonify({"restart_requested": True})
+        return jsonify({"restart_requested": bool(rows)})
+    finally:
+        session.close()
+
+
+@app.route("/api/v1/agent_watchdog_report", methods=["POST"])
+@limiter.limit(os.getenv("API_RATE_LIMIT_WATCHDOG", "20 per minute"), key_func=_watchdog_rate_key)
+@require_api_key
+def agent_watchdog_report():
+    """Watchdog majburiy qayta ishga tushirish natijasini xabar qiladi: {hostname, success, message, ips, macs}."""
+    data = request.get_json(silent=True) or {}
+    hostname, ips, macs = _watchdog_identity(data)
+    if not hostname:
+        return jsonify({"error": "hostname majburiy"}), 400
+    session = get_session()
+    try:
+        rows = agent_restart.report(session, hostname, bool(data.get("success")),
+                                    str(data.get("message") or "")[:400], ips, macs)
+        session.commit()
+        return jsonify({"status": "ok", "updated": len(rows)})
     finally:
         session.close()
 

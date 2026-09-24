@@ -21,7 +21,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session, abort
+from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session, abort, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -32,6 +32,7 @@ from db.models import Device, Alert, Event, FileEvent, FileDecision, HashBlackli
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
 from dashboard.audit import log_action
+from db import agent_restart
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
 from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES
 
@@ -522,6 +523,12 @@ def devices():
                 "agent_last_heartbeat": d.agent_last_heartbeat,
                 "agent_version": d.agent_version, "agent_os": d.agent_os,
                 "agent_restart_requested_at": d.agent_restart_requested_at,
+                "agent_restart_status": d.agent_restart_status,
+                "agent_restart_message": d.agent_restart_message,
+                "agent_restart_finished_at": d.agent_restart_finished_at,
+                "restart_success_recent": bool(
+                    d.agent_restart_status == "success" and d.agent_restart_finished_at
+                    and utcnow() - d.agent_restart_finished_at < timedelta(minutes=10)),
             })
         return render_template(
             "devices.html", devices=devices_data, status_filter=status_filter,
@@ -541,31 +548,49 @@ def devices():
 @role_required("analyst")
 def request_agent_restart(device_id):
     """
-    "Qayta ulanishga urinish" tugmasi (tarmoqda ONLAYN, lekin Endpoint
-    Agent OFFLAYN bo'lgan qurilmalar uchun - masalan kompyuter qayta
-    yoqilgandan keyin agent xizmati avtomatik boshlanmagan holat).
+    "Qayta ulanishga urinish" tugmasi (Endpoint Agent OFFLAYN qurilmalar uchun).
 
-    Serverning o'zi qurilmaga HECH QACHON ulanmaydi/buyruq yubormaydi -
-    bu shunchaki bir bayroqni (`Device.agent_restart_requested_at`)
-    o'rnatadi. Shu kompyuterda GPO orqali o'rnatilgan, ASOSIY agent
-    xizmatidan MUSTAQIL "watchdog" Scheduled Task (xizmat o'zi o'lik
-    bo'lsa ham har necha daqiqada ishlaydi) bu bayroqni o'zi so'rab
-    ko'radi (`/api/v1/agent_watchdog_check`) va True bo'lsa xizmatni
-    majburiy qayta ishga tushiradi.
+    Serverning o'zi qurilmaga HECH QACHON ulanmaydi/buyruq yubormaydi - bu `pending` so'rov
+    qoldiradi. Shu kompyuterda ASOSIY agent xizmatidan MUSTAQIL ishlaydigan "watchdog"
+    Scheduled Task (har daqiqada, ~20s oralig'ida so'raydi) uni oladi, agent xizmatini
+    qayta ishga tushiradi va natijani xabar qiladi. `AGENT_RESTART_DEADLINE_SECONDS`
+    (60s) ichida agent heartbeat'i kelmasa - so'rov `failed` bo'lib, sababi Dashboard'da
+    ko'rsatiladi va `high` Alert yaratiladi (Telegram/Email orqali xabar beriladi).
     """
     session = get_session()
     try:
         device = session.query(Device).filter(Device.id == device_id).first()
         if device is None:
             abort(404)
-        device.agent_restart_requested_at = utcnow()
-        device.agent_restart_requested_by = current_user.username
-        session.commit()
-        log_action(current_user.username, "request_agent_restart", target_type="Device",
-                   target_id=device_id, details=device.hostname, ip_address=request.remote_addr)
-        flash(f"So'ralindi: {device.hostname or device.ip_address} - mahalliy watchdog vazifasi "
-              f"keyingi tekshiruvida (bir necha daqiqa ichida) xizmatni qayta ishga tushiradi.", "success")
+        if agent_restart.request_restart(session, device, current_user.username):
+            session.commit()
+            log_action(current_user.username, "request_agent_restart", target_type="Device",
+                       target_id=device_id, details=device.hostname, ip_address=request.remote_addr)
+            flash(f"So'ralindi: {device.hostname or device.ip_address}. Natija {agent_restart.DEADLINE_SECONDS} "
+                  f"soniya ichida shu yerda ko'rinadi.", "success")
+        else:
+            flash("Bu qurilma uchun qayta ulanish allaqachon jarayonda.", "error")
         return redirect(request.referrer or url_for("devices"))
+    finally:
+        session.close()
+
+
+@app.route("/devices/<int:device_id>/restart_status")
+@login_required
+def agent_restart_status(device_id):
+    """Sahifadagi JS shu endpoint'ni har bir necha soniyada so'rab, natijani ko'rsatadi."""
+    session = get_session()
+    try:
+        d = session.query(Device).filter(Device.id == device_id).first()
+        if d is None:
+            abort(404)
+        return jsonify({
+            "status": d.agent_restart_status,
+            "message": d.agent_restart_message,
+            "in_progress": d.agent_restart_status in agent_restart.IN_PROGRESS,
+            "requested_at": d.agent_restart_requested_at.isoformat() if d.agent_restart_requested_at else None,
+            "deadline_seconds": agent_restart.DEADLINE_SECONDS,
+        })
     finally:
         session.close()
 
