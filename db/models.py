@@ -11,10 +11,13 @@ Jadvallar:
 """
 from datetime import datetime, timezone
 import logging
+import os
+import time
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Text,
     ForeignKey, Boolean, Index, inspect, text
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, relationship
 
 logger = logging.getLogger("db.models")
@@ -554,7 +557,29 @@ def _sync_missing_columns(engine):
 def init_db(database_url: str):
     """Bazani va barcha jadvallarni yaratadi (agar mavjud bo'lmasa), va
     mavjud jadvallardagi yetishmayotgan ustunlarni avtomatik qo'shadi."""
-    engine = create_engine(database_url, echo=False)
-    Base.metadata.create_all(engine)
+    # MUHIM (real production xatosi: Dashboard "Internal Server Error" berib,
+    # F5 bosilgach qayta ochilardi): `pool_pre_ping` yo'q edi - DB ulanishi
+    # uzilganda (Postgres/server qayta yuklanganda, tarmoq/DNS uzilishida)
+    # pool'dagi ESKI ulanish birinchi so'rovda OperationalError berib 500
+    # qaytarardi, F5 esa yangi ulanish ochardi. `pool_pre_ping=True` har
+    # ulanishni ishlatishdan oldin tekshiradi va o'likni jimgina almashtiradi;
+    # `pool_recycle` juda eski ulanishlarni o'zi yangilaydi.
+    engine = create_engine(database_url, echo=False, pool_pre_ping=True, pool_recycle=1800)
+
+    # Boot paytida DB hali javob bermasligi mumkin (server qayta yuklanganda
+    # Docker DNS "postgres" nomini hal qilmay turadi) - avval worker/xizmat
+    # shu sabab qulab, konteyner qayta ishga tushishini kutardi. Endi bir necha
+    # marta qayta uriniladi.
+    retries = int(os.getenv("DB_CONNECT_RETRIES", "20"))
+    delay = float(os.getenv("DB_CONNECT_RETRY_DELAY", "3"))
+    for attempt in range(1, retries + 1):
+        try:
+            Base.metadata.create_all(engine)
+            break
+        except OperationalError as exc:
+            if attempt == retries:
+                raise
+            logger.warning(f"DB hali tayyor emas (urinish {attempt}/{retries}): {str(exc).splitlines()[0]}")
+            time.sleep(delay)
     _sync_missing_columns(engine)
     return engine

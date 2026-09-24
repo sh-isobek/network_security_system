@@ -1178,6 +1178,16 @@ def forbidden(e):
     return render_template("error.html", code=403, message="Bu sahifaga kirish huquqingiz yo'q"), 403
 
 
+@app.errorhandler(500)
+def internal_error(e):
+    # Xom "Internal Server Error" o'rniga tushunarli sahifa; sababi (traceback)
+    # esa aniq logga yoziladi - avval takroriy 500'ning sababini keyin topib bo'lmasdi.
+    app.logger.error("500 %s %s: %r", request.method, request.path, getattr(e, "original_exception", e),
+                     exc_info=getattr(e, "original_exception", None))
+    return render_template("error.html", code=500,
+                           message="Vaqtinchalik xatolik. Sahifani qayta yuklang (F5) - muammo davom etsa, administratorga xabar bering."), 500
+
+
 if __name__ == "__main__":
     port = int(os.getenv("DASHBOARD_PORT", "8080"))
     app.run(host="0.0.0.0", port=port)

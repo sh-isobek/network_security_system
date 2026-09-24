@@ -388,7 +388,10 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 1g
-    command: gunicorn -w 2 -b 0.0.0.0:8080 dashboard.app:app
+    # 2 ta sinxron worker + 30s timeout: bitta sekin so'rov butun Dashboard'ni
+    # bloklab, worker o'ldirilardi. Endi 3 worker x 4 thread, 120s timeout va
+    # access log (500/timeout sabablarini keyin topish uchun).
+    command: gunicorn -w 3 --threads 4 --timeout 120 --access-logfile - -b 0.0.0.0:8080 dashboard.app:app
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}

@@ -9487,6 +9487,70 @@ def _test_agent_watchdog_gpo_scripts_static():
 
 check("Agent Watchdog: GPO skriptlari (mahalliy+server tekshiruvi, Scheduled Task) va release paketi - statik", _test_agent_watchdog_gpo_scripts_static)
 
+print("\n=== 122) Dashboard 'Internal Server Error' (F5 bosilgach ketardi): DB pool_pre_ping, boot retry, 500 sahifasi, gunicorn ===")
+
+
+def _test_dashboard_intermittent_500_fixes():
+    """
+    Real production: /devices vaqti-vaqti bilan xom "Internal Server Error" berib, F5 bosilgach
+    ochilardi. Sabab: `create_engine()` da `pool_pre_ping` yo'q edi - uzilgan (eski) DB ulanishi
+    birinchi so'rovda OperationalError berardi. Bundan tashqari boot paytida DB hali tayyor
+    bo'lmasa worker butunlay qulardi. Bu test: (1) engine pre_ping/recycle bilan ekanini,
+    (2) HAQIQIY Postgres'da ulanishlarni pg_terminate_backend bilan uzgandan keyin ham so'rov
+    o'tishini, (3) 500 da xom matn emas, tushunarli sahifa chiqishini, (4) gunicorn sozlamasini
+    tekshiradi.
+    """
+    import subprocess, tempfile
+    from unittest.mock import patch
+    from db.models import init_db
+    from sqlalchemy import text
+
+    # 1) Har qanday baza uchun engine sozlamasi
+    eng = init_db("sqlite:///" + os.path.join(tempfile.mkdtemp(prefix="nsa_pp_"), "t.db"))
+    assert eng.pool._pre_ping is True, "pool_pre_ping yoqilgan bo'lishi kerak edi"
+    assert eng.pool._recycle == 1800
+
+    # 2) Haqiqiy Postgres: ulanish uzilgandan keyin ham ishlashi (docker mavjud bo'lsa)
+    if subprocess.run(["docker", "version"], capture_output=True).returncode == 0:
+        name = "nsa_test_pg_preping"
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        subprocess.run(["docker", "run", "-d", "--name", name, "-e", "POSTGRES_USER=t", "-e", "POSTGRES_PASSWORD=t",
+                        "-e", "POSTGRES_DB=t", "-p", "55438:5432", "postgres:15-alpine"], check=True, capture_output=True)
+        try:
+            os.environ["DB_CONNECT_RETRY_DELAY"] = "1"
+            pg = init_db("postgresql://t:t@127.0.0.1:55438/t")   # DB hali ko'tarilayotgan bo'lishi mumkin - retry
+            with pg.connect() as c:
+                c.execute(text("select 1"))
+            subprocess.run(["docker", "exec", name, "psql", "-U", "t", "-d", "t", "-qc",
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='t' AND pid<>pg_backend_pid()"],
+                           check=True, capture_output=True)
+            with pg.connect() as c:
+                assert c.execute(text("select 1")).scalar() == 1, "uzilgan ulanishdan keyin so'rov o'tishi kerak edi"
+        finally:
+            os.environ.pop("DB_CONNECT_RETRY_DELAY", None)
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+    # 3) 500 - xom "Internal Server Error" emas, tushunarli sahifa (+ logga sabab)
+    from dashboard.app import app as dash_app
+    from dashboard.create_user import create_user
+    create_user("err500_admin", "err500pass12345", "admin")
+    dash_app.secret_key = "test-secret-500"
+    client = _dash_client(dash_app)
+    client.post("/login", data={"username": "err500_admin", "password": "err500pass12345"})
+    with patch("dashboard.app.get_session", side_effect=RuntimeError("sun'iy DB xatosi")):
+        resp = client.get("/devices")
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 500 and "Vaqtinchalik xatolik" in body, (resp.status_code, body[:200])
+    assert "<h1>Internal Server Error</h1>" not in body
+
+    # 4) gunicorn: bitta sekin so'rov butun Dashboard'ni bloklamasligi va sabab logga tushishi
+    import yaml
+    dcmd = yaml.safe_load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "docker-compose.yml")))["services"]["dashboard"]["command"]
+    assert "--threads" in dcmd and "--timeout" in dcmd and "--access-logfile" in dcmd, dcmd
+
+
+check("Dashboard 'Internal Server Error': pool_pre_ping (real Postgres, uzilgan ulanish), boot retry, 500 sahifasi, gunicorn", _test_dashboard_intermittent_500_fixes)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
