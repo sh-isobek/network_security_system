@@ -86,7 +86,17 @@ if ($links | Where-Object { $_ -match "Domain Controllers" }) { Log "OGOHLANTIRI
 # --- 3) XML tayyorlash ---
 $templatePath = Join-Path $PSScriptRoot "ScheduledTasks.template.xml"
 if (-not (Test-Path $templatePath)) { Log "XATO: shablon topilmadi: $templatePath"; exit 1 }
-$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$deployPath`""
+# MUHIM (real production'da aniqlangan): eski "NetworkSecurityAgent Deploy" vazifasi FS1411TAS'da har soat
+# ishga tushib, 30 daqiqalik limitga yetib majburan to'xtatilgan (Task Scheduler Event 329) - skript
+# OSILIB qolgan va deploy.log'ga bitta qator ham yozilmagan. Shuning uchun yangi vazifa: (1) HAR QADAMNI
+# lokal gpp-task.log'ga yozadi (qayerda osilishi ko'rinadi), (2) UNC yo'lni Start-Job + 45s TIMEOUT bilan
+# tekshiradi (osilgan tarmoq yo'li butun vazifani qotirib qo'ymaydi), (3) bir nechta yo'lni sinaydi.
+$dcShare = "\\$domainDns\SYSVOL\$domainDns\scripts\NetworkSecurityAgent\Deploy-NetworkSecurityAgent.ps1"
+$cmd = @"
+`$l='C:\ProgramData\NetworkSecurityAgent\gpp-task.log'; try { New-Item -ItemType Directory -Force (Split-Path `$l) | Out-Null } catch {}; function W(`$m) { try { Add-Content -Path `$l -Value ((Get-Date -Format s)+' '+`$m) } catch {} }; W 'vazifa boshlandi'; `$ok=`$null; foreach (`$c in '$deployPath','$dcShare') { `$j = Start-Job -ScriptBlock { param(`$p) Test-Path `$p } -ArgumentList `$c; if (Wait-Job `$j -Timeout 45) { `$r = Receive-Job `$j } else { `$r = 'TIMEOUT' }; Remove-Job `$j -Force -ErrorAction SilentlyContinue; W ('Test-Path '+`$c+' -> '+`$r); if (`$r -eq `$true) { `$ok=`$c; break } }; if (`$ok) { W 'Deploy ishga tushdi'; try { & `$ok } catch { W ('Deploy XATO: '+`$_) }; W 'Deploy tugadi' } else { W 'Deploy skripti topilmadi/erishilmadi' }
+"@
+$cmd = ($cmd -replace "`r?`n", " ").Trim()
+$taskArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"$cmd`""
 $now = Get-Date
 $action = if ($Remove) { "D" } else { "R" }
 $xmlText = (Get-Content $templatePath -Raw -Encoding UTF8).
@@ -101,15 +111,33 @@ $xmlText = (Get-Content $templatePath -Raw -Encoding UTF8).
 [xml]$newDoc = $xmlText   # to'g'ri XML ekanini tekshiradi (xato bo'lsa shu yerda to'xtaydi)
 $newTask = $newDoc.ScheduledTasks.TaskV2
 
+# Eski (osilib qolgan) vazifani mijozlardan O'CHIRISH: GPP "D" (Delete) yozuvi - faqat -Remove bo'lmaganda
+$legacyName = "NetworkSecurityAgent Deploy"
+$legacyDoc = $null
+if (-not $Remove) {
+    $legacyXml = (Get-Content $templatePath -Raw -Encoding UTF8).
+        Replace("{{TASK_NAME}}", $legacyName).Replace("{{CHANGED}}", $now.ToString("yyyy-MM-dd HH:mm:ss")).
+        Replace("{{UID}}", "{$([Guid]::NewGuid().ToString().ToUpper())}").Replace("{{ACTION}}", "D").
+        Replace("{{START}}", $now.AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ss")).
+        Replace("{{INTERVAL}}", "$IntervalMinutes").Replace("{{RANDOM}}", "$RandomDelayMinutes").
+        Replace("{{ARGS}}", "-NoProfile")
+    [xml]$legacyDoc = $legacyXml
+}
+
 $prefDir = Join-Path $sysvolPolicies "{$($gpo.Id)}\Machine\Preferences\ScheduledTasks"
 $prefFile = Join-Path $prefDir "ScheduledTasks.xml"
 if (Test-Path $prefFile) {
     [xml]$doc = Get-Content $prefFile -Raw -Encoding UTF8
     foreach ($t in @($doc.ScheduledTasks.ChildNodes | Where-Object { $_.name -eq $TaskName })) { [void]$doc.ScheduledTasks.RemoveChild($t) }
+    if ($legacyDoc) {
+        foreach ($t in @($doc.ScheduledTasks.ChildNodes | Where-Object { $_.name -eq $legacyName })) { [void]$doc.ScheduledTasks.RemoveChild($t) }
+        [void]$doc.ScheduledTasks.AppendChild($doc.ImportNode($legacyDoc.ScheduledTasks.TaskV2, $true))
+    }
     [void]$doc.ScheduledTasks.AppendChild($doc.ImportNode($newTask, $true))
     Log "Mavjud ScheduledTasks.xml yangilanadi (boshqa vazifalar saqlanadi)"
 } else {
     $doc = $newDoc
+    if ($legacyDoc) { [void]$doc.ScheduledTasks.InsertBefore($doc.ImportNode($legacyDoc.ScheduledTasks.TaskV2, $true), $doc.ScheduledTasks.FirstChild) }
     Log "Yangi ScheduledTasks.xml yaratiladi"
 }
 
