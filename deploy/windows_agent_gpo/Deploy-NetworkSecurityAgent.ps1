@@ -171,7 +171,7 @@ try {
     # -Exclude orqali eski konfiguratsiya fayllarini saqlab qolamiz
     # (agar mahalliy sozlash bo'lsa, ustidan yozilmasin)
     Copy-Item -Path "$ServerShare\*" -Destination $InstallDir -Recurse -Force `
-        -Exclude @("*.local.cfg")
+        -Exclude @("*.local.cfg", "Publish-AgentDeployGpoTask.ps1", "ScheduledTasks.template.xml", "Sync-AgentFromGitHub.ps1", "Install-AgentAutoUpdate.ps1")
     Write-DeployLog "Fayllar nusxalandi: $ServerShare -> $InstallDir"
 } catch {
     Write-DeployLog "XATOLIK: fayllarni nusxalashda muvaffaqiyatsizlik: $_"

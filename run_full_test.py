@@ -9637,6 +9637,58 @@ def _test_agent_loopback_ip_normalized():
 
 check("Agent IP 127.0.0.1: server yaroqsiz IP'ni haqiqiy manba bilan almashtiradi (kompyuterlar birlashib ketmaydi)", _test_agent_loopback_ip_normalized)
 
+print("\n=== 124) GPO orqali agentni QAYTA YOQMASDAN yetkazish: GPP Scheduled Task shabloni va Publish skripti (statik) ===")
+
+
+def _test_gpo_scheduled_task_publish_static():
+    """
+    Foydalanuvchi: agentni barcha kompyuterlarga GPO orqali majburiy o'rnat, lekin kompyuterlar qayta
+    yoqilmasin. Startup skripti faqat yoqilganda ishlaydi - shuning uchun GPP Scheduled Task ishlatiladi.
+    PowerShell bu yerda yo'q - shablon Python'da to'ldirilib tekshiriladi, skript esa statik.
+    """
+    import xml.etree.ElementTree as ET
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", "windows_agent_gpo")
+    tpl = open(os.path.join(base, "ScheduledTasks.template.xml"), encoding="utf-8").read()
+    filled = (tpl.replace("{{TASK_NAME}}", "NSA-Agent-Deploy").replace("{{CHANGED}}", "2026-09-24 10:00:00")
+              .replace("{{UID}}", "{11111111-2222-3333-4444-555555555555}").replace("{{ACTION}}", "R")
+              .replace("{{START}}", "2026-09-24T10:00:00").replace("{{INTERVAL}}", "30").replace("{{RANDOM}}", "5")
+              .replace("{{ARGS}}", "-NoProfile -ExecutionPolicy Bypass -File &quot;\\\\d\\s\\x.ps1&quot;"))
+    assert "{{" not in filled, "to'ldirilmagan o'rin belgisi qoldi"
+    root = ET.fromstring(filled.encode("utf-8"))
+    assert root.tag == "ScheduledTasks" and root.attrib["clsid"] == "{CC63F200-7309-4ba0-B154-A71CD118DBCC}"
+    task = root[0]
+    assert task.tag == "TaskV2" and task.attrib["clsid"] == "{D8896631-B747-47a7-84A6-C155337F3BC8}"
+    props = task[0]
+    assert props.attrib["runAs"] == "NT AUTHORITY\\System" and props.attrib["action"] == "R"
+    t = props[0]
+    assert t.find("Triggers/RegistrationTrigger") is not None, "GPO qo'llanganda darhol ishlashi kerak"
+    assert t.find("Triggers/TimeTrigger/Repetition/Interval").text == "PT30M"
+    assert t.find("Triggers/TimeTrigger/RandomDelay").text == "PT5M", "yuzlab kompyuter bir vaqtda ishlamasligi kerak"
+    assert t.find("Settings/MultipleInstancesPolicy").text == "IgnoreNew"
+    assert t.find("Settings/StartWhenAvailable").text == "true"
+    args = t.find("Actions/Exec/Arguments").text
+    assert '-File "' in args, args
+
+    pub = open(os.path.join(base, "Publish-AgentDeployGpoTask.ps1"), encoding="utf-8").read()
+    for needle in ("-DryRun", "Backup-GPO", "gPCMachineExtensionNames", "AADCED64-746C-4633-A97C-D61349046527",
+                   "CAB54552-DEEA-4691-817E-ED4A4D1AFC72", "versionNumber", "GPT.INI", "Invoke-GPUpdate",
+                   "Deploy-NetworkSecurityAgent"):
+        assert needle in pub, needle
+    # Kompyuterlarni qayta yoqish/sessiyani uzish MUTLAQO mumkin emas
+    line = [l for l in pub.splitlines() if "Invoke-GPUpdate -Computer" in l][0]
+    assert "-Boot" not in line and "-LogOff" not in line, line
+    assert "Restart-Computer" not in pub and "shutdown" not in pub.lower()
+    assert pub.count("{") == pub.count("}")
+
+    # Klientlarga (Deploy nusxalashi) admin fayllari tushmasligi va release paketiga kirishi
+    dep = open(os.path.join(base, "Deploy-NetworkSecurityAgent.ps1"), encoding="utf-8").read()
+    assert "Publish-AgentDeployGpoTask.ps1" in [l for l in dep.splitlines() if "-Exclude @(" in l][0]
+    wf = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github", "workflows", "build-windows-agent.yml")).read()
+    assert "Publish-AgentDeployGpoTask.ps1" in wf and "ScheduledTasks.template.xml" in wf
+
+
+check("GPO orqali qayta yoqmasdan yetkazish: GPP Scheduled Task shabloni + Publish skripti (statik, qayta yoqish yo'q)", _test_gpo_scheduled_task_publish_static)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
