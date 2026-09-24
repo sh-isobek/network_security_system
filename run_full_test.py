@@ -1746,7 +1746,7 @@ print("\n=== 24) AUDIT LOG (real HTTP orqali, login/acknowledge/user boshqaruvi)
 
 
 def _test_audit_log():
-    from db.models import AuditLog, utcnow
+    from db.models import AuditLog
     from dashboard import app as dash_app
     from dashboard.create_user import create_user
 
@@ -9378,7 +9378,7 @@ def _test_agent_watchdog_reconnect_button():
     import api.server as api_server
     import engine.agent_restart_monitor as monitor
     from db import agent_restart
-    from db.models import AuditLog
+    from db.models import AuditLog, utcnow
     from dashboard.app import app as dash_app
     from dashboard.create_user import create_user
 
