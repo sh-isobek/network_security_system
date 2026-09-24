@@ -9695,10 +9695,10 @@ def _test_gpo_scheduled_task_publish_static():
     assert pub.count("{") == pub.count("}")
     # Real production: eski vazifa 30 daqiqalik limitga yetib osilgan (Event 329, deploy.log bo'sh) ->
     # yangi vazifa UNC yo'lni timeout bilan tekshirishi, lokal iz yozishi va eskisini o'chirishi shart
-    for needle in ("Start-Job", "Wait-Job", "-Timeout 45", "gpp-task.log", 'legacyName = "NetworkSecurityAgent Deploy"',
+    for needle in ("Start-Job", "Wait-Job", "-Timeout 45", "gpp-task.log", "WaitForExit(480000)", "gpp-deploy.err", 'legacyName = "NetworkSecurityAgent Deploy"',
                    '{{ACTION}}", "D"'):
         assert needle in pub, needle
-    assert "-WindowStyle Hidden" not in pub
+    assert "-WindowStyle Hidden -Command" not in pub
 
     # Klientlarga (Deploy nusxalashi) admin fayllari tushmasligi va release paketiga kirishi
     dep = open(os.path.join(base, "Deploy-NetworkSecurityAgent.ps1"), encoding="utf-8").read()
