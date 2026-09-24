@@ -2509,6 +2509,7 @@ print("\n=== 37) NETWORK DISCOVERY - Scheduled + Differential Scan (real tarmoq,
 def _test_differential_scan():
     import subprocess
     from datetime import timedelta
+    from unittest.mock import patch
     from db.models import utcnow
 
     if subprocess.run(["which", "arp-scan"], capture_output=True).returncode != 0:
@@ -2599,15 +2600,22 @@ def _test_differential_scan():
     s.commit()
     s.close()
 
-    result3 = _scan()
-    assert "203.0.113.250" in result3["disappeared"], "Ghost qurilma 'yo'qolgan' deb belgilanmadi"
-    if tracked_ip:
-        assert tracked_ip in result3["reappeared"], (
-            f"{tracked_ip} 'qayta paydo bo'lgan' deb belgilanishi kerak edi. Natija: {result3}"
-        )
+    # Quyidagi ikki sikl sintetik holatni tekshiradi. Real host skanlar orasida
+    # yo'qolishi mumkin (ayniqsa GitHub Actions runner tarmog'ida), shuning
+    # uchun reappeared/dedup natijasini deterministik live IP ro'yxati bilan
+    # tekshiramiz. Dastlabki ikki sikl yuqorida baribir real tarmoqda bajarildi.
+    synthetic_live_ips = [tracked_ip] if tracked_ip else []
+    with patch("network_discovery.scheduler.arp_scan", return_value=[]), \
+         patch("network_discovery.scheduler.ping_sweep", return_value=synthetic_live_ips):
+        result3 = _scan()
+        assert "203.0.113.250" in result3["disappeared"], "Ghost qurilma 'yo'qolgan' deb belgilanmadi"
+        if tracked_ip:
+            assert tracked_ip in result3["reappeared"], (
+                f"{tracked_ip} 'qayta paydo bo'lgan' deb belgilanishi kerak edi. Natija: {result3}"
+            )
 
-    # Takroriy "disappeared" yozuvi yaratilmasligi
-    result4 = _scan()
+        # Takroriy "disappeared" yozuvi yaratilmasligi
+        result4 = _scan()
     assert "203.0.113.250" not in result4["disappeared"], "Takroriy 'disappeared' yozuvi yaratilmasligi kerak edi"
 
     s = get_session()
