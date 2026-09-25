@@ -13,18 +13,27 @@
 </form>
 {% else %}<span style="color: #65748b; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
 {% endmacro %}
-<h1>Tekshirilgan fayllar ({{ files | length }})</h1>
+<h1>Tekshirilgan fayllar ({{ filtered_count }} ta tekshiruv)</h1>
+<div style="display:flex; flex-wrap:wrap; gap:10px; margin:0 0 16px; color:#46566f; font-size:13px;">
+    <a href="{{ url_for('files', period='today') }}" {% if period_filter == 'today' %}class="active"{% endif %}><strong>{{ today_count }}</strong> bugun tekshirilgan fayl</a>
+    <a href="{{ url_for('files', period='all') }}" {% if period_filter == 'all' %}class="active"{% endif %}><strong>{{ total_count }}</strong> shu kungacha tekshirilgan fayl</a>
+    <span><strong>{{ unique_count }}</strong> noyob fayl (SHA-256)</span>
+    {% if period_filter == 'today' or verdict_filter or channel_filter or filename_filter or path_filter or ip_filter or sha256_filter %}
+    <span><strong>{{ filtered_count }}</strong> filtrga mos tekshiruv, <strong>{{ filtered_unique_count }}</strong> noyob fayl</span>
+    {% endif %}
+</div>
 
 <div class="filters">
-    <a href="/files" class="{% if not verdict_filter %}active{% endif %}">Hammasi</a>
-    <a href="/files?verdict=malicious" class="{% if verdict_filter == 'malicious' %}active{% endif %}">Zararli</a>
-    <a href="/files?verdict=suspicious" class="{% if verdict_filter == 'suspicious' %}active{% endif %}">Shubhali</a>
-    <a href="/files?verdict=clean" class="{% if verdict_filter == 'clean' %}active{% endif %}">Toza</a>
-    <a href="/files?verdict=unknown" class="{% if verdict_filter == 'unknown' %}active{% endif %}">Noma'lum</a>
-    <a href="/files?channel=endpoint_agent" class="{% if channel_filter == 'endpoint_agent' %}active{% endif %}">Faqat Endpoint Agent</a>
+    <a href="/files" class="{% if not verdict_filter %}active{% endif %}">Hammasi ({{ total_count }})</a>
+    <a href="/files?verdict=malicious" class="{% if verdict_filter == 'malicious' %}active{% endif %}">Zararli ({{ verdict_counts.get('malicious', 0) }})</a>
+    <a href="/files?verdict=suspicious" class="{% if verdict_filter == 'suspicious' %}active{% endif %}">Shubhali ({{ verdict_counts.get('suspicious', 0) }})</a>
+    <a href="/files?verdict=clean" class="{% if verdict_filter == 'clean' %}active{% endif %}">Toza ({{ verdict_counts.get('clean', 0) }})</a>
+    <a href="/files?verdict=unknown" class="{% if verdict_filter == 'unknown' %}active{% endif %}">Noma'lum ({{ verdict_counts.get('unknown', 0) }})</a>
+    <a href="/files?channel=endpoint_agent" class="{% if channel_filter == 'endpoint_agent' %}active{% endif %}">Endpoint Agent</a>
 </div>
 
 <form method="GET" action="/files" class="filter-form">
+    <input type="hidden" name="period" value="{{ period_filter }}">
     <input type="hidden" name="verdict" value="{{ verdict_filter }}">
     <input type="hidden" name="channel" value="{{ channel_filter }}">
     <label>Fayl nomi
@@ -52,7 +61,7 @@
     {% for f in files %}
     <tr>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
-        <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color: #65748b; font-size:11px;">(arxivdan)</span>{% endif %}</td>
+        <td>{% if f.filename %}{{ f.filename }}{% else %}<span style="color:#65748b;">nom yuborilmagan (eski upload)</span>{% endif %}{% if f.parent_file_event_id %} <span style="color: #65748b; font-size:11px;">(arxivdan)</span>{% endif %}</td>
         <td class="mono" style="font-size: 11px; min-width: 240px; max-width: 460px; white-space: normal; word-break: break-all;" title="{{ f.device_file_path or '' }}">
             {%- if f.device_file_path -%}
                 {{ f.device_file_path }}
@@ -86,6 +95,16 @@
     </tr>
     {% endfor %}
 </table></div>
+
+{% if total_pages > 1 %}
+{% set pargs = request.args.to_dict() %}
+{% set _ = pargs.pop('page', None) %}
+<div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+    {% if page > 1 %}<a href="{{ url_for('files', page=page - 1, **pargs) }}">&laquo; Oldingi</a>{% endif %}
+    <span style="color:#65748b; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta tekshiruv)</span>
+    {% if page < total_pages %}<a href="{{ url_for('files', page=page + 1, **pargs) }}">Keyingi &raquo;</a>{% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="empty">Hech qanday fayl topilmadi</div>
 {% endif %}

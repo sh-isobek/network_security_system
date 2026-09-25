@@ -9710,6 +9710,61 @@ def _test_gpo_scheduled_task_publish_static():
 check("GPO orqali qayta yoqmasdan yetkazish: GPP Scheduled Task shabloni + Publish skripti (statik, qayta yoqish yo'q)", _test_gpo_scheduled_task_publish_static)
 
 # ---------------------------------------------------------------------------
+print("\n=== 125) Fayllar: ekrandagi sonlar haqiqiy jami/filtr/noyob qiymatlar, sahifalash ===")
+
+
+def _test_files_exact_counts_and_pagination():
+    """`/files` endi render qilingan 200 qatorni jami deb ko'rsatmasligi shart."""
+    import uuid
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+
+    prefix = "exact-count-test-" + uuid.uuid4().hex + "-"
+    s = get_session()
+    entries = []
+    shared_sha = "ec" * 32
+    # 201 ta noyob SHA + bitta SHA ikki xil Endpoint yozuvida: 203 tekshiruv,
+    # 202 noyob fayl va kamida ikki sahifa bo'lishi kerak.
+    for i in range(201):
+        entries.append(FileEvent(filename=f"{prefix}{i:03}.bin", src_ip="172.16.254.10",
+                                 sha256=(f"{i:064x}"), verdict="clean", channel="endpoint_agent"))
+    entries.extend([
+        FileEvent(filename=f"{prefix}uploaded.bin", src_ip="172.16.254.10", sha256=shared_sha,
+                  verdict="clean", channel="endpoint_upload"),
+        FileEvent(filename=f"{prefix}endpoint.bin", src_ip="172.16.254.10", sha256=shared_sha,
+                  verdict="unknown", channel="endpoint_agent"),
+        FileEvent(filename=f"{prefix}yesterday.bin", src_ip="172.16.254.10", sha256="ed" * 32,
+                  verdict="clean", channel="endpoint_agent", timestamp=utcnow() - timedelta(days=1)),
+    ])
+    s.add_all(entries); s.commit(); s.close()
+
+    create_user("exact_count_admin", "exact-count-pass", "admin")
+    dashboard_app.secret_key = "test-secret-exact-file-counts"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "exact_count_admin", "password": "exact-count-pass"})
+
+    html = client.get(f"/files?filename={prefix}").get_data(as_text=True)
+    assert "Tekshirilgan fayllar (204 ta tekshiruv)" in html, html[:2000]
+    assert "bugun tekshirilgan fayl" in html and "shu kungacha tekshirilgan fayl" in html
+    assert 'href="/files?period=today"' in html
+    assert 'href="/files?period=all"' in html
+    compact_html = " ".join(html.split())
+    assert "<strong>204</strong> filtrga mos tekshiruv, <strong>203</strong> noyob fayl" in compact_html, html[:2500]
+    assert "Sahifa 1 / 2 (204 ta tekshiruv)" in html
+    today_html = client.get(f"/files?period=today&filename={prefix}").get_data(as_text=True)
+    assert "Tekshirilgan fayllar (203 ta tekshiruv)" in today_html
+    assert f"{prefix}yesterday.bin" not in today_html
+    # Ikkinchi sahifa ham haqiqatan eng eski uch yozuvga yetadi.
+    html2 = client.get(f"/files?filename={prefix}&page=2").get_data(as_text=True)
+    assert f"{prefix}000.bin" in html2
+    # Endpoint tugmasi server-upload yozuvlarini ham yashirmasligi kerak.
+    endpoint_html = client.get(f"/files?channel=endpoint_agent&filename={prefix}").get_data(as_text=True)
+    assert f"{prefix}uploaded.bin" in endpoint_html and f"{prefix}endpoint.bin" in endpoint_html
+
+
+check("Fayllar: haqiqiy jami/noyob/filtr sonlari va 200 qatorlik sahifalash", _test_files_exact_counts_and_pagination)
+
+# ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
 check("Uploaded samples are deleted on success and failure", run_upload_tests)

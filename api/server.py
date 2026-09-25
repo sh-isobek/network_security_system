@@ -227,8 +227,10 @@ def scan_file_upload():
     # Sample has already been deleted. Only hash and analysis survive in DB.
     session = get_session()
     try:
+        file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else None
         session.add(FileEvent(
             src_ip=request.remote_addr or "unknown",
+            filename=filename, file_ext=file_ext, size=request.content_length,
             sha256=result["sha256"], protocol="endpoint", channel="endpoint_upload",
             checked=True, deep_scanned=True, verdict=result["verdict"],
             threat_score=result["score"], checked_sources=result["source"],
