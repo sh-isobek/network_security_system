@@ -146,7 +146,9 @@ class UploadAPITests(unittest.TestCase):
                     self.server.FileEvent.id.desc()).first()
             self.assertIsNotNone(row)
             self.assertIsNone(row.stored_path)
-            self.assertIsNone(row.filename)
+            self.assertEqual(row.filename, "document.txt")
+            self.assertEqual(row.file_ext, "txt")
+            self.assertEqual(row.size, len(self.data))
             self.assertTrue(row.deep_scanned)
 
     def test_real_http_agent_upload_and_cleanup(self):
