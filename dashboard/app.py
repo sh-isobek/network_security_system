@@ -25,6 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, render_template, request, Response, send_file, redirect, url_for, flash, session as flask_session, abort, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
+from sqlalchemy import func
 
 from datetime import timedelta
 
@@ -35,7 +36,7 @@ from dashboard import mfa as mfa_module
 from dashboard.audit import log_action
 from db import agent_restart
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
-from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES
+from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES, TIMEZONE_OFFSET_HOURS
 from dashboard.i18n import SUPPORTED_LANGUAGES, translate_html
 
 
@@ -762,6 +763,9 @@ def web_activity():
 
 
 
+FILES_PAGE_SIZE = 200
+
+
 @app.route("/files")
 @login_required
 def files():
@@ -773,12 +777,51 @@ def files():
         path_filter = request.args.get("path", "").strip()
         ip_filter = request.args.get("ip", "").strip()
         sha256_filter = request.args.get("sha256", "").strip()
+        period_filter = request.args.get("period", "")
+        if period_filter not in ("today", "all"):
+            period_filter = ""
+
+        # The total displayed by this page must be the actual database total,
+        # rather than the length of the 200-row render window.
+        total_count = session.query(func.count(FileEvent.id)).scalar() or 0
+        # Baza UTC saqlaydi, lekin Dashboard foydalanuvchiga Toshkent
+        # vaqtini ko'rsatadi. "Bugun" ham aynan shu mahalliy kun chegarasi
+        # bo'yicha hisoblanishi kerak.
+        local_now = utcnow() + timedelta(hours=TIMEZONE_OFFSET_HOURS)
+        local_day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = local_day_start - timedelta(hours=TIMEZONE_OFFSET_HOURS)
+        tomorrow_start_utc = today_start_utc + timedelta(days=1)
+        today_count = (
+            session.query(func.count(FileEvent.id))
+            .filter(FileEvent.timestamp >= today_start_utc, FileEvent.timestamp < tomorrow_start_utc)
+            .scalar() or 0
+        )
+        unique_count = (
+            session.query(func.count(func.distinct(FileEvent.sha256)))
+            .filter(FileEvent.sha256.isnot(None), FileEvent.sha256 != "")
+            .scalar() or 0
+        )
+        verdict_counts = dict(
+            session.query(FileEvent.verdict, func.count(FileEvent.id))
+            .group_by(FileEvent.verdict)
+            .all()
+        )
 
         query = session.query(FileEvent)
+        if period_filter == "today":
+            query = query.filter(
+                FileEvent.timestamp >= today_start_utc,
+                FileEvent.timestamp < tomorrow_start_utc,
+            )
         if verdict_filter:
             query = query.filter(FileEvent.verdict == verdict_filter)
         if channel_filter:
-            query = query.filter(FileEvent.channel == channel_filter)
+            # A server upload is still an Endpoint Agent's scan. Showing both
+            # records makes the filter's count agree with the displayed data.
+            if channel_filter == "endpoint_agent":
+                query = query.filter(FileEvent.channel.in_(("endpoint_agent", "endpoint_upload")))
+            else:
+                query = query.filter(FileEvent.channel == channel_filter)
         if filename_filter:
             query = query.filter(FileEvent.filename.ilike(f"%{filename_filter}%"))
         if path_filter:
@@ -788,12 +831,31 @@ def files():
         if sha256_filter:
             query = query.filter(FileEvent.sha256.ilike(f"{sha256_filter}%"))
 
-        all_files = query.order_by(FileEvent.timestamp.desc()).limit(200).all()
+        filtered_count = query.count()
+        filtered_unique_count = (
+            query.with_entities(func.count(func.distinct(FileEvent.sha256)))
+            .filter(FileEvent.sha256.isnot(None), FileEvent.sha256 != "")
+            .scalar() or 0
+        )
+        page = request.args.get("page", 1, type=int) or 1
+        page = max(page, 1)
+        total_pages = max(1, (filtered_count + FILES_PAGE_SIZE - 1) // FILES_PAGE_SIZE)
+        page = min(page, total_pages)
+        all_files = (
+            query.order_by(FileEvent.timestamp.desc(), FileEvent.id.desc())
+            .offset((page - 1) * FILES_PAGE_SIZE)
+            .limit(FILES_PAGE_SIZE)
+            .all()
+        )
         _shas = [f.sha256 for f in all_files if f.sha256]
         file_decisions = dict(session.query(FileDecision.sha256, FileDecision.decision).filter(FileDecision.sha256.in_(_shas)).all()) if _shas else {}
         return render_template(
             "files.html", files=all_files, file_decisions=file_decisions, verdict_filter=verdict_filter, channel_filter=channel_filter,
             filename_filter=filename_filter, path_filter=path_filter, ip_filter=ip_filter, sha256_filter=sha256_filter,
+            period_filter=period_filter,
+            total_count=total_count, today_count=today_count, unique_count=unique_count, verdict_counts=verdict_counts,
+            filtered_count=filtered_count, filtered_unique_count=filtered_unique_count,
+            page=page, total_pages=total_pages,
         )
     finally:
         session.close()
