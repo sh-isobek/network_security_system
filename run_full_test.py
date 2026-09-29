@@ -9928,8 +9928,10 @@ print("\n=== 125) Fayllar: ekrandagi sonlar haqiqiy jami/filtr/noyob qiymatlar, 
 def _test_files_exact_counts_and_pagination():
     """`/files` endi render qilingan 200 qatorni jami deb ko'rsatmasligi shart."""
     import uuid
+    from datetime import timedelta
     from dashboard.app import app as dashboard_app
     from dashboard.create_user import create_user
+    from db.models import utcnow
 
     prefix = "exact-count-test-" + uuid.uuid4().hex + "-"
     s = get_session()
