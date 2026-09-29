@@ -30,7 +30,7 @@ from sqlalchemy import func
 from datetime import timedelta
 
 from db.database import get_session
-from db.models import Device, Alert, Event, FileEvent, FileDecision, HashBlacklist, WebAccessLog, User, Incident, utcnow
+from db.models import Device, Alert, Event, FileEvent, FileDecision, HashBlacklist, RawLog, WebAccessLog, User, Incident, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
 from dashboard import ptr_lookup
@@ -1222,6 +1222,7 @@ def api_topology():
     orasidagi aloqalar (hodisalar soni bo'yicha og'irlangan).
     """
     from datetime import timedelta
+    import re
     from sqlalchemy import func
 
     session = get_session()
@@ -1341,7 +1342,43 @@ def api_topology():
 
         nodes.extend(external_nodes.values())
 
-        return {"nodes": nodes, "edges": edges}
+        # Ro'yxat ko'rinishi grafdagi umumlashtirilgan (qurilma, IP)
+        # juftliklarini emas, har bir haqiqiy ulanishni ko'rsatadi. Shuning
+        # uchun operator qaysi qurilma qachon qaysi saytga chiqqani va aynan
+        # o'sha sessiyadagi trafik sarfini ko'ra oladi.
+        connection_rows = (
+            session.query(Event, Device, RawLog.raw_message)
+            .join(Device, Event.device_id == Device.id)
+            .outerjoin(RawLog, Event.raw_log_id == RawLog.id)
+            .filter(Event.timestamp >= since, Event.dest_ip.isnot(None))
+            .order_by(Event.timestamp.desc())
+            .limit(LIVE_MAP_EDGE_LIMIT)
+            .all()
+        )
+        byte_pattern = re.compile(r"\[Bytes\]\s+(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+        connection_ips_needing_ptr = sorted({
+            event.dest_ip for event, _device, _raw_message in connection_rows
+            if not event.dest_domain and event.dest_ip
+        })
+        connection_ptr_map = (
+            ptr_lookup.resolve_ptr_batch(connection_ips_needing_ptr)
+            if connection_ips_needing_ptr else {}
+        )
+        connections = []
+        for event, device, raw_message in connection_rows:
+            byte_match = byte_pattern.search(raw_message or "")
+            # Kerio [Bytes] formati: clientdan / clientga / jami.
+            traffic_bytes = int(byte_match.group(3)) if byte_match else None
+            connections.append({
+                "device": device.hostname or event.source_ip,
+                "device_ip": event.source_ip,
+                "domain": event.dest_domain or connection_ptr_map.get(event.dest_ip),
+                "destination_ip": event.dest_ip,
+                "timestamp": event.timestamp.isoformat() if event.timestamp else None,
+                "traffic_bytes": traffic_bytes,
+            })
+
+        return {"nodes": nodes, "edges": edges, "connections": connections}
     finally:
         session.close()
 
