@@ -566,7 +566,7 @@ def devices():
         return render_template(
             "devices.html", devices=devices_data, status_filter=status_filter,
             total_count=total_count, online_count=online_count, offline_count=offline_count,
-            page=page, total_pages=total_pages, filtered_count=filtered_count,
+            page=page, page_size=DEVICES_PAGE_SIZE, total_pages=total_pages, filtered_count=filtered_count,
             ip_filter=ip_filter, mac_filter=mac_filter, hostname_filter=hostname_filter,
             connection_filter=connection_filter, source_filter=source_filter,
             agent_status_filter=agent_status_filter, min_risk_filter=min_risk_filter,

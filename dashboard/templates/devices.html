@@ -88,11 +88,12 @@
 {% if devices %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
-        <th>Holat</th><th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
+        <th>№</th><th>Holat</th><th>IP manzil</th><th>MAC</th><th>Hostname</th><th>Ulanish</th>
         <th>Manba</th><th>Oxirgi ko'rilgan</th><th>Endpoint Agent</th><th>Alertlar</th><th>Risk Score</th>
     </tr>
     {% for d in devices %}
     <tr>
+        <td class="mono">{{ (page - 1) * page_size + loop.index }}</td>
         <td>
             {% if d.is_online %}
             <span class="badge-soft badge-soft-green">ONLAYN</span>

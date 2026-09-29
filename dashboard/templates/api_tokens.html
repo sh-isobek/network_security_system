@@ -35,9 +35,10 @@
 </form>
 
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table style="margin-bottom: 24px;">
-    <tr><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
+    <tr><th>№</th><th>Nomi</th><th>Kompyuter</th><th>Prefiks</th><th>Yaratildi</th><th>Yaratuvchi</th><th>Oxirgi ishlatilgan</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr>
     {% for t in tokens %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td>{{ t.name }}</td>
         <td class="mono">{{ t.agent_hostname or '-' }}</td>
         <td class="mono">{{ t.token_prefix }}...</td>

@@ -33,9 +33,10 @@
 </form>
 
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table style="margin-bottom: 24px;">
-    <tr><th>Login</th><th>Rol</th><th>Holat</th><th>Oxirgi kirish</th><th>Amal</th></tr>
+    <tr><th>№</th><th>Login</th><th>Rol</th><th>Holat</th><th>Oxirgi kirish</th><th>Amal</th></tr>
     {% for u in users %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td>{{ u.username }}</td>
         <td><span class="badge" style="background: {% if u.role == 'admin' %}#c0392b{% elif u.role == 'analyst' %}#e67e22{% else %}#95a5a6{% endif %};">{{ u.role | upper }}</span></td>
         <td>

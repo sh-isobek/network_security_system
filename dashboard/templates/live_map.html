@@ -21,7 +21,7 @@
 <div id="list-view" style="display:none;">
     <p id="list-view-count" style="font-size:12px; color:#65748b; margin:0 0 8px;"></p>
     <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
-        <tr><th>Qurilma</th><th>Manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
+        <tr><th>№</th><th>Qurilma</th><th>Manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
         <tbody id="list-view-body"></tbody>
     </table></div>
     <div id="list-view-empty" class="empty" style="display:none;">Hech qanday aloqa topilmadi</div>
@@ -90,11 +90,12 @@ function renderList() {
             const to = nodeById[e.to];
             return _matchesFilter((from && from.label) || e.from) || _matchesFilter((to && to.label) || e.to);
         })
-        .map(e => {
+        .map((e, i) => {
             const from = nodeById[e.from];
             const to = nodeById[e.to];
             const color = (from && from.color) || '#3498db';
             return '<tr>' +
+                '<td class="mono">' + (i + 1) + '</td>' +
                 '<td>' + ((from && from.label) || e.from) + '</td>' +
                 '<td class="mono">' + ((to && to.label) || e.to) + '</td>' +
                 '<td>' + (e.value || 1) + '</td>' +
