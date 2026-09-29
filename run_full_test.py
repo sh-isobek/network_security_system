@@ -27,6 +27,25 @@ os.environ["DEMO_MODE"] = "true"
 os.environ.setdefault("DASHBOARD_SECRET_KEY", "ci-test-dashboard-secret-key")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# MUHIM (real production hodisasi, 2026-09-17 va 2026-09-29 - IKKI MARTA
+# takrorlangan): bu skript qaysi bazaga ulanayotganini HAR DOIM, boshida,
+# ANIQ ko'rsatadi (parol/foydalanuvchi nomisiz) - `config/settings.py` endi
+# yuqoriga qidirmasdan faqat shu repo/worktree'ning o'z `.env`sini o'qisa
+# ham (tub sabab tuzatilgan), bu qo'shimcha, ko'rinadigan himoya qatlami -
+# kimdir baribir qo'lda worktree ichiga production `.env` nusxasini qo'ysa
+# ham, bu qator DARHOL ko'zga tashlanadi.
+from config.settings import DATABASE_URL as _db_url_check
+from sqlalchemy.engine import make_url as _make_url
+try:
+    _u = _make_url(_db_url_check)
+    print(f"=== Baza: {_u.drivername}://{_u.host or ''}{':' + str(_u.port) if _u.port else ''}/{_u.database} ===")
+    if _u.drivername.startswith("postgresql") and "test" not in (_u.database or "").lower() and "ci" not in (_u.database or "").lower():
+        print("    OGOHLANTIRISH: bu PostgreSQL nomi 'test'/'ci' so'zini o'z ichiga olmaydi - "
+              "agar bu PRODUCTION baza bo'lsa, DARHOL Ctrl+C bosing! "
+              "Faqat vaqtinchalik/alohida test konteyneriga ulanganingizga ishonch hosil qiling.")
+except Exception:
+    print(f"=== Baza: {_db_url_check.split('@')[-1] if '@' in _db_url_check else _db_url_check} ===")
+
 RESULTS = []
 
 
@@ -9708,6 +9727,143 @@ def _test_gpo_scheduled_task_publish_static():
 
 
 check("GPO orqali qayta yoqmasdan yetkazish: GPP Scheduled Task shabloni + Publish skripti (statik, qayta yoqish yo'q)", _test_gpo_scheduled_task_publish_static)
+
+# ---------------------------------------------------------------------------
+print("\n=== 125) Live Map: tashqi manzillar endi IP o'rniga nom bilan ko'rsatiladi (Kerio domeni + PTR fallback) ===")
+
+
+def _test_ptr_lookup_module():
+    """
+    `dashboard/ptr_lookup.py`ning o'zi: kesh, muvaffaqiyatsiz javob uchun
+    qisqaroq TTL, va timeout'dan keyin ham fon so'rovi keshga yozilishi -
+    soxta (real DNS'ga bog'liq emas, deterministik) `_lookup_one` bilan.
+    """
+    import time as _time
+    from unittest.mock import patch
+    from dashboard import ptr_lookup
+
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+
+    calls = []
+
+    def fake_lookup(ip):
+        calls.append(ip)
+        if ip == "1.2.3.4":
+            return "example.internal"
+        return None
+
+    with patch.object(ptr_lookup, "_lookup_one", side_effect=fake_lookup):
+        r1 = ptr_lookup.resolve_ptr_batch(["1.2.3.4", "5.6.7.8"])
+        assert r1 == {"1.2.3.4": "example.internal", "5.6.7.8": None}, r1
+        assert calls.count("1.2.3.4") == 1 and calls.count("5.6.7.8") == 1
+
+        # Kesh: ikkinchi chaqiruv HAQIQIY funksiyani qayta chaqirmasligi kerak
+        r2 = ptr_lookup.resolve_ptr_batch(["1.2.3.4", "5.6.7.8"])
+        assert r2 == r1
+        assert calls.count("1.2.3.4") == 1, "keshlangan IP uchun qayta DNS so'rovi yuborilmasligi kerak"
+        assert calls.count("5.6.7.8") == 1, "muvaffaqiyatsiz javob ham keshlanishi kerak"
+
+        # Muddat: muvaffaqiyatsiz javob TTL'i muvaffaqiyatlidan qisqaroq
+        with ptr_lookup._CACHE_LOCK:
+            pos_ttl = ptr_lookup._CACHE["1.2.3.4"][1] - _time.time()
+            neg_ttl = ptr_lookup._CACHE["5.6.7.8"][1] - _time.time()
+        assert neg_ttl < pos_ttl, "muvaffaqiyatsiz PTR javobi muvaffaqiyatlidan UZOQROQ keshlanmasligi kerak"
+
+    # Timeout: javob umuman kelmasa, xato bermasdan bo'sh natija qaytarishi kerak
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+    import threading as _threading
+    release = _threading.Event()
+
+    def slow_lookup(ip):
+        release.wait(timeout=5)
+        return "kech-keldi.example"
+
+    old_wait = ptr_lookup._WAIT_TIMEOUT_SECONDS
+    ptr_lookup._WAIT_TIMEOUT_SECONDS = 0.2
+    try:
+        with patch.object(ptr_lookup, "_lookup_one", side_effect=slow_lookup):
+            r3 = ptr_lookup.resolve_ptr_batch(["9.9.9.9"])
+            assert r3 == {}, f"timeout ichida javob kelmasa, natijada IP bo'lmasligi kerak: {r3}"
+    finally:
+        release.set()
+        ptr_lookup._WAIT_TIMEOUT_SECONDS = old_wait
+    # Fon so'rovi tugagach, kesh o'zi to'ldirilishi kerak (keyingi so'rovlar uchun)
+    for _ in range(50):
+        with ptr_lookup._CACHE_LOCK:
+            if "9.9.9.9" in ptr_lookup._CACHE:
+                break
+        _time.sleep(0.1)
+    with ptr_lookup._CACHE_LOCK:
+        assert ptr_lookup._CACHE.get("9.9.9.9", (None,))[0] == "kech-keldi.example", \
+            "timeout'dan keyin ham fon so'rovi natijasi keshga yozilishi kerak"
+
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+
+
+check("Live Map: ptr_lookup moduli (kesh, muvaffaqiyatsiz TTL, timeout'dan keyin ham fon so'rovi keshlanishi)", _test_ptr_lookup_module)
+
+
+def _test_live_map_shows_names_not_raw_ip():
+    """
+    Real production topilmasi: `/api/topology` `Event.dest_domain`ni
+    UMUMAN o'qimasdi - Kerio o'zi ulanish paytida teskari DNS nomini
+    aniq bergan hollarda ham Live Map doim xom IP ko'rsatardi. Endi:
+    (1) Kerio bergan `dest_domain` ustuvor ishlatiladi (taxmin emas -
+        bevosita yozilgan ma'lumot); (2) Kerio hech narsa bermagan
+        IP uchun HAQIQIY teskari DNS (PTR) so'rovi ishlatiladi (bu
+        test uchun barqaror, umumiy tanilgan 1.1.1.1 -> one.one.one.one
+        ishlatiladi - haqiqiy tarmoq so'rovi, mock EMAS).
+    """
+    from dashboard import app as dash_app
+    from dashboard import ptr_lookup
+    from dashboard.create_user import create_user
+
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+
+    create_user("livemap_names_admin", "livemapnamespass123", "admin")
+    dash_app.app.secret_key = "test-secret-livemap-names"
+    client = _dash_client(dash_app.app)
+    client.post("/login", data={"username": "livemap_names_admin", "password": "livemapnamespass123"})
+
+    s = get_session()
+    d = Device(ip_address="172.16.33.1", hostname="LIVEMAP-NAMES-TEST", connection_type="wifi", source="test", risk_score=0)
+    s.add(d)
+    s.flush()
+    dev_id = d.id
+    # 1) Kerio o'zi domen bergan ulanish - shu domen ko'rsatilishi kerak
+    s.add(Event(device_id=dev_id, source_ip=d.ip_address, dest_ip="209.85.233.95",
+                dest_domain="lr-in-f95.1e100.net", dest_port=443, protocol="TCP"))
+    s.add(Event(device_id=dev_id, source_ip=d.ip_address, dest_ip="209.85.233.95",
+                dest_domain="lr-in-f95.1e100.net", dest_port=443, protocol="TCP"))
+    # 2) Kerio domen bermagan, lekin haqiqiy PTR yozuvi bor manzil (Cloudflare)
+    s.add(Event(device_id=dev_id, source_ip=d.ip_address, dest_ip="1.1.1.1", dest_port=443, protocol="TCP"))
+    s.commit()
+    s.close()
+
+    r = client.get("/api/topology")
+    assert r.status_code == 200
+    data = r.get_json()
+
+    kerio_node = next((n for n in data["nodes"] if n["id"] == "ext_209.85.233.95"), None)
+    assert kerio_node is not None, "Kerio domenli manzil node'i topilmadi"
+    assert kerio_node["label"] == "lr-in-f95.1e100.net", \
+        f"Kerio'ning o'zi bergan domen ustuvor ko'rsatilishi kerak edi, '{kerio_node['label']}' keldi"
+
+    ptr_node = next((n for n in data["nodes"] if n["id"] == "ext_1.1.1.1"), None)
+    assert ptr_node is not None, "PTR orqali aniqlanadigan manzil node'i topilmadi"
+    assert ptr_node["label"] == "one.one.one.one", \
+        f"Kerio domen bermagan IP uchun haqiqiy teskari DNS (PTR) ishlatilishi kerak edi, '{ptr_node['label']}' keldi (DNS bu muhitda erishilmas bo'lishi ham mumkin)"
+
+
+check("Live Map: xom IP o'rniga Kerio domeni / haqiqiy teskari DNS (PTR) nomi ko'rsatiladi", _test_live_map_shows_names_not_raw_ip)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

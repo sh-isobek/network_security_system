@@ -32,6 +32,7 @@ from db.database import get_session
 from db.models import Device, Alert, Event, FileEvent, FileDecision, HashBlacklist, WebAccessLog, User, Incident, utcnow
 from dashboard.auth import login_manager, UserWrapper, role_required, verify_credentials
 from dashboard import mfa as mfa_module
+from dashboard import ptr_lookup
 from dashboard.audit import log_action
 from db import agent_restart
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
@@ -1200,27 +1201,67 @@ def api_topology():
         if device_ids:
             edge_rows = (
                 session.query(Event.device_id, Event.dest_ip, func.count(Event.id).label("cnt"))
-                .filter(Event.timestamp >= since, Event.device_id.in_(device_ids))
+                .filter(Event.timestamp >= since, Event.device_id.in_(device_ids), Event.dest_ip.isnot(None))
                 .group_by(Event.device_id, Event.dest_ip)
                 .order_by(func.count(Event.id).desc())
                 .limit(60)
                 .all()
             )
 
+        # MUHIM (real production'da topilgan bo'shliq): bu yerda avval
+        # `Event.dest_domain` UMUMAN o'qilmasdi - garchi Kerio o'zi
+        # ulanish paytida teskari DNS nomini aniq bergan (masalan
+        # "lr-in-f95.1e100.net (209.85.233.95):443") hollarda ham,
+        # Live Map doim xom IP ko'rsatardi. Endi shu (device, IP)
+        # juftligi uchun eng ko'p uchragan, Kerio'ning O'ZI bergan
+        # domen nomi olinadi (taxmin emas - bevosita yozilgan ma'lumot).
+        domain_by_pair = {}
+        if edge_rows:
+            pair_device_ids = {device_id for device_id, _ip, _cnt in edge_rows}
+            pair_dest_ips = {dest_ip for _device_id, dest_ip, _cnt in edge_rows}
+            domain_rows = (
+                session.query(Event.device_id, Event.dest_ip, Event.dest_domain, func.count(Event.id).label("cnt"))
+                .filter(Event.timestamp >= since, Event.device_id.in_(pair_device_ids),
+                        Event.dest_ip.in_(pair_dest_ips), Event.dest_domain.isnot(None))
+                .group_by(Event.device_id, Event.dest_ip, Event.dest_domain)
+                .all()
+            )
+            for device_id, dest_ip, dest_domain, cnt in domain_rows:
+                key = (device_id, dest_ip)
+                best = domain_by_pair.get(key)
+                if best is None or cnt > best[1]:
+                    domain_by_pair[key] = (dest_domain, cnt)
+
+        # Kerio ham hech qanday domen bermagan IP'lar uchun - haqiqiy
+        # teskari DNS (PTR) so'rovi (masalan bulutli provayderlarning
+        # o'z PTR yozuvi bo'ladi). Qisqa timeout bilan, keshlangan -
+        # `dashboard/ptr_lookup.py`ga qarang.
+        ips_needing_ptr = sorted({
+            dest_ip for device_id, dest_ip, _cnt in edge_rows
+            if (device_id, dest_ip) not in domain_by_pair
+        })
+        ptr_map = ptr_lookup.resolve_ptr_batch(ips_needing_ptr) if ips_needing_ptr else {}
+
         edges = []
         external_nodes = {}
         for device_id, dest_ip, cnt in edge_rows:
-            if not dest_ip:
-                continue
+            domain = domain_by_pair.get((device_id, dest_ip), (None, 0))[0] or ptr_map.get(dest_ip)
             dest_node_id = f"ext_{dest_ip}"
             if dest_node_id not in external_nodes:
                 external_nodes[dest_node_id] = {
-                    "id": dest_node_id, "label": dest_ip, "shape": "dot",
-                    "color": "#95a5a6", "size": 8,
+                    "id": dest_node_id, "label": domain or dest_ip,
+                    "title": f"{domain} ({dest_ip})" if domain else dest_ip,
+                    "shape": "dot", "color": "#95a5a6", "size": 8,
                 }
+            elif domain and external_nodes[dest_node_id]["label"] == dest_ip:
+                # Boshqa qurilma (yoki PTR) shu IP uchun keyinroq domen
+                # topgan bo'lsa - xom IP yorlig'ini domenga yangilaymiz.
+                external_nodes[dest_node_id]["label"] = domain
+                external_nodes[dest_node_id]["title"] = f"{domain} ({dest_ip})"
             edges.append({
                 "from": f"dev_{device_id}", "to": dest_node_id,
-                "value": cnt, "title": f"{cnt} ta hodisa",
+                "value": cnt,
+                "title": f"{cnt} ta hodisa" + (f" — {domain}" if domain else ""),
             })
 
         nodes.extend(external_nodes.values())

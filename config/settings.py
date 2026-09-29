@@ -6,7 +6,24 @@ IP, port yoki parol hardcode qilinmaydi.
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# MUHIM (real production hodisasi orqali topilgan xavfsizlik bo'shlig'i,
+# ikki marta - 2026-09-17 va 2026-09-29 - takrorlangan): parametrsiz
+# `load_dotenv()` joriy katalogdan YUQORIGA qarab qidiradi. `git worktree`
+# asosiy repo ICHIDAGI quyi katalog bo'lgani uchun, agar worktree'ning
+# o'zida `.env` bo'lmasa, bu qidiruv worktree'dan chiqib, ASOSIY repo
+# katalogidagi HAQIQIY production `.env`ni (real parol/DATABASE_URL bilan)
+# topib olishi mumkin edi - `run_full_test.py` worktree ichida, aniq
+# `DATABASE_URL` belgilanmasdan ishga tushirilganda, bilmagan holda
+# to'g'ridan-to'g'ri production bazasiga ulanib, sintetik test
+# yozuvlarini haqiqiy jadvallarga yozib qo'ygan (topilib, tozalangan).
+#
+# Tuzatish: `.env` yo'li ANIQ shu faylning o'z repo ildiziga (worktree
+# bo'lsa - O'SHA worktree'ning ildiziga, hech qachon boshqa/asosiy
+# checkout'ga) mixlanadi - yuqoriga qidiruv UMUMAN qilinmaydi. Har bir
+# worktree/checkout doim FAQAT o'zining `.env`sini (yoki umuman yo'qligini,
+# standart SQLite bilan) ko'radi.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_REPO_ROOT, ".env"))
 
 # ---- Tarmoq diapazoni ----
 NETWORK_RANGE_START = os.getenv("NETWORK_RANGE_START", "172.16.0.11")
