@@ -21,7 +21,7 @@
 <div id="list-view" style="display:none;">
     <p id="list-view-count" style="font-size:12px; color:#65748b; margin:0 0 8px;"></p>
     <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
-        <tr><th>№</th><th>Qurilma</th><th>Domen / sayt</th><th>IP manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
+        <tr><th>№</th><th>Qurilma</th><th>Qurilma IP manzili</th><th>Kirilayotgan sayt</th><th>Kirilgan vaqt</th><th>Trafik sarfi</th></tr>
         <tbody id="list-view-body"></tbody>
     </table></div>
     <div id="list-view-empty" class="empty" style="display:none;">Hech qanday aloqa topilmadi</div>
@@ -84,31 +84,44 @@ function escapeHtml(value) {
     return element.innerHTML;
 }
 
-function renderList() {
-    const nodeById = {};
-    latestData.nodes.forEach(n => { nodeById[n.id] = n; });
+function formatTimestamp(value) {
+    if (!value) return 'Ma\'lumot yo\'q';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? escapeHtml(value) : date.toLocaleString();
+}
 
-    const rows = latestData.edges
+function formatTraffic(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return 'Ma\'lumot yo\'q';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return (unit === 0 ? value : value.toFixed(value >= 10 ? 1 : 2)) + ' ' + units[unit];
+}
+
+function renderList() {
+    const connections = latestData.connections || [];
+    const rows = connections
         .slice()
-        .sort((a, b) => (b.value || 0) - (a.value || 0))
-        .filter(e => {
-            const from = nodeById[e.from];
-            const to = nodeById[e.to];
-            return _matchesFilter((from && from.label) || e.from) ||
-                _matchesFilter((to && to.domain) || '') ||
-                _matchesFilter((to && to.ip_address) || '');
+        .filter(connection => {
+            return _matchesFilter(connection.device) ||
+                _matchesFilter(connection.device_ip) ||
+                _matchesFilter(connection.domain) ||
+                _matchesFilter(connection.destination_ip);
         })
-        .map((e, i) => {
-            const from = nodeById[e.from];
-            const to = nodeById[e.to];
-            const color = (from && from.color) || '#3498db';
+        .map((connection, i) => {
+            const site = connection.domain || 'Domen topilmadi';
+            const destinationIp = connection.destination_ip ? ' (' + connection.destination_ip + ')' : '';
             return '<tr>' +
                 '<td class="mono">' + (i + 1) + '</td>' +
-                '<td>' + escapeHtml((from && from.label) || e.from) + '</td>' +
-                '<td>' + escapeHtml((to && to.domain) || 'Domen topilmadi') + '</td>' +
-                '<td class="mono">' + escapeHtml((to && to.ip_address) || 'IP topilmadi') + '</td>' +
-                '<td>' + (e.value || 1) + '</td>' +
-                '<td><span class="badge" style="background:' + color + ';">&nbsp;</span></td>' +
+                '<td>' + escapeHtml(connection.device || 'Noma\'lum qurilma') + '</td>' +
+                '<td class="mono">' + escapeHtml(connection.device_ip || 'IP topilmadi') + '</td>' +
+                '<td>' + escapeHtml(site + destinationIp) + '</td>' +
+                '<td class="mono">' + formatTimestamp(connection.timestamp) + '</td>' +
+                '<td class="mono">' + formatTraffic(connection.traffic_bytes) + '</td>' +
                 '</tr>';
         });
 
@@ -116,12 +129,12 @@ function renderList() {
     body.innerHTML = rows.join('');
     document.getElementById('list-view-empty').style.display = rows.length ? 'none' : '';
 
-    const total = latestData.edges.length;
+    const total = connections.length;
     const countEl = document.getElementById('list-view-count');
     if (filterText) {
         countEl.textContent = rows.length + ' / ' + total + ' ta aloqa (filtr qo\'llanilgan)';
     } else {
-        countEl.textContent = total + ' ta aloqa ko\'rsatilmoqda (so\'nggi 24 soat, eng ko\'p hodisalidan boshlab)';
+        countEl.textContent = total + ' ta alohida ulanish ko\'rsatilmoqda (so\'nggi 24 soat)';
     }
 }
 
