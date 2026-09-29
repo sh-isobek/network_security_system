@@ -1320,15 +1320,19 @@ def api_topology():
             dest_node_id = f"ext_{dest_ip}"
             if dest_node_id not in external_nodes:
                 external_nodes[dest_node_id] = {
-                    "id": dest_node_id, "label": domain or dest_ip,
-                    "title": f"{domain} ({dest_ip})" if domain else dest_ip,
+                    "id": dest_node_id,
+                    "label": domain or "Domen topilmadi",
+                    "domain": domain,
+                    "ip_address": dest_ip,
+                    "title": f"Domen: {domain or 'topilmadi'} | IP: {dest_ip}",
                     "shape": "dot", "color": "#95a5a6", "size": 8,
                 }
-            elif domain and external_nodes[dest_node_id]["label"] == dest_ip:
+            elif domain and not external_nodes[dest_node_id].get("domain"):
                 # Boshqa qurilma (yoki PTR) shu IP uchun keyinroq domen
-                # topgan bo'lsa - xom IP yorlig'ini domenga yangilaymiz.
+                # topgan bo'lsa, aniq domen ma'lumotini yangilaymiz.
                 external_nodes[dest_node_id]["label"] = domain
-                external_nodes[dest_node_id]["title"] = f"{domain} ({dest_ip})"
+                external_nodes[dest_node_id]["domain"] = domain
+                external_nodes[dest_node_id]["title"] = f"Domen: {domain} | IP: {dest_ip}"
             edges.append({
                 "from": f"dev_{device_id}", "to": dest_node_id,
                 "value": cnt,

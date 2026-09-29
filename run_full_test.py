@@ -1863,7 +1863,10 @@ print("\n=== 26) LIVE MAP (real HTTP, topologiya API) ===")
 
 
 def _test_live_map():
+    import uuid
+    from unittest.mock import patch
     from dashboard import app as dash_app
+    from dashboard import ptr_lookup
     from dashboard.create_user import create_user
 
     create_user("livemap_test_admin", "livemaptestpass123", "admin")
@@ -1872,13 +1875,18 @@ def _test_live_map():
     client.post("/login", data={"username": "livemap_test_admin", "password": "livemaptestpass123"})
 
     s = get_session()
-    d_high = Device(ip_address="172.16.32.1", hostname="LIVEMAP-HIGH-RISK", connection_type="wifi", source="test", risk_score=80)
-    d_low = Device(ip_address="172.16.32.2", hostname="LIVEMAP-LOW-RISK", connection_type="cable", source="test", risk_score=0)
+    # Izolyatsiyada test qayta ishga tushirilsa ham avvalgi qurilma IP'i
+    # bilan to'qnashmasligi kerak.
+    suffix = int(uuid.uuid4().hex[:4], 16)
+    d_high = Device(ip_address=f"198.18.{suffix // 256}.{suffix % 256}", hostname="LIVEMAP-HIGH-RISK", connection_type="wifi", source="test", risk_score=80)
+    d_low = Device(ip_address=f"198.19.{suffix // 256}.{suffix % 256}", hostname="LIVEMAP-LOW-RISK", connection_type="cable", source="test", risk_score=0)
     s.add_all([d_high, d_low])
     s.flush()
     high_id, low_id = d_high.id, d_low.id
     s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
     s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
+    s.add(Event(device_id=low_id, source_ip=d_low.ip_address, dest_ip="1.1.1.1",
+                dest_domain="one.one.one.one", dest_port=443, protocol="TCP"))
     s.commit()
     s.close()
 
@@ -1886,7 +1894,10 @@ def _test_live_map():
     assert r.status_code == 200
     assert b"network-map" in r.data
 
-    r = client.get("/api/topology")
+    # Bu testning "domen topilmadi" holati tashqi DNS javobiga bog'liq
+    # bo'lmasligi kerak; PTR moduli alohida testda tekshiriladi.
+    with patch.object(ptr_lookup, "resolve_ptr_batch", return_value={}):
+        r = client.get("/api/topology")
     assert r.status_code == 200
     data = r.get_json()
     assert "nodes" in data and "edges" in data
@@ -1902,6 +1913,12 @@ def _test_live_map():
     edge = next((e for e in data["edges"] if e["from"] == f"dev_{high_id}" and e["to"] == "ext_9.9.9.9"), None)
     assert edge is not None, "Edge topilmadi"
     assert edge["value"] == 2, f"2 ta hodisa kutilgan edi, {edge['value']} keldi"
+
+    unknown_domain_node = next((n for n in data["nodes"] if n["id"] == "ext_9.9.9.9"), None)
+    assert unknown_domain_node["label"] == "Domen topilmadi"
+    assert unknown_domain_node["ip_address"] == "9.9.9.9"
+    domain_node = next((n for n in data["nodes"] if n.get("domain") == "one.one.one.one"), None)
+    assert domain_node is not None and domain_node["ip_address"] == "1.1.1.1"
 
     # Autentifikatsiyasiz kirish rad etilishi kerak
     anon_client = _dash_client(dash_app.app)
