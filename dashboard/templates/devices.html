@@ -95,9 +95,9 @@
     <tr>
         <td>
             {% if d.is_online %}
-            <span class="badge" style="background: #27ae60;">ONLAYN</span>
+            <span class="badge-soft badge-soft-green">ONLAYN</span>
             {% else %}
-            <span class="badge" style="background: #7f8c8d;">OFFLAYN</span>
+            <span class="badge-soft badge-soft-gray">OFFLAYN</span>
             {% endif %}
         </td>
         <td class="mono">{{ d.ip_address }}</td>
@@ -108,9 +108,9 @@
         <td class="mono">{{ d.last_seen | local_dt }}</td>
         <td>
             {% if d.agent_status == 'online' %}
-            <span class="badge" style="background: #27ae60;">ONLINE</span>
+            <span class="badge-soft badge-soft-green">ONLINE</span>
             {% elif d.agent_status == 'offline' %}
-            <span class="badge" style="background: #c0392b;">OFFLINE</span>
+            <span class="badge-soft badge-soft-red">OFFLINE</span>
             {% else %}
             <span style="color: #65748b;">o'rnatilmagan</span>
             {% endif %}

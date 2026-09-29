@@ -365,21 +365,33 @@ table {
     box-shadow:var(--shadow)}
 th,td {
     text-align:left;
-    padding:16px;
+    padding:14px 16px;
     font-size:12px;
     border-bottom:1px solid var(--line)}
+/* Qorong'i sarlavha qatori - jadval qanchalik uzun bo'lmasin, ustunlar
+   nomi darhol ko'zga tashlanishi uchun (sidebar bilan bir xil --nav rangi,
+   markaning o'zi bilan izchil). */
 th {
-    background:#f7f9fc;
-    color:var(--muted);
-    font-weight:600;
+    background:var(--nav);
+    color:#e6ecf7;
+    font-weight:650;
     text-transform:uppercase;
-    font-size:9px;
-    letter-spacing:.8px;
-    white-space:nowrap}
+    font-size:10px;
+    letter-spacing:.7px;
+    white-space:nowrap;
+    border-bottom:0}
+th:first-child {
+    border-top-left-radius:9px}
+th:last-child {
+    border-top-right-radius:9px}
 tr:last-child td {
     border-bottom:0}
+/* Navbatlashgan qator foni - uzun jadvalda ko'zni qatordan
+   adashtirmaslik uchun (juft qatorlar - och rangli). */
+tbody tr:nth-child(even) td {
+    background:#f6faf8}
 tr:hover td {
-    background:#f8faff}
+    background:#eef4ff}
 .table-scroll {
     overflow-x:auto;
     border:1px solid var(--line);
@@ -389,12 +401,49 @@ tr:hover td {
     min-width:650px}
 .badge {
     display:inline-block;
-    padding:4px 9px;
-    border-radius:6px;
+    padding:4px 10px;
+    border-radius:999px;
     font-size:9px;
     font-weight:700;
     color:white;
     letter-spacing:.4px}
+/* "Soft" pill - status ko'rsatkichlari uchun (Faol/Onlayn/Bekor qilingan
+   kabi - xavf darajasi EMAS, shuning uchun qattiq to'q rang o'rniga
+   och fon + shu rangdagi matn, severity badge'lar bilan aralashib
+   ketmasligi uchun ataylab ALOHIDA klass). */
+.badge-soft {
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    padding:5px 11px;
+    border-radius:999px;
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:.3px;
+    border:1px solid transparent}
+.badge-soft:before {
+    content:"";
+    width:6px;
+    height:6px;
+    border-radius:50%;
+    background:currentColor;
+    flex-shrink:0}
+.badge-soft-green {
+    background:#e8f6f0;
+    color:var(--green);
+    border-color:#c9ecdd}
+.badge-soft-red {
+    background:#fdecee;
+    color:var(--red);
+    border-color:#f6d2d8}
+.badge-soft-gray {
+    background:#f0f2f5;
+    color:#5a6a80;
+    border-color:#e1e6ec}
+.badge-soft-amber {
+    background:#fdf3e2;
+    color:var(--amber);
+    border-color:#f5e0b8}
 .mono {
     font-family:"Cascadia Code",Consolas,monospace;
     font-size:11px;
@@ -734,6 +783,18 @@ th,td {
     color:#b92f47;
     border-color:#f5cad2;
     box-shadow:none}
+/* Och (outline) tugma - jadval ichidagi "tahrirlash"/ikkinchi darajali
+   amallar uchun (rangli asosiy tugmadan farqli, lekin oddiy `.secondary`
+   kabi neytral EMAS - rangi amal ma'nosini bildiradi). */
+.btn-outline {
+    background:#eef5ff;
+    color:#2457c9;
+    border-color:#cfe0fb;
+    box-shadow:none}
+.btn svg {
+    width:13px;
+    height:13px;
+    flex-shrink:0}
 .btn:hover {
     transform:translateY(-1px);
     box-shadow:0 5px 12px #17243b20;

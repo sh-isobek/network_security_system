@@ -38,12 +38,15 @@
     <tr>
         <td>{{ u.username }}</td>
         <td><span class="badge" style="background: {% if u.role == 'admin' %}#c0392b{% elif u.role == 'analyst' %}#e67e22{% else %}#95a5a6{% endif %};">{{ u.role | upper }}</span></td>
-        <td>{% if u.is_active %}✅ Faol{% else %}⛔ Faolsizlantirilgan{% endif %}</td>
+        <td>
+            {% if u.is_active %}<span class="badge-soft badge-soft-green">FAOL</span>
+            {% else %}<span class="badge-soft badge-soft-gray">FAOLSIZLANTIRILGAN</span>{% endif %}
+        </td>
         <td class="mono">{{ u.last_login | local_dt('%Y-%m-%d %H:%M') }}</td>
         <td>
-            <details style="display:inline-block; margin-right:10px;">
-                <summary style="display:inline; cursor:pointer; color:#1a2634; font-size:12px;">Tahrirlash</summary>
-                <form method="POST" action="/users/{{ u.id }}/edit" style="background:#f7f9fa; padding:12px; border-radius:4px; margin-top:8px; min-width:220px;">
+            <details style="display:inline-block; margin-right:10px; vertical-align:middle;">
+                <summary class="btn btn-outline" style="display:inline-flex;"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Tahrirlash</summary>
+                <form method="POST" action="/users/{{ u.id }}/edit" style="background:#f7f9fa; padding:12px; border-radius:8px; margin-top:8px; min-width:220px;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <label style="display:block; font-size:11px; color:#5a6673; margin-bottom:4px;">Rol</label>
                     <select name="role" style="width:100%; padding:6px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:10px;">
@@ -59,12 +62,12 @@
             {% if u.is_active %}
             <form method="POST" action="/users/{{ u.id }}/deactivate" style="display:inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="btn btn-danger" type="submit">Faolsizlantirish</button>
+                <button class="btn btn-danger" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>Faolsizlantirish</button>
             </form>
             {% else %}
             <form method="POST" action="/users/{{ u.id }}/activate" style="display:inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="btn btn-success" type="submit">Faollashtirish</button>
+                <button class="btn btn-success" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Faollashtirish</button>
             </form>
             {% endif %}
         </td>

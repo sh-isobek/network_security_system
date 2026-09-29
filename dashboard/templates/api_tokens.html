@@ -46,14 +46,14 @@
         <td class="mono">{{ t.last_used_at | local_dt('%Y-%m-%d %H:%M', 'Hech qachon') }}</td>
         <td class="mono">{{ t.expires_at | local_dt('%Y-%m-%d', 'Muddatsiz') }}</td>
         <td>
-            {% if t.revoked %}<span class="badge" style="background:#95a5a6;">Bekor qilingan</span>
-            {% else %}<span class="badge" style="background:#27ae60;">Faol</span>{% endif %}
+            {% if t.revoked %}<span class="badge-soft badge-soft-gray">Bekor qilingan</span>
+            {% else %}<span class="badge-soft badge-soft-green">Faol</span>{% endif %}
         </td>
         <td>
             {% if not t.revoked %}
             <form method="POST" action="/api-tokens/{{ t.id }}/revoke">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="btn btn-danger" type="submit">Bekor qilish</button>
+                <button class="btn btn-danger" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>Bekor qilish</button>
             </form>
             {% endif %}
         </td>
