@@ -90,6 +90,17 @@ DEVICE_OFFLINE_THRESHOLD_MINUTES = int(os.getenv("DEVICE_OFFLINE_THRESHOLD_MINUT
 # belgilab qo'ymasligi uchun bir oz zaxira bilan).
 AGENT_ONLINE_THRESHOLD_MINUTES = int(os.getenv("AGENT_ONLINE_THRESHOLD_MINUTES", "15"))
 
+# ---- Live Map: nechta (qurilma, tashqi manzil) juftligi olinadi ----
+# MUHIM (real production'da topilgan bo'shliq): avval bu qattiq 60 bilan
+# cheklangan edi - real tarmoqda (100 faol qurilma) so'nggi 24 soatda
+# 36 000+ NOYOB juftlik bor edi, demak Ro'yxat ko'rinishi haqiqiy
+# aloqalarning <0.2%ini ko'rsatardi ("to'liq ro'yxat ko'rinmagan").
+# Grafik ko'rinish o'qilishi uchun kichikroq (LIVE_MAP_GRAPH_EDGE_LIMIT)
+# to'plam client-side (`live_map.html`) tanlanadi - server esa
+# Ro'yxat ko'rinishi uchun ancha kattaroq to'plamni qaytaradi.
+LIVE_MAP_EDGE_LIMIT = int(os.getenv("LIVE_MAP_EDGE_LIMIT", "1500"))
+LIVE_MAP_GRAPH_EDGE_LIMIT = int(os.getenv("LIVE_MAP_GRAPH_EDGE_LIMIT", "80"))
+
 # ---- Dashboard: "eski" (uzoq vaqt ko'rinmagan) qurilmalarni ro'yxatdan yashirish ----
 # Bu YUQORIDAGI DEVICE_OFFLINE_THRESHOLD_MINUTES'dan FARQLI - o'sha faqat
 # "ONLAYN"/"OFFLAYN" belgisini qo'yadi, qurilma baribir `/devices`

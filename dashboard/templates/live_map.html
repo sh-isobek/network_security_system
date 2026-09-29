@@ -19,6 +19,7 @@
 <div id="network-map" style="width: 100%; height: 600px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"></div>
 
 <div id="list-view" style="display:none;">
+    <p id="list-view-count" style="font-size:12px; color:#65748b; margin:0 0 8px;"></p>
     <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
         <tr><th>Qurilma</th><th>Manzil</th><th>Hodisalar soni</th><th>Risk</th></tr>
         <tbody id="list-view-body"></tbody>
@@ -44,6 +45,13 @@ let network = null;
 let currentView = 'graph';
 let latestData = { nodes: [], edges: [] };
 let filterText = '';
+// Server '/api/topology'dan LIVE_MAP_EDGE_LIMIT (config/settings.py) ta
+// juftlikkacha qaytaradi - bu ancha katta (Ro'yxat ko'rinishi uchun).
+// Grafik esa shu qadar ko'p tugun bilan o'qilmas holga kelib qoladi -
+// shuning uchun Grafik FAQAT eng ko'p hodisali `GRAPH_EDGE_LIMIT` ta
+// aloqani ko'rsatadi (client-side tanlanadi), Ro'yxat ko'rinishi esa
+// serverdan kelgan TO'LIQ to'plamni ko'rsatadi.
+const GRAPH_EDGE_LIMIT = {{ graph_edge_limit }};
 
 function setView(view) {
     currentView = view;
@@ -97,6 +105,14 @@ function renderList() {
     const body = document.getElementById('list-view-body');
     body.innerHTML = rows.join('');
     document.getElementById('list-view-empty').style.display = rows.length ? 'none' : '';
+
+    const total = latestData.edges.length;
+    const countEl = document.getElementById('list-view-count');
+    if (filterText) {
+        countEl.textContent = rows.length + ' / ' + total + ' ta aloqa (filtr qo\'llanilgan)';
+    } else {
+        countEl.textContent = total + ' ta aloqa ko\'rsatilmoqda (so\'nggi 24 soat, eng ko\'p hodisalidan boshlab)';
+    }
 }
 
 function highlightGraph() {
@@ -114,8 +130,17 @@ async function loadTopology() {
     const data = await resp.json();
     latestData = data;
 
-    const nodes = new vis.DataSet(data.nodes);
-    const edges = new vis.DataSet(data.edges);
+    // Grafik: FAQAT eng ko'p hodisali GRAPH_EDGE_LIMIT ta aloqa (aks holda
+    // minglab tugun bilan grafik o'qilmas holga kelib qoladi) - Ro'yxat
+    // ko'rinishi esa pastda TO'LIQ `data.edges`ni ishlatadi.
+    const graphEdges = data.edges.slice().sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, GRAPH_EDGE_LIMIT);
+    const graphNodeIds = new Set();
+    data.nodes.forEach(n => { if (!n.id.startsWith('ext_')) graphNodeIds.add(n.id); }); // qurilmalar - barchasi
+    graphEdges.forEach(e => { graphNodeIds.add(e.from); graphNodeIds.add(e.to); });
+    const graphNodes = data.nodes.filter(n => graphNodeIds.has(n.id));
+
+    const nodes = new vis.DataSet(graphNodes);
+    const edges = new vis.DataSet(graphEdges);
     const container = document.getElementById('network-map');
     const options = {
         physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },

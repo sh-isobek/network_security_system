@@ -9865,6 +9865,47 @@ def _test_live_map_shows_names_not_raw_ip():
 
 check("Live Map: xom IP o'rniga Kerio domeni / haqiqiy teskari DNS (PTR) nomi ko'rsatiladi", _test_live_map_shows_names_not_raw_ip)
 
+
+def _test_live_map_list_not_truncated_at_60():
+    """
+    Real production topilmasi: `/api/topology` `.limit(60)` bilan qattiq
+    cheklangan edi - real tarmoqda (100 faol qurilma) 24 soatda 36 000+
+    NOYOB (qurilma, manzil) juftligi borligi aniqlandi, ya'ni Ro'yxat
+    ko'rinishi haqiqiy aloqalarning 0.2%idan kamini ko'rsatardi
+    ("to'liq ro'yxat ko'rinmagan"). Endi limit `config/settings.py`dagi
+    `LIVE_MAP_EDGE_LIMIT` orqali sozlanadi (standart 1500) - bu test
+    ATAYLAB eski 60 chegarasidan OSHADIGAN (70 ta) manzil yaratib,
+    barchasi qaytishini tasdiqlaydi.
+    """
+    from dashboard import app as dash_app
+    from dashboard.create_user import create_user
+
+    create_user("livemap_notrunc_admin", "livemapnotruncpass123", "admin")
+    dash_app.app.secret_key = "test-secret-livemap-notrunc"
+    client = _dash_client(dash_app.app)
+    client.post("/login", data={"username": "livemap_notrunc_admin", "password": "livemapnotruncpass123"})
+
+    s = get_session()
+    d = Device(ip_address="172.16.34.1", hostname="LIVEMAP-NOTRUNC-TEST", connection_type="wifi", source="test", risk_score=0)
+    s.add(d)
+    s.flush()
+    dev_id = d.id
+    N = 70   # eski cheklovdan (60) ATAYLAB ko'proq
+    for i in range(N):
+        s.add(Event(device_id=dev_id, source_ip=d.ip_address, dest_ip=f"203.0.113.{i+1}", dest_port=443, protocol="TCP"))
+    s.commit()
+    s.close()
+
+    r = client.get("/api/topology")
+    assert r.status_code == 200
+    data = r.get_json()
+    matching_edges = [e for e in data["edges"] if e["from"] == f"dev_{dev_id}"]
+    assert len(matching_edges) == N, \
+        f"{N} ta manzil yaratilgan edi, lekin API faqat {len(matching_edges)} tasini qaytardi (eski 60 chegarasi qaytib kelgan bo'lishi mumkin)"
+
+
+check("Live Map: Ro'yxat ko'rinishi eski 60 chegarasidan oshgan holatda ham hammasini qaytaradi", _test_live_map_list_not_truncated_at_60)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

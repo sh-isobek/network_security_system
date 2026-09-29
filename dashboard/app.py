@@ -36,7 +36,7 @@ from dashboard import ptr_lookup
 from dashboard.audit import log_action
 from db import agent_restart
 from crypto.field_encryption import encrypt_if_configured, decrypt_if_needed
-from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES
+from config.settings import DEVICE_OFFLINE_THRESHOLD_MINUTES, LIVE_MAP_EDGE_LIMIT, LIVE_MAP_GRAPH_EDGE_LIMIT
 from dashboard.i18n import SUPPORTED_LANGUAGES, translate_html
 
 
@@ -1144,7 +1144,7 @@ def audit_log():
 @app.route("/live-map")
 @login_required
 def live_map():
-    return render_template("live_map.html")
+    return render_template("live_map.html", graph_edge_limit=LIVE_MAP_GRAPH_EDGE_LIMIT)
 
 
 @app.route("/api/topology")
@@ -1195,8 +1195,14 @@ def api_topology():
             })
 
         # Edges: qurilma -> tashqi manzil (dest_ip), so'nggi 24 soatda,
-        # eng ko'p uchraydigan 60 ta juftlik bilan cheklangan (grafik
-        # o'qilishini saqlash uchun)
+        # eng ko'p uchraydigan `LIVE_MAP_EDGE_LIMIT` ta juftlik bilan
+        # cheklangan. MUHIM (real production'da topilgan bo'shliq):
+        # avval bu qattiq 60 edi - real tarmoqda (100 faol qurilma)
+        # 24 soatda 36 000+ NOYOB juftlik bo'lgani aniqlandi, ya'ni
+        # "Ro'yxat ko'rinishi" haqiqiy aloqalarning 0.2%idan kamini
+        # ko'rsatardi. Grafik o'qilishini saqlash uchun kichikroq
+        # to'plam CLIENT-SIDE (`live_map.html`) tanlanadi - bu yerda
+        # esa Ro'yxat ko'rinishi uchun ancha kattaroq to'plam beriladi.
         edge_rows = []
         if device_ids:
             edge_rows = (
@@ -1204,7 +1210,7 @@ def api_topology():
                 .filter(Event.timestamp >= since, Event.device_id.in_(device_ids), Event.dest_ip.isnot(None))
                 .group_by(Event.device_id, Event.dest_ip)
                 .order_by(func.count(Event.id).desc())
-                .limit(60)
+                .limit(LIVE_MAP_EDGE_LIMIT)
                 .all()
             )
 
