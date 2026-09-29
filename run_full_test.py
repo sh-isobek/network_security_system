@@ -1933,11 +1933,12 @@ def _test_live_map():
     assert domain_node is not None and domain_node["ip_address"] == "1.1.1.1"
     traffic_connection = next((
         connection for connection in data["connections"]
-        if connection["device_ip"] == high_ip and connection["destination_ip"] == "9.9.9.9"
+        if connection["device_ip"] == high_ip
+        and connection["destination_ip"] == "9.9.9.9"
+        and connection["traffic_bytes"] == 300
     ), None)
-    assert traffic_connection is not None, "Alohida ulanish ro'yxati kelmadi"
+    assert traffic_connection is not None, "300 B trafikli alohida ulanish ro'yxati kelmadi"
     assert traffic_connection["device"] == "LIVEMAP-HIGH-RISK"
-    assert traffic_connection["traffic_bytes"] == 300
     assert traffic_connection["timestamp"], "Kirilgan vaqt bo'sh"
 
     # Autentifikatsiyasiz kirish rad etilishi kerak
