@@ -1883,17 +1883,21 @@ def _test_live_map():
     s.add_all([d_high, d_low])
     s.flush()
     high_id, low_id = d_high.id, d_low.id
+    high_ip, low_ip = d_high.ip_address, d_low.ip_address
     raw_connection = RawLog(
         source_ip="172.16.0.1",
         raw_message="[Connection] TCP LIVEMAP-HIGH-RISK (198.18.0.1):50000 -> 9.9.9.9:443 "
                     "[Duration] 5 sec [Bytes] 100/200/300 [Packets] 1/2/3",
+        # Bu yozuv Live Map API testiga tegishli; keyingi parser_engine
+        # testi uni yangi syslog deb hisoblab qayta o'qimasligi kerak.
+        processed=True,
     )
     s.add(raw_connection)
     s.flush()
-    s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9",
+    s.add(Event(device_id=high_id, source_ip=high_ip, dest_ip="9.9.9.9",
                 dest_port=443, protocol="TCP", raw_log_id=raw_connection.id))
-    s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
-    s.add(Event(device_id=low_id, source_ip=d_low.ip_address, dest_ip="1.1.1.1",
+    s.add(Event(device_id=high_id, source_ip=high_ip, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
+    s.add(Event(device_id=low_id, source_ip=low_ip, dest_ip="1.1.1.1",
                 dest_domain="one.one.one.one", dest_port=443, protocol="TCP"))
     s.commit()
     s.close()
@@ -1929,7 +1933,7 @@ def _test_live_map():
     assert domain_node is not None and domain_node["ip_address"] == "1.1.1.1"
     traffic_connection = next((
         connection for connection in data["connections"]
-        if connection["device_ip"] == d_high.ip_address and connection["destination_ip"] == "9.9.9.9"
+        if connection["device_ip"] == high_ip and connection["destination_ip"] == "9.9.9.9"
     ), None)
     assert traffic_connection is not None, "Alohida ulanish ro'yxati kelmadi"
     assert traffic_connection["device"] == "LIVEMAP-HIGH-RISK"
