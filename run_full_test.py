@@ -1863,7 +1863,10 @@ print("\n=== 26) LIVE MAP (real HTTP, topologiya API) ===")
 
 
 def _test_live_map():
+    import uuid
+    from unittest.mock import patch
     from dashboard import app as dash_app
+    from dashboard import ptr_lookup
     from dashboard.create_user import create_user
 
     create_user("livemap_test_admin", "livemaptestpass123", "admin")
@@ -1872,13 +1875,18 @@ def _test_live_map():
     client.post("/login", data={"username": "livemap_test_admin", "password": "livemaptestpass123"})
 
     s = get_session()
-    d_high = Device(ip_address="172.16.32.1", hostname="LIVEMAP-HIGH-RISK", connection_type="wifi", source="test", risk_score=80)
-    d_low = Device(ip_address="172.16.32.2", hostname="LIVEMAP-LOW-RISK", connection_type="cable", source="test", risk_score=0)
+    # Izolyatsiyada test qayta ishga tushirilsa ham avvalgi qurilma IP'i
+    # bilan to'qnashmasligi kerak.
+    suffix = int(uuid.uuid4().hex[:4], 16)
+    d_high = Device(ip_address=f"198.18.{suffix // 256}.{suffix % 256}", hostname="LIVEMAP-HIGH-RISK", connection_type="wifi", source="test", risk_score=80)
+    d_low = Device(ip_address=f"198.19.{suffix // 256}.{suffix % 256}", hostname="LIVEMAP-LOW-RISK", connection_type="cable", source="test", risk_score=0)
     s.add_all([d_high, d_low])
     s.flush()
     high_id, low_id = d_high.id, d_low.id
     s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
     s.add(Event(device_id=high_id, source_ip=d_high.ip_address, dest_ip="9.9.9.9", dest_port=443, protocol="TCP"))
+    s.add(Event(device_id=low_id, source_ip=d_low.ip_address, dest_ip="1.1.1.1",
+                dest_domain="one.one.one.one", dest_port=443, protocol="TCP"))
     s.commit()
     s.close()
 
@@ -1886,7 +1894,10 @@ def _test_live_map():
     assert r.status_code == 200
     assert b"network-map" in r.data
 
-    r = client.get("/api/topology")
+    # Bu testning "domen topilmadi" holati tashqi DNS javobiga bog'liq
+    # bo'lmasligi kerak; PTR moduli alohida testda tekshiriladi.
+    with patch.object(ptr_lookup, "resolve_ptr_batch", return_value={}):
+        r = client.get("/api/topology")
     assert r.status_code == 200
     data = r.get_json()
     assert "nodes" in data and "edges" in data
@@ -1902,6 +1913,12 @@ def _test_live_map():
     edge = next((e for e in data["edges"] if e["from"] == f"dev_{high_id}" and e["to"] == "ext_9.9.9.9"), None)
     assert edge is not None, "Edge topilmadi"
     assert edge["value"] == 2, f"2 ta hodisa kutilgan edi, {edge['value']} keldi"
+
+    unknown_domain_node = next((n for n in data["nodes"] if n["id"] == "ext_9.9.9.9"), None)
+    assert unknown_domain_node["label"] == "Domen topilmadi"
+    assert unknown_domain_node["ip_address"] == "9.9.9.9"
+    domain_node = next((n for n in data["nodes"] if n.get("domain") == "one.one.one.one"), None)
+    assert domain_node is not None and domain_node["ip_address"] == "1.1.1.1"
 
     # Autentifikatsiyasiz kirish rad etilishi kerak
     anon_client = _dash_client(dash_app.app)
@@ -9905,6 +9922,61 @@ def _test_live_map_list_not_truncated_at_60():
 
 
 check("Live Map: Ro'yxat ko'rinishi eski 60 chegarasidan oshgan holatda ham hammasini qaytaradi", _test_live_map_list_not_truncated_at_60)
+print("\n=== 125) Fayllar: ekrandagi sonlar haqiqiy jami/filtr/noyob qiymatlar, sahifalash ===")
+
+
+def _test_files_exact_counts_and_pagination():
+    """`/files` endi render qilingan 200 qatorni jami deb ko'rsatmasligi shart."""
+    import uuid
+    from datetime import timedelta
+    from dashboard.app import app as dashboard_app
+    from dashboard.create_user import create_user
+    from db.models import utcnow
+
+    prefix = "exact-count-test-" + uuid.uuid4().hex + "-"
+    s = get_session()
+    entries = []
+    shared_sha = "ec" * 32
+    # 201 ta noyob SHA + bitta SHA ikki xil Endpoint yozuvida: 203 tekshiruv,
+    # 202 noyob fayl va kamida ikki sahifa bo'lishi kerak.
+    for i in range(201):
+        entries.append(FileEvent(filename=f"{prefix}{i:03}.bin", src_ip="172.16.254.10",
+                                 sha256=(f"{i:064x}"), verdict="clean", channel="endpoint_agent"))
+    entries.extend([
+        FileEvent(filename=f"{prefix}uploaded.bin", src_ip="172.16.254.10", sha256=shared_sha,
+                  verdict="clean", channel="endpoint_upload"),
+        FileEvent(filename=f"{prefix}endpoint.bin", src_ip="172.16.254.10", sha256=shared_sha,
+                  verdict="unknown", channel="endpoint_agent"),
+        FileEvent(filename=f"{prefix}yesterday.bin", src_ip="172.16.254.10", sha256="ed" * 32,
+                  verdict="clean", channel="endpoint_agent", timestamp=utcnow() - timedelta(days=1)),
+    ])
+    s.add_all(entries); s.commit(); s.close()
+
+    create_user("exact_count_admin", "exact-count-pass", "admin")
+    dashboard_app.secret_key = "test-secret-exact-file-counts"
+    client = _dash_client(dashboard_app)
+    client.post("/login", data={"username": "exact_count_admin", "password": "exact-count-pass"})
+
+    html = client.get(f"/files?filename={prefix}").get_data(as_text=True)
+    assert "Tekshirilgan fayllar (204 ta tekshiruv)" in html, html[:2000]
+    assert "bugun tekshirilgan fayl" in html and "shu kungacha tekshirilgan fayl" in html
+    assert 'href="/files?period=today"' in html
+    assert 'href="/files?period=all"' in html
+    compact_html = " ".join(html.split())
+    assert "<strong>204</strong> filtrga mos tekshiruv, <strong>203</strong> noyob fayl" in compact_html, html[:2500]
+    assert "Sahifa 1 / 2 (204 ta tekshiruv)" in html
+    today_html = client.get(f"/files?period=today&filename={prefix}").get_data(as_text=True)
+    assert "Tekshirilgan fayllar (203 ta tekshiruv)" in today_html
+    assert f"{prefix}yesterday.bin" not in today_html
+    # Ikkinchi sahifa ham haqiqatan eng eski uch yozuvga yetadi.
+    html2 = client.get(f"/files?filename={prefix}&page=2").get_data(as_text=True)
+    assert f"{prefix}000.bin" in html2
+    # Endpoint tugmasi server-upload yozuvlarini ham yashirmasligi kerak.
+    endpoint_html = client.get(f"/files?channel=endpoint_agent&filename={prefix}").get_data(as_text=True)
+    assert f"{prefix}uploaded.bin" in endpoint_html and f"{prefix}endpoint.bin" in endpoint_html
+
+
+check("Fayllar: haqiqiy jami/noyob/filtr sonlari va 200 qatorlik sahifalash", _test_files_exact_counts_and_pagination)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

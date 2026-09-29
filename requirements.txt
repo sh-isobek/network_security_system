@@ -1,4 +1,8 @@
 SQLAlchemy>=2.0
+# SQLAlchemy 2.1 PostgreSQL URLlarini psycopg (v3) drayveri bilan ochadi.
+# Bu production Docker image va PostgreSQL CI bir xil drayverdan foydalanishi
+# uchun binary wheel bilan o'rnatiladi.
+psycopg[binary]>=3.2
 alembic>=1.13
 python-dotenv>=1.0
 requests>=2.31
