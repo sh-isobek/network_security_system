@@ -185,9 +185,13 @@ nav a.active:after {
     color:var(--muted)}
 .account .logout {
     color:var(--red)}
+/* MUHIM (real production'da topilgan): `max-width:1600px` keng monitorda
+   (1600px'dan kengroq oyna) jadval har ikki tomonida katta, foydasiz
+   bo'sh joy qoldirardi - jadvallar ko'pincha 8-10 ustunli bo'lgani
+   uchun mavjud kenglikni to'liq ishlatgani ma'qul. Endi cheklov yo'q -
+   kontent sidebar'dan tashqari qolgan BUTUN kenglikni egallaydi. */
 main {
     padding:34px 36px;
-    max-width:1600px;
     margin:auto;
     min-height:calc(100vh - 140px);
     overflow-x:auto}
@@ -529,7 +533,6 @@ tr:hover td {
     border-radius:12px!important;
     box-shadow:var(--shadow)!important}
 .page-footer {
-    max-width:1600px;
     margin:auto;
     padding:4px 36px 20px;
     font-size:9px;
