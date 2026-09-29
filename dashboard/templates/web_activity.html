@@ -27,9 +27,10 @@
 <div style="margin:12px 0;color:#667;font-size:13px;">Topilgan yozuvlar: <strong>{{ rows|length }}</strong> (maksimal 1000 ta)</div>
 {% if rows %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
-<tr><th>Vaqt</th><th>Qurilma IP</th><th>Hostname</th><th>Sayt</th><th>URL</th><th>Protokol</th><th>Status</th><th>Destination IP</th></tr>
+<tr><th>№</th><th>Vaqt</th><th>Qurilma IP</th><th>Hostname</th><th>Sayt</th><th>URL</th><th>Protokol</th><th>Status</th><th>Destination IP</th></tr>
 {% for r in rows %}
 <tr>
+<td class="mono">{{ loop.index }}</td>
 <td class="mono">{{ r.timestamp | local_dt }}</td>
 <td class="mono">{{ r.ip }}</td>
 <td>{{ r.hostname or '-' }}</td>

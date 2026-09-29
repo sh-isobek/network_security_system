@@ -34,11 +34,12 @@
 {% if entries %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
-        <th>Vaqt</th><th>Foydalanuvchi</th><th>Harakat</th><th>Nishon</th>
+        <th>№</th><th>Vaqt</th><th>Foydalanuvchi</th><th>Harakat</th><th>Nishon</th>
         <th>Tafsilot</th><th>IP</th><th>Natija</th>
     </tr>
     {% for e in entries %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ e.timestamp | local_dt(fallback='') }}</td>
         <td>{{ e.username }}</td>
         <td class="mono">{{ e.action }}</td>

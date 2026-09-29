@@ -46,11 +46,12 @@
 {% if files %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
-        <th>Vaqt</th><th>Fayl nomi</th><th>Qurilmadagi yo'l</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
+        <th>№</th><th>Vaqt</th><th>Fayl nomi</th><th>Qurilmadagi yo'l</th><th>Manba IP</th><th>Kanal</th><th>Verdict</th>
         <th>Score</th><th>SHA256</th><th>Manba</th><th>Qaror</th>
     </tr>
     {% for f in files %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
         <td>{{ f.filename }}{% if f.parent_file_event_id %} <span style="color: #65748b; font-size:11px;">(arxivdan)</span>{% endif %}</td>
         <td class="mono" style="font-size: 11px; min-width: 240px; max-width: 460px; white-space: normal; word-break: break-all;" title="{{ f.device_file_path or '' }}">

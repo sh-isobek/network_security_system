@@ -18,10 +18,11 @@
 {% if recent_alerts %}
 <div class="table-scroll" role="region" aria-label="So‘nggi alertlar" tabindex="0"><table>
     <tr>
-        <th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
+        <th>№</th><th>Vaqt</th><th>Daraja</th><th>Qurilma</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
     </tr>
     {% for a in recent_alerts %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
         <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
         <td>{{ a.hostname or a.ip_address or 'Nomalum' }}</td>

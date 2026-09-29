@@ -18,10 +18,11 @@
 {% if alerts %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
-        <th>Vaqt</th><th>Daraja</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
+        <th>№</th><th>Vaqt</th><th>Daraja</th><th>Tafsilot</th><th>MITRE</th><th>Chora</th>
     </tr>
     {% for a in alerts %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
         <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
         <td style="max-width: 420px; white-space: pre-line;">{{ a.reason }}</td>

@@ -26,11 +26,12 @@
 {% if incidents %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
     <tr>
-        <th>Daraja</th><th>Sarlavha</th><th>Qurilma</th><th>Alertlar</th>
+        <th>№</th><th>Daraja</th><th>Sarlavha</th><th>Qurilma</th><th>Alertlar</th>
         <th>Birinchi ko'rilgan</th><th>Oxirgi faollik</th>
     </tr>
     {% for inc in incidents %}
     <tr>
+        <td class="mono">{{ loop.index }}</td>
         <td><span class="badge" style="background: {{ inc.severity | severity_color }}">{{ inc.severity | upper }}</span></td>
         <td><a href="/incidents/{{ inc.id }}">{{ inc.title }}</a></td>
         <td>{{ inc.hostname or inc.ip_address or "Noma'lum" }}</td>

@@ -41,9 +41,9 @@
 <h1>Agent o'rnatilishi kerak bo'lgan kompyuterlar ({{ missing_filtered | length }}/{{ report.missing | length }})</h1>
 {% if missing_filtered %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table style="margin-bottom:24px;">
-    <tr><th>Kompyuter nomi</th></tr>
+    <tr><th>№</th><th>Kompyuter nomi</th></tr>
     {% for name in missing_filtered %}
-    <tr><td class="mono">{{ name }}</td></tr>
+    <tr><td class="mono">{{ loop.index }}</td><td class="mono">{{ name }}</td></tr>
     {% endfor %}
 </table></div>
 {% else %}
@@ -55,9 +55,9 @@
 <h1>Eskirgan (agent to'xtagan bo'lishi mumkin) ({{ stale_filtered | length }}/{{ report.stale | length }})</h1>
 {% if stale_filtered %}
 <div class="table-scroll" role="region" aria-label="Ma’lumotlar jadvali" tabindex="0"><table>
-    <tr><th>Kompyuter nomi</th></tr>
+    <tr><th>№</th><th>Kompyuter nomi</th></tr>
     {% for name in stale_filtered %}
-    <tr><td class="mono">{{ name }}</td></tr>
+    <tr><td class="mono">{{ loop.index }}</td><td class="mono">{{ name }}</td></tr>
     {% endfor %}
 </table></div>
 {% else %}
