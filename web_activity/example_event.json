@@ -2,7 +2,7 @@
   "timestamp": "2026-08-18T10:00:00Z",
   "device_id": "pc-001",
   "hostname": "PC-001",
-  "ip": "172.16.0.51",
+  "ip": "192.0.2.51",
   "username": "DOMAIN\\user",
   "domain": "example.com",
   "site": "example.com",

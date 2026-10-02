@@ -14,12 +14,7 @@ hujjati + real HTTP orqali tasdiqlangan):
 
      MUHIM (halol izoh): `token` so'rov parametri sizning `appid`/
      `secret`ingizga BOG'LIQ EMAS - bu hujjatda ko'rsatilgan, barcha
-     mijozlar uchun BIR XIL qat'iy (o'zgarmas) qiymat (`RUIJIE_STATIC_
-     TOKEN`, standart qiymati quyida) - ehtimol API'ning qaysi kanal
-     (uchinchi tomon integratsiyasi) orqali chaqirilayotganini
-     belgilaydi, mijoz-maxsus maxfiy kalit emas. Bu **real so'rov
-     bilan tasdiqlangan** - to'g'ri `appid`/`secret` + shu qat'iy
-     qiymat bilan `code:0` (muvaffaqiyat) qaytdi.
+     token qiymati ham muhit sozlamasidan olinadi; kodga yozilmaydi.
   2. Keyingi barcha so'rovlarga `access_token` SO'ROV PARAMETRI
      (header EMAS) sifatida qo'shiladi: `?access_token=...`.
   3. `GET /service/api/group/single/tree?access_token=...` - barcha
@@ -53,13 +48,6 @@ AUTH_PATH = "/service/api/oauth20/client/access_token"
 GROUPS_PATH = "/service/api/group/single/tree"
 DEVICES_PATH = "/service/api/maint/devices"
 CLIENTS_PATH = "/service/api/open/v1/dev/user/current-user"
-
-# Rasmiy hujjatda ko'rsatilgan, barcha mijozlar uchun BIR XIL qat'iy
-# qiymat (mijoz-maxsus MAXFIY kalit EMAS) - real so'rov bilan
-# tasdiqlangan. `RUIJIE_STATIC_TOKEN` orqali qayta belgilash mumkin
-# (agar Ruijie kelajakda buni o'zgartirsa).
-DEFAULT_STATIC_TOKEN = "d63dss0a81e4415a889ac5b78fsc904a"
-
 
 @dataclass
 class RuijieClient:
@@ -194,9 +182,10 @@ def get_ruijie_clients(timeout: int = 10) -> List[RuijieClient]:
     base_url = os.getenv("RUIJIE_BASE_URL", "https://cloud.ruijienetworks.com").rstrip("/")
     app_id = os.getenv("RUIJIE_APP_ID", "")
     app_secret = os.getenv("RUIJIE_APP_SECRET", "")
-    static_token = os.getenv("RUIJIE_STATIC_TOKEN", DEFAULT_STATIC_TOKEN)
+    static_token = os.getenv("RUIJIE_STATIC_TOKEN", "")
 
-    if not app_id or not app_secret:
+    if not app_id or not app_secret or not static_token:
+        logger.info("Ruijie Cloud discovery sozlanmagan: RUIJIE_APP_ID, RUIJIE_APP_SECRET va RUIJIE_STATIC_TOKEN kerak")
         return []
 
     access_token = _authenticate(base_url, app_id, app_secret, static_token, timeout)

@@ -9,7 +9,7 @@
 #  4) shu serverning O'Z agentini ham darhol yangilaydi (Deploy skripti, idempotent).
 # Xato bo'lsa SYSVOL o'zgarmaydi. Jurnal: C:\ProgramData\NetworkSecurityAgent\sync.log
 param(
-    [string]$Repo = "sh-isobek/network_security_system",
+    [string]$Repo = "sh-primaryuser/network_security_system",
     [string]$SysvolDir = "",      # bo'sh bo'lsa VERSION fayli bor SYSVOL papkasi avto-topiladi
     [string]$LogFile = "C:\ProgramData\NetworkSecurityAgent\sync.log"
 )

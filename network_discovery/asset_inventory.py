@@ -7,7 +7,7 @@ birlashtirib, `devices` jadvaliga yozadi/yangilaydi. Bu
 `db/models.Device` orasidagi ko'prik.
 
 Ishga tushirish:
-    python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
+    python -m network_discovery.asset_inventory --cidr 10.254.0.0/22 --interface eth0
 """
 import json
 import logging
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cidr", help="Masalan 172.16.0.0/22 (--unifi-only bilan shart emas)")
+    ap.add_argument("--cidr", help="Masalan 10.254.0.0/22 (--unifi-only bilan shart emas)")
     ap.add_argument("--interface", help="Masalan eth0 (--unifi-only bilan shart emas)")
     ap.add_argument("--tcp-scan", action="store_true")
     ap.add_argument("--snmp", action="store_true")

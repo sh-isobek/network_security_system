@@ -16,8 +16,8 @@ versiya) BUTUNLAY BOSHQA formatda yozadi - manzil endi doim
 `hostname (ip):port` ko'rinishida (agar teskari DNS nomi mavjud
 bo'lsa) va ajratuvchi `>` emas, `->` (chiziqcha bilan):
 
-    [Connection] TCP sph-262.synergypharm.org (172.16.1.35):63579 ->
-    lr-in-f95.1e100.net (209.85.233.95):443 [Iface] WAN0_Uztelecom
+    [Connection] TCP workstation.example.internal (192.0.2.25):63579 ->
+    service.example.net (198.51.100.25):443 [Iface] WAN0_Uztelecom
     [Duration] 31 sec [Bytes] 1458/9404/10862 [Packets] 8/10/18
 
 Bu **HAQIQIY, production'dan olingan** namuna - hujjatdagi emas.
@@ -63,8 +63,8 @@ _ENDPOINT_RE = re.compile(
     r"(?:(?P<host>\S+)\s+\((?P<ip>\d{1,3}(?:\.\d{1,3}){3})\)|(?P<plain>[^\s:]+)):(?P<port>\d+)"
 )
 
-# Namuna (HAQIQIY, production'dan): [Connection] TCP sph-262.synergypharm.org
-# (172.16.1.35):63579 -> lr-in-f95.1e100.net (209.85.233.95):443 [Iface] ...
+# Namuna (HAQIQIY, production'dan): [Connection] TCP workstation.example.internal
+# (10.254.1.35):63579 -> service.example.net (198.51.100.25):443 [Iface] ...
 # Eski (2013-yilgi hujjat) format ham qabul qilinadi: `TCP 192.168.1.140:1193
 # > hit.google.com:80` - shuning uchun ajratuvchi ixtiyoriy chiziqcha bilan
 # (`-?>`), va manzil qismlari alohida `_ENDPOINT_RE` orqali tahlil qilinadi.
@@ -99,7 +99,7 @@ def _parse_endpoint(part: str):
     lekin hostname'ni (teskari DNS orqali Kerio'ning o'zi topib bergan
     domen nomini) BUTUNLAY TASHLAB YUBORARDI (`None` qaytarardi) - aynan
     shu modul docstring'ida "HAQIQIY production'dan olingan namuna"
-    deb ko'rsatilgan `lr-in-f95.1e100.net (209.85.233.95):443` kabi
+    deb ko'rsatilgan `service.example.net (198.51.100.25):443` kabi
     formatning o'ZI. Natijada "Saytlar tarixi" (Web Activity) sahifasi
     domen nomlari o'rniga deyarli har doim faqat xom IP manzillarni
     ko'rsatardi - Kerio o'zi domen nomini aniq bergan bo'lsa ham.

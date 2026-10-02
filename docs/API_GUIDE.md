@@ -97,7 +97,7 @@ va bildirishnomalarda ko'rinadi).
 ```json
 {
   "hostname": "ACCOUNTING-PC",
-  "ip_address": "172.16.1.45",
+  "ip_address": "10.254.1.45",
   "filename": "invoice.exe",
   "sha256": "275a021b...",
   "threat_name": "Trojan.GenericKD",

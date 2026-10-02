@@ -44,7 +44,7 @@ python -m network_discovery.asset_inventory --ruijie-only
 
 # Yoki to'liq discovery aylanishining bir qismi sifatida
 # (RUIJIE_APP_ID sozlangan bo'lsa avtomatik ishga tushadi):
-python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
+python -m network_discovery.asset_inventory --cidr 10.254.0.0/22 --interface eth0
 
 # Yoki davriy fon xizmati sifatida (docker-compose'da RUIJIE_APP_ID
 # sozlangan bo'lsa `ruijie_sync` xizmati avtomatik shuni bajaradi):

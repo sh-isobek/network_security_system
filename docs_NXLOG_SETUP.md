@@ -1,7 +1,7 @@
 # Windows DNS Server loglarini yuborishni sozlash (NXLog)
 
 Windows o'zi syslog protokolini bilmaydi, shuning uchun DNS so'rovlarini
-bizning syslog collector'ga (172.16.x.x:5140 yoki 514) yuborish uchun
+bizning syslog collector'ga (10.254.x.x:5140 yoki 514) yuborish uchun
 **NXLog Community Edition** DNS serverga o'rnatiladi.
 
 ## 1. Windows DNS Server'da Analytical logni yoqish
@@ -35,7 +35,7 @@ Bu Event ID 256 (so'rov) va 257 (javob) hodisalarini yoza boshlaydi.
 
 <Output to_collector>
     Module om_udp
-    Host 172.16.0.X      # Bizning Python syslog collector IP manzili
+    Host 10.254.0.X      # Bizning Python syslog collector IP manzili
     Port 5140            # Yoki production'da 514
     Exec $raw_event = to_json();
 </Output>
@@ -60,7 +60,7 @@ Bizning `parsers/windows_dns_parser.py` quyidagi JSON tuzilmasini kutadi:
 ```json
 {
   "EventID": 256,
-  "ClientIP": "172.16.2.30",
+  "ClientIP": "10.254.2.30",
   "QueryName": "malicious-domain.com",
   "QueryType": "A",
   "Timestamp": "2026-07-30T13:05:00Z"

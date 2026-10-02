@@ -26,7 +26,7 @@ spec:
             - -m
             - network_discovery.scheduler
             - --cidr
-            - "172.16.0.0/22"    # o'z tarmog'ingizga moslang
+            - "10.254.0.0/22"    # o'z tarmog'ingizga moslang
             - --interface
             - "eth0"              # Node'dagi haqiqiy interfeys nomi
             - --loop

@@ -26,8 +26,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_REPO_ROOT, ".env"))
 
 # ---- Tarmoq diapazoni ----
-NETWORK_RANGE_START = os.getenv("NETWORK_RANGE_START", "172.16.0.11")
-NETWORK_RANGE_END = os.getenv("NETWORK_RANGE_END", "172.16.3.254")
+NETWORK_RANGE_START = os.getenv("NETWORK_RANGE_START", "192.0.2.10")
+NETWORK_RANGE_END = os.getenv("NETWORK_RANGE_END", "192.0.2.250")
 
 # ---- Syslog qabul qiluvchi ----
 SYSLOG_HOST = os.getenv("SYSLOG_HOST", "0.0.0.0")

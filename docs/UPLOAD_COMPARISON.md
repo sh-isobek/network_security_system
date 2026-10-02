@@ -40,9 +40,9 @@ memory and avoids multipart spooling.
 - 18 lifecycle/API tests passed locally, including a real HTTP transfer and
   real YARA rule match; the existing AXML/APK regression test also passed.
 - SQLite and PostgreSQL lifecycle CI passed on `cff9d61`:
-  https://github.com/sh-isobek/network_security_system/actions/runs/35527903853
+  https://github.com/sh-primaryuser/network_security_system/actions/runs/35527903853
 - The broader Linux integration run was still running at review time:
-  https://github.com/sh-isobek/network_security_system/actions/runs/35527903834
+  https://github.com/sh-primaryuser/network_security_system/actions/runs/35527903834
 - No production service was deployed or restarted during this review.
 - Forced process termination can bypass cleanup. See `UPLOAD_SCAN.md` for
   temporary volume, swap/core dump, and deletion guarantees. This comparison

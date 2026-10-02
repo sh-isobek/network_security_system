@@ -13,7 +13,7 @@ server bilan bog'lanadi:
   GET  /api/v1/health            - agent ishga tushganda serverga
                                     ulanishni tekshirish uchun
 
-MUHIM: Bu API faqat ICHKI tarmoq (172.16.0.0/22) uchun mo'ljallangan,
+MUHIM: Bu API faqat ICHKI tarmoq (10.254.0.0/22) uchun mo'ljallangan,
 tashqi internetga ochiq bo'lmasligi SHART. Production'da HTTPS
 (o'z-ichki CA sertifikati bilan) va agent autentifikatsiyasi (API key
 yoki mTLS) qo'shilishi kerak - bu yerda soddalashtirilgan HTTP+token
@@ -513,7 +513,7 @@ def report_incident():
 
     So'rov: {
         "hostname": "ACCOUNTING-PC",
-        "ip_address": "172.16.1.45",
+        "ip_address": "10.254.1.45",
         "filename": "invoice.exe",
         "sha256": "...",
         "threat_name": "Trojan.GenericKD",
@@ -607,7 +607,7 @@ def agent_heartbeat():
 
     So'rov: {
         "hostname": "ACCOUNTING-PC",
-        "ip_address": "172.16.1.45",
+        "ip_address": "10.254.1.45",
         "agent_version": "1.2.0",
         "agent_os": "windows"
     }

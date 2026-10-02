@@ -27,7 +27,7 @@ class DhcpLease:
 
 
 # ISC dhcpd.leases formatida bitta lease bloki:
-# lease 172.16.1.45 {
+# lease 10.254.1.45 {
 #   starts 3 2026/08/07 10:00:00;
 #   ends 3 2026/08/07 22:00:00;
 #   hardware ethernet aa:bb:cc:dd:ee:ff;

@@ -22,6 +22,8 @@ deploy/pki/certs/
 # Muhit sozlamalari (maxfiy ma'lumot - .env.example commit qilinadi, .env emas)
 .env
 .env.local
+.env.*
+!.env.example
 # MUHIM (config/secrets audit orqali topilgan real bo'shliq): vaqtinchalik
 # qo'lda yaratilgan zaxira nusxalar (masalan `.env.bak_20260907_134206`)
 # yuqoridagi aniq `.env` qoidasi bilan QAMRAB OLINMAYDI (fayl nomi

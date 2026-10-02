@@ -19,7 +19,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>API_SERVER_URL</key>
-        <string>https://172.16.0.5:8443</string>
+        <string>https://security-agent-api.company.local:8443</string>
         <key>AGENT_API_KEY</key>
         <string>__AGENT_API_KEY__</string>
         <key>AGENT_CA_BUNDLE_FILE</key>

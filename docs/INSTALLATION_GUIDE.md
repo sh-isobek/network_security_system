@@ -17,7 +17,7 @@ alohida faylda (loyiha ildizida, `docs_*_SETUP.md`).
 ### 1-bosqich: Asosiy platforma
 
 ```bash
-git clone https://github.com/sh-isobek/network_security_system.git
+git clone https://github.com/sh-primaryuser/network_security_system.git
 cd network_security_system
 cp .env.example .env
 # .env faylini oching, kamida quyidagilarni to'ldiring:

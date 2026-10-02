@@ -96,7 +96,7 @@ logger = logging.getLogger("endpoint_agent")
 # agent JIM ravishda ulana olmay qoladi, TLS proxy ishga tushirilmagan
 # bo'lsa. TLS'ga o'tganda `API_SERVER_URL`ni ANIQ (`.env`/SYSVOL
 # orqali) `https://...`ga o'zgartiring - standart qiymatga tayanmang.
-API_SERVER_URL = os.getenv("API_SERVER_URL", "http://172.16.0.5:8443")
+API_SERVER_URL = os.getenv("API_SERVER_URL", "http://127.0.0.1:8443")
 # XAVFSIZLIK: bu yerda hech qanday standart (fallback) qiymat YO'Q ataylab -
 # agar server ham xuddi shunday standart bilan ishga tushirilsa (masalan
 # admin AGENT_API_KEY'ni sozlashni unutsa), ikkalasi HAM bir xil ma'lum

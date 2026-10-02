@@ -26,7 +26,7 @@ Sizda alohida **UniFi Switch** va **UDM** bor - eng to'liq qamrov
 uchun Switch'ning **UDM'ga ketuvchi uplink porti**ni oyna (mirror)
 sifatida sozlaymiz (bu orqali ichki va tashqi barcha trafik ko'rinadi).
 
-1. **UniFi Network Controller**ga kiring (`https://172.16.0.64:11443`)
+1. **UniFi Network Controller**ga kiring (`https://10.254.0.64:11443`)
 2. **Devices** → sizning **Switch**ingizni tanlang (UDM emas, Switch)
 3. **Ports** bo'limiga o'ting
 4. Serveringiz ulanadigan (yoki ulanishi kerak bo'lgan) **bo'sh portni**
@@ -38,9 +38,9 @@ sifatida sozlaymiz (bu orqali ichki va tashqi barcha trafik ko'rinadi).
 7. **Apply**ni bosing
 
 **MUHIM (jismoniy talab)**: Suricata ishlaydigan serveringizda
-(`172.16.1.206`) buning uchun **ikkinchi, alohida tarmoq kartasi**
+(`192.0.2.25`) buning uchun **ikkinchi, alohida tarmoq kartasi**
 kerak bo'ladi:
-- Birinchi karta (`eth0`, `172.16.1.206`) - odatdagidek, SSH/Docker
+- Birinchi karta (`eth0`, `192.0.2.25`) - odatdagidek, SSH/Docker
   uchun IP bilan ishlaydi
 - Ikkinchi karta (masalan `eth1`) - **IP manzilsiz**, yuqoridagi
   6-bosqichda tanlangan mirror portiga jismoniy kabel bilan ulanadi,
