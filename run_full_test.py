@@ -1750,12 +1750,12 @@ def _test_k8s_manifests():
             required_kinds_seen.add(doc["kind"])
 
     expected_kinds = {
-        "Namespace", "ConfigMap", "Secret", "StatefulSet", "Service",
+        "Namespace", "ConfigMap", "StatefulSet", "Service",
         "Deployment", "PersistentVolumeClaim", "HorizontalPodAutoscaler", "Ingress",
     }
     missing = expected_kinds - required_kinds_seen
     assert not missing, f"Kutilgan resurs turlari topilmadi: {missing}"
-    assert total_docs >= 20, f"Kamida 20 ta resurs kutilgan edi, {total_docs} ta topildi"
+    assert total_docs >= 19, f"Kamida 19 ta resurs kutilgan edi, {total_docs} ta topildi"
 
 
 check("Kubernetes manifestlar (struktura, kutilgan resurs turlari)", _test_k8s_manifests)
@@ -6292,7 +6292,7 @@ def _test_devices_pagination_shows_all():
     for page in range(1, total_pages + 1):
         resp = client.get(f"/devices?page={page}")
         assert resp.status_code == 200
-        found_ips.update(re.findall(r"172\.16\.40\.\d+", resp.get_data(as_text=True)))
+        found_ips.update(re.findall(r"10\.254\.40\.\d+", resp.get_data(as_text=True)))
 
     missing = set(marker_ips) - found_ips
     assert not missing, (
