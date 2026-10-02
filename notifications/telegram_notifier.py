@@ -6,7 +6,7 @@ Format TZ'dagi namunaga mos:
 
     Xavfsizlik Ogohlantirishi
     Computer: ACCOUNTING-PC
-    User/IP: 172.16.1.45
+    User/IP: 10.254.1.45
     File/Domen: invoice.exe
     Threat: Trojan.GenericKD
     Action: Fayl bloklandi

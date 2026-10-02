@@ -17,7 +17,7 @@
 #
 # Ishlatish:
 #   TLS_SERVER_HOSTNAMES="security-agent-api.company.local,dashboard.company.local" \
-#   TLS_SERVER_IPS="172.16.1.206" \
+#   TLS_SERVER_IPS="192.0.2.25" \
 #   bash deploy/pki/generate_ca.sh
 set -euo pipefail
 

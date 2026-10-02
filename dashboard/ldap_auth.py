@@ -14,7 +14,7 @@ Ikki autentifikatsiya usuli qo'llab-quvvatlanadi:
      (parolni tekshirish uchun).
 
 .env sozlamalari:
-    LDAP_SERVER=ldap://172.16.0.20:389
+    LDAP_SERVER=ldap://10.254.0.20:389
     LDAP_AUTH_METHOD=direct_bind   # yoki search_bind
     LDAP_BIND_DN_TEMPLATE=cn={username},ou=people,dc=company,dc=local
     # search_bind uchun qo'shimcha:

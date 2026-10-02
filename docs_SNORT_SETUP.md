@@ -28,7 +28,7 @@ O'rnatish jarayonida interfeys va HOME_NET so'raladi - buni keyin
 
 `/etc/snort/snort.conf`:
 ```
-var HOME_NET 172.16.0.0/22
+var HOME_NET 10.254.0.0/22
 var EXTERNAL_NET !$HOME_NET
 
 # Qoidalar fayllari

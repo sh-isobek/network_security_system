@@ -70,7 +70,7 @@ Chiqargan ochiq kalitni nusxalang.
 
 ## 2. Deploy Key'ni GitHub'ga qo'shish
 
-1. `https://github.com/sh-isobek/network_security_system/settings/keys` sahifasiga o'ting
+1. `https://github.com/sh-primaryuser/network_security_system/settings/keys` sahifasiga o'ting
 2. **"Add deploy key"** tugmasini bosing
 3. Title: masalan `production-server`
 4. Key: yuqoridagi ochiq kalitni joylashtiring
@@ -105,7 +105,7 @@ sudo ssh-keyscan github.com >> /root/.ssh/known_hosts
 ## 4. Repo'ni klonlash
 
 ```bash
-sudo git clone git@github.com-network-security:sh-isobek/network_security_system.git /opt/network_security_system
+sudo git clone git@github.com-network-security:sh-primaryuser/network_security_system.git /opt/network_security_system
 cd /opt/network_security_system
 sudo cp .env.example .env
 sudo nano .env   # POSTGRES_PASSWORD, AGENT_API_KEY va boshqa maxfiy qiymatlarni to'ldiring

@@ -463,7 +463,7 @@ services:
       # sertifikat (mTLS) talab qiladi - docs_TLS_SETUP.md'ga qarang.
       AGENT_MTLS_REQUIRED: ${AGENT_MTLS_REQUIRED:-false}
     ports:
-      - "8443:8443"   # Agent API (TLS) - LAN'ga OCHIQ (172.16.0.0/22)
+      - "8443:8443"   # Agent API (TLS) - LAN'ga OCHIQ (10.254.0.0/22)
       - "8843:8843"   # Dashboard (TLS) - LAN'ga OCHIQ
     depends_on:
       - agent_api
@@ -570,7 +570,7 @@ services:
     profiles: ["discovery"]
     # MUHIM: standart Docker tarmoq rejimida konteyner FAQAT Docker'ning
     # ichki bridge tarmog'ini (172.17.x/172.18.x) ko'radi, sizning
-    # haqiqiy LAN'ingizni (masalan 172.16.0.0/22) emas - ARP scan va
+    # haqiqiy LAN'ingizni (masalan 10.254.0.0/22) emas - ARP scan va
     # LLDP/CDP capture noto'g'ri (yoki bo'sh) tarmoqni skanerlaydi.
     # `network_mode: host` konteynerni host'ning tarmoq nomfazosiga
     # to'g'ridan-to'g'ri ulaydi - host'dagi `ip addr`da ko'ringan barcha
@@ -582,7 +582,7 @@ services:
       - NET_RAW     # LLDP/CDP capture (raw socket) uchun
     command: >
       python -m network_discovery.scheduler
-        --cidr ${DISCOVERY_CIDR:-172.16.0.0/22}
+        --cidr ${DISCOVERY_CIDR:-10.254.0.0/22}
         --interface ${DISCOVERY_INTERFACE:-eth0}
         --loop --interval 3600
     env_file: .env

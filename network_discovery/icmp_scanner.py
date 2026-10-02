@@ -18,7 +18,7 @@ logger = logging.getLogger("icmp_scanner")
 
 def ping_sweep(cidr: str, timeout: int = 60) -> List[str]:
     """
-    Berilgan CIDR (masalan "172.16.0.0/22") ichidagi tirik IP'larni
+    Berilgan CIDR (masalan "10.254.0.0/22") ichidagi tirik IP'larni
     ICMP orqali topadi. Javob bermagan (ICMP bloklangan) qurilmalar
     aniqlanmasligi mumkin - bu holatda ARP scan (`arp_scanner.py`)
     ko'proq ishonchli, chunki lokal tarmoqda ARP odatda bloklanmaydi.

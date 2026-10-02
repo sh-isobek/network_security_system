@@ -84,7 +84,7 @@ docker compose start parser_engine file_analysis_engine deep_scan_engine \
 
 ```bash
 # 1) Yangi serverda loyihani klon qilish
-git clone https://github.com/sh-isobek/network_security_system.git
+git clone https://github.com/sh-primaryuser/network_security_system.git
 cd network_security_system
 
 # 2) .env faylini tiklash (parol menejeridan/maxfiy backup'dan)

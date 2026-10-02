@@ -12,8 +12,8 @@ Bu o'zgarishlar `device_history` jadvaliga yoziladi - shu orqali
 (Asset History).
 
 Ishga tushirish:
-    python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --once
-    python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --loop --interval 3600
+    python -m network_discovery.scheduler --cidr 10.254.0.0/22 --interface eth0 --once
+    python -m network_discovery.scheduler --cidr 10.254.0.0/22 --interface eth0 --loop --interval 3600
 """
 import argparse
 import logging

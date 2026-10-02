@@ -11,8 +11,8 @@ uchun oqim `Device.agent_restart_status` orqali kuzatiladi:
     failed     - AGENT_RESTART_DEADLINE_SECONDS (standart 60s) ichida ulanmadi -> Alert (high)
 
 Bir kompyuter Dashboard'da bir nechta `Device` qatori bo'lib qolishi mumkin (hostname turli
-manbalardan - Kerio/Ruijie/agent - turlicha yoziladi: "ISOBEK", "Isobek a4:d7",
-"sph-027.synergypharm.org"), shuning uchun kompyuterni hostname'ning QISQA nomi, MAC yoki IP
+manbalardan - Kerio/Ruijie/agent - turlicha yoziladi: "WORKSTATION", "workstation a4:d7",
+"workstation.example.internal"), shuning uchun kompyuterni hostname'ning QISQA nomi, MAC yoki IP
 bo'yicha aniqlaymiz.
 """
 import os

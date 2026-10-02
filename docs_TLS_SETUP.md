@@ -18,13 +18,13 @@ to'g'ridan-to'g'ri erishib bo'lmaydi, faqat `nginx` orqali.
 
 Sertifikatlar **ichki, korxona uchun o'z-o'zidan yaratilgan CA**
 tomonidan imzolanadi (jamoat CA'siga - Let's Encrypt va h.k. - ehtiyoj
-yo'q, chunki bu faqat ichki `172.16.0.0/22` tarmog'ida ishlaydi).
+yo'q, chunki bu faqat ichki `10.254.0.0/22` tarmog'ida ishlaydi).
 
 ## 2. Ichki CA va server sertifikatini yaratish
 
 ```bash
 TLS_SERVER_HOSTNAMES="security-agent-api.company.local,dashboard.company.local" \
-TLS_SERVER_IPS="172.16.1.206" \
+TLS_SERVER_IPS="192.0.2.25" \
 bash deploy/pki/generate_ca.sh
 ```
 
@@ -77,7 +77,7 @@ lekin ixtiyoriy sozlanadigan narsalar:
 
 ```
 TLS_SERVER_HOSTNAMES=security-agent-api.company.local,dashboard.company.local
-TLS_SERVER_IPS=172.16.1.206
+TLS_SERVER_IPS=192.0.2.25
 AGENT_MTLS_REQUIRED=false
 ```
 

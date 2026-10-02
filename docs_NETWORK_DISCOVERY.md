@@ -53,7 +53,7 @@ sudo apt install nmap arp-scan iputils-ping snmp
 
 ```bash
 # To'liq discovery (ARP + ICMP, ixtiyoriy TCP scan va SNMP boyitish)
-python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0 --tcp-scan --snmp
+python -m network_discovery.asset_inventory --cidr 192.0.2.0/24 --interface eth0 --tcp-scan --snmp
 
 # Topologiya (LLDP/CDP) - kamida 30 soniya kutish tavsiya etiladi
 python -m network_discovery.topology_builder --interface eth0 --timeout 60
@@ -61,7 +61,7 @@ python -m network_discovery.topology_builder --interface eth0 --timeout 60
 
 Davriy ishga tushirish uchun cron (masalan har 6 soatda):
 ```bash
-0 */6 * * * cd /path/to/project && python -m network_discovery.asset_inventory --cidr 172.16.0.0/22 --interface eth0
+0 */6 * * * cd /path/to/project && python -m network_discovery.asset_inventory --cidr 192.0.2.0/24 --interface eth0
 ```
 
 ## Rejalashtirilgan + Differensial skanerlash (scheduler.py)
@@ -73,10 +73,10 @@ ko'p ko'rinmagan), `reappeared` (qayta paydo bo'lgan). Bu o'zgarishlar
 
 ```bash
 # Bir martalik differensial scan
-python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --once
+python -m network_discovery.scheduler --cidr 192.0.2.0/24 --interface eth0 --once
 
 # Doimiy (har soatda)
-python -m network_discovery.scheduler --cidr 172.16.0.0/22 --interface eth0 --loop --interval 3600
+python -m network_discovery.scheduler --cidr 192.0.2.0/24 --interface eth0 --loop --interval 3600
 ```
 
 `DISCOVERY_MISSING_THRESHOLD_HOURS` (standart 24) - qurilma necha
@@ -124,7 +124,7 @@ interfeyslar bo'ladi (haqiqiy misol):
 
 ```
 $ ip -4 addr
-2: eth0: ... inet 172.16.1.206/22 ...          <- HAQIQIY LAN
+2: eth0: ... inet 192.0.2.25/24 ...          <- HAQIQIY LAN
 3: br-71f7b11dc9c6: ... inet 172.18.0.1/16 ...  <- Docker Compose bridge
 4: docker0: ... inet 172.17.0.1/16 ...          <- Docker standart bridge
 ```
@@ -136,7 +136,7 @@ hech qanday ta'sir qilmaydi - ular oddiy TCP/UDP portlarga bog'langan.
 ishga tushirilsa, konteyner FAQAT Docker'ning ichki bridge tarmog'ini
 (`172.17.x`/`172.18.x`) ko'radi - ARP scan/LLDP capture **noto'g'ri
 tarmoqni** (yoki bo'sh natijani) skanerlaydi, haqiqiy LAN'ni (masalan
-`172.16.0.0/22`) emas.
+`192.0.2.0/24`) emas.
 
 ### Yechim: `network_mode: host`
 
@@ -147,7 +147,7 @@ addr` host'dagi bilan bir xil natija beradi, jumladan haqiqiy `eth0`).
 
 ```bash
 # .env faylida:
-DISCOVERY_CIDR=172.16.0.0/22
+DISCOVERY_CIDR=192.0.2.0/24
 DISCOVERY_INTERFACE=eth0
 
 docker compose --profile discovery up -d network_discovery postgres

@@ -123,7 +123,7 @@ print("\n=== 1) WHITELIST/BLACKLIST SEED ===")
 
 def _seed():
     s = get_session()
-    s.add(WhitelistEntry(value="172.16.0.10", description="1C server"))
+    s.add(WhitelistEntry(value="10.254.0.10", description="1C server"))
     s.add(BlacklistEntry(value="malicious-test-domain.com", source="manual", reason="test"))
     s.add(HashBlacklist(sha256="275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0",
                          threat_name="EICAR-Test", source="manual"))
@@ -141,11 +141,11 @@ def _test_parser_pipeline():
     from db.models import RawLog
     s = get_session()
     logs = [
-        RawLog(source_ip="172.16.0.1", raw_message="[18/Apr/2013 10:22:47] [IPv4] 172.16.1.45 [MAC] AA-BB-CC-DD-EE-FF (Test) [Hostname] ACCOUNTING-PC"),
-        RawLog(source_ip="172.16.0.1", raw_message="[18/Apr/2013 10:22:47] [ID] 613181 [Rule] NAT [Service] HTTPS [Connection] TCP 172.16.1.45:51234 > 8.8.8.8:443 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"),
-        RawLog(source_ip="172.16.0.11", raw_message='{"EventID":256,"ClientIP":"172.16.2.5","QueryName":"malicious-test-domain.com","QueryType":"A"}'),
-        RawLog(source_ip="172.16.0.11", raw_message='{"EventID":256,"ClientIP":"172.16.2.6","QueryName":"google.com","QueryType":"A"}'),
-        RawLog(source_ip="172.16.0.99", raw_message="bu hech qanday parserga mos kelmaydigan xom matn"),
+        RawLog(source_ip="10.254.0.1", raw_message="[18/Apr/2013 10:22:47] [IPv4] 10.254.1.45 [MAC] AA-BB-CC-DD-EE-FF (Test) [Hostname] ACCOUNTING-PC"),
+        RawLog(source_ip="10.254.0.1", raw_message="[18/Apr/2013 10:22:47] [ID] 613181 [Rule] NAT [Service] HTTPS [Connection] TCP 10.254.1.45:51234 > 8.8.8.8:443 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"),
+        RawLog(source_ip="10.254.0.11", raw_message='{"EventID":256,"ClientIP":"10.254.2.5","QueryName":"malicious-test-domain.com","QueryType":"A"}'),
+        RawLog(source_ip="10.254.0.11", raw_message='{"EventID":256,"ClientIP":"10.254.2.6","QueryName":"google.com","QueryType":"A"}'),
+        RawLog(source_ip="10.254.0.99", raw_message="bu hech qanday parserga mos kelmaydigan xom matn"),
     ]
     s.add_all(logs)
     s.commit()
@@ -162,7 +162,7 @@ def _test_parser_pipeline():
     devices = s.query(Device).all()
     assert len(devices) >= 3, f"Kamida 3 ta device kutilgan, {len(devices)} ta topildi"
 
-    dev_1_45 = s.query(Device).filter(Device.ip_address == "172.16.1.45").first()
+    dev_1_45 = s.query(Device).filter(Device.ip_address == "10.254.1.45").first()
     assert dev_1_45.mac_address == "AA:BB:CC:DD:EE:FF", "DHCP orqali MAC to'g'ri bog'lanmadi"
     assert dev_1_45.hostname == "ACCOUNTING-PC", "DHCP orqali hostname to'g'ri bog'lanmadi"
 
@@ -218,13 +218,13 @@ def _test_file_pipeline():
 
     s = get_session()
     entries = [
-        FileEvent(src_ip="172.16.2.10", dest_ip="1.2.3.4", filename="invoice.exe", file_ext="exe",
+        FileEvent(src_ip="10.254.2.10", dest_ip="1.2.3.4", filename="invoice.exe", file_ext="exe",
                    size=100, sha256=known_bad_hash, md5="x", stored_path=eicar_path, checked=False),
-        FileEvent(src_ip="172.16.2.20", dest_ip="1.2.3.5", filename="archive.zip", file_ext="zip",
+        FileEvent(src_ip="10.254.2.20", dest_ip="1.2.3.5", filename="archive.zip", file_ext="zip",
                    size=os.path.getsize(zip_path), sha256=sha(zip_path), md5="x", stored_path=zip_path, checked=False),
-        FileEvent(src_ip="172.16.2.30", dest_ip="1.2.3.6", filename="report.pdf", file_ext="pdf",
+        FileEvent(src_ip="10.254.2.30", dest_ip="1.2.3.6", filename="report.pdf", file_ext="pdf",
                    size=os.path.getsize(pdf_path), sha256=sha(pdf_path), md5="x", stored_path=pdf_path, checked=False),
-        FileEvent(src_ip="172.16.2.40", dest_ip="1.2.3.7", filename="clean.txt", file_ext="txt",
+        FileEvent(src_ip="10.254.2.40", dest_ip="1.2.3.7", filename="clean.txt", file_ext="txt",
                    size=os.path.getsize(clean_path), sha256=sha(clean_path), md5="x", stored_path=clean_path, checked=False),
     ]
     s.add_all(entries)
@@ -323,8 +323,8 @@ def _test_response_engine():
     tekshiriladi.
     """
     s = get_session()
-    d_wifi = Device(ip_address="172.16.3.1", mac_address="AA:11:22:33:44:55", connection_type="wifi", source="test")
-    d_unknown = Device(ip_address="172.16.3.2", mac_address="BB:11:22:33:44:55", connection_type="unknown", source="test")
+    d_wifi = Device(ip_address="10.254.3.1", mac_address="AA:11:22:33:44:55", connection_type="wifi", source="test")
+    d_unknown = Device(ip_address="10.254.3.2", mac_address="BB:11:22:33:44:55", connection_type="unknown", source="test")
     s.add_all([d_wifi, d_unknown])
     s.flush()
 
@@ -422,7 +422,7 @@ def _test_api_server():
 
     # report_incident
     r = client.post("/api/v1/report_incident", json={
-        "hostname": "TEST-PC", "ip_address": "172.16.9.9",
+        "hostname": "TEST-PC", "ip_address": "10.254.9.9",
         "filename": "test.exe", "sha256": "c" * 64,
         "threat_name": "Unit-Test-Threat", "file_deleted": True, "process_killed": True,
         "process_name": "test.exe",
@@ -665,7 +665,7 @@ controller.stop()
         from datetime import datetime as _dt
 
         s = get_session()
-        d = Device(ip_address="172.16.5.5", mac_address="AA:BB:CC:00:11:22",
+        d = Device(ip_address="10.254.5.5", mac_address="AA:BB:CC:00:11:22",
                     hostname="NOTIFY-TEST-PC", connection_type="wifi", source="test")
         s.add(d)
         s.flush()
@@ -800,7 +800,7 @@ if __name__ == "__main__":
 
         alert_data = {
             "severity": "high", "timestamp": "2026-09-10 12:00:00",
-            "hostname": "CI-PC", "ip_address": "172.16.9.9", "mac_address": "-",
+            "hostname": "CI-PC", "ip_address": "10.254.9.9", "mac_address": "-",
             "connection_type": "wifi",
             # Foydalanuvchi PRODUCTION'da aynan shu turdagi matn bilan
             # duch kelgan - qavs ichida threat nomi/yorliq.
@@ -965,7 +965,7 @@ def _test_dashboard():
     # Ma'lumot borligini tekshirish (oldingi testlarda yaratilgan device/alert'lar)
     r = client.get("/devices")
     body = r.get_data(as_text=True)
-    assert "172.16." in body, "Devices sahifasida IP manzil ko'rinmadi"
+    assert "10.254." in body, "Devices sahifasida IP manzil ko'rinmadi"
 
     # Filtrlash ishlashini tekshirish
     r = client.get("/alerts?severity=critical")
@@ -1046,7 +1046,7 @@ def _test_rbac():
     create_user("rbac_viewer", "viewerpass123", "viewer")
 
     s = get_session()
-    d = Device(ip_address="172.16.8.99", hostname="RBAC-AUTOTEST-PC", connection_type="wifi", source="test")
+    d = Device(ip_address="10.254.8.99", hostname="RBAC-AUTOTEST-PC", connection_type="wifi", source="test")
     s.add(d)
     s.flush()
     a = Alert(device_id=d.id, severity="critical", reason="RBAC avtomatik test alert", notified=False)
@@ -1264,18 +1264,18 @@ def _test_zeek_integration():
     os.makedirs(log_dir)
 
     with open(os.path.join(log_dir, "notice.log"), "w") as f:
-        f.write('{"ts":1754470800.1,"note":"Scan::Port_Scan","msg":"test port scan","src":"172.16.6.10","dst":"172.16.6.20"}\n')
+        f.write('{"ts":1754470800.1,"note":"Scan::Port_Scan","msg":"test port scan","src":"10.254.6.10","dst":"10.254.6.20"}\n')
 
     with open(os.path.join(log_dir, "dns.log"), "w") as f:
-        f.write('{"ts":1754470801.1,"id.orig_h":"172.16.6.11","query":"zeek-test-blacklist-domain.com","qtype_name":"A"}\n')
+        f.write('{"ts":1754470801.1,"id.orig_h":"10.254.6.11","query":"zeek-test-blacklist-domain.com","qtype_name":"A"}\n')
 
     with open(os.path.join(log_dir, "conn.log"), "w") as f:
-        f.write('{"ts":1754470802.1,"id.orig_h":"172.16.6.12","id.resp_h":"1.2.3.4","id.resp_p":443,"proto":"tcp"}\n')
+        f.write('{"ts":1754470802.1,"id.orig_h":"10.254.6.12","id.resp_h":"1.2.3.4","id.resp_p":443,"proto":"tcp"}\n')
 
     file_sha = "2222222222222222222222222222222222222222222222222222222222222222"[:64]
     with open(os.path.join(log_dir, "files.log"), "w") as f:
         f.write(
-            '{"ts":1754470803.1,"fuid":"Ftest1","tx_hosts":["172.16.6.13"],"rx_hosts":["5.6.7.8"],'
+            '{"ts":1754470803.1,"fuid":"Ftest1","tx_hosts":["10.254.6.13"],"rx_hosts":["5.6.7.8"],'
             f'"source":"HTTP","filename":"zeek_payload.exe","mime_type":"application/x-dosexec",'
             f'"seen_bytes":1000,"sha256":"{file_sha}","md5":"bbbb"}}\n'
         )
@@ -1292,7 +1292,7 @@ def _test_zeek_integration():
     assert results["files.log"] == 1
 
     s = get_session()
-    assert s.query(Device).filter(Device.ip_address == "172.16.6.10").first() is not None
+    assert s.query(Device).filter(Device.ip_address == "10.254.6.10").first() is not None
     dns_alert = s.query(Alert).filter(Alert.reason.like("%zeek-test-blacklist-domain.com%")).first()
     assert dns_alert is not None, "Zeek DNS blacklist alert yaratilmadi"
 
@@ -1598,7 +1598,7 @@ def _test_rabbitmq_queue():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         test_mac = "AA:BB:CC:DD:EE:99"
-        msg = f"[04/Mar/2014 12:07:28] [IPv4] 172.16.9.199 [MAC] {test_mac.replace(':', '-')} (Test) [Hostname] RABBITMQ-E2E-TEST"
+        msg = f"[04/Mar/2014 12:07:28] [IPv4] 10.254.9.199 [MAC] {test_mac.replace(':', '-')} (Test) [Hostname] RABBITMQ-E2E-TEST"
         sock.sendto(msg.encode(), ("127.0.0.1", 5140))
         _time.sleep(1)
 
@@ -1648,8 +1648,8 @@ def _test_ueba():
     s = get_session()
     now = utcnow()
 
-    d_normal = Device(ip_address="172.16.11.1", hostname="UEBA-NORMAL", connection_type="wifi", source="test")
-    d_anomaly = Device(ip_address="172.16.11.2", hostname="UEBA-ANOMALY", connection_type="wifi", source="test")
+    d_normal = Device(ip_address="10.254.11.1", hostname="UEBA-NORMAL", connection_type="wifi", source="test")
+    d_anomaly = Device(ip_address="10.254.11.2", hostname="UEBA-ANOMALY", connection_type="wifi", source="test")
     s.add_all([d_normal, d_anomaly])
     s.flush()
     normal_id, anomaly_id = d_normal.id, d_anomaly.id
@@ -1660,11 +1660,11 @@ def _test_ueba():
             for hour in range(9, 19):
                 for _ in range(random.randint(4, 8)):
                     ts = now.replace(hour=hour, minute=random.randint(0, 59), second=0, microsecond=0) - timedelta(days=day)
-                    s.add(Event(device_id=dev_id, source_ip="172.16.11.0", dest_ip="8.8.8.8", dest_port=443, protocol="TCP", timestamp=ts))
+                    s.add(Event(device_id=dev_id, source_ip="10.254.11.0", dest_ip="8.8.8.8", dest_port=443, protocol="TCP", timestamp=ts))
 
     # Faqat anomaly qurilmasida - joriy soatda katta portlash
     for _ in range(150):
-        s.add(Event(device_id=anomaly_id, source_ip="172.16.11.0", dest_ip="185.20.10.99", dest_port=8080, protocol="TCP", timestamp=now))
+        s.add(Event(device_id=anomaly_id, source_ip="10.254.11.0", dest_ip="185.20.10.99", dest_port=8080, protocol="TCP", timestamp=now))
 
     s.commit()
     s.close()
@@ -1824,7 +1824,7 @@ def _test_backup_restore():
         shutil.rmtree(backup_dir)
 
     s = get_session()
-    s.add(Device(ip_address="172.16.21.1", hostname="BACKUP-CI-TEST", connection_type="wifi", source="test"))
+    s.add(Device(ip_address="10.254.21.1", hostname="BACKUP-CI-TEST", connection_type="wifi", source="test"))
     s.commit()
     s.close()
 
@@ -1885,7 +1885,7 @@ def _test_live_map():
     high_id, low_id = d_high.id, d_low.id
     high_ip, low_ip = d_high.ip_address, d_low.ip_address
     raw_connection = RawLog(
-        source_ip="172.16.0.1",
+        source_ip="10.254.0.1",
         raw_message="[Connection] TCP LIVEMAP-HIGH-RISK (198.18.0.1):50000 -> 9.9.9.9:443 "
                     "[Duration] 5 sec [Bytes] 100/200/300 [Packets] 1/2/3",
         # Bu yozuv Live Map API testiga tegishli; keyingi parser_engine
@@ -2177,7 +2177,7 @@ def _test_discovery_offline_parts():
         shutil.rmtree(work_dir)
     os.makedirs(work_dir)
 
-    isc_content = """lease 172.16.5.10 {
+    isc_content = """lease 10.254.5.10 {
   starts 3 2026/08/07 08:00:00;
   ends 3 2026/08/07 20:00:00;
   hardware ethernet aa:bb:cc:dd:ee:01;
@@ -2195,7 +2195,7 @@ def _test_discovery_offline_parts():
 
     kerio_path = os.path.join(work_dir, "kerio.log")
     with open(kerio_path, "w") as f:
-        f.write("[04/Mar/2014 12:07:28] [IPv4] 172.16.5.20 [MAC] BB-CC-DD-EE-FF-01 (Test) [Hostname] TEST-KERIO-PC\n")
+        f.write("[04/Mar/2014 12:07:28] [IPv4] 10.254.5.20 [MAC] BB-CC-DD-EE-FF-01 (Test) [Hostname] TEST-KERIO-PC\n")
 
     kerio_leases = parse_kerio_dhcp_log(kerio_path)
     assert len(kerio_leases) == 1
@@ -2424,11 +2424,11 @@ def _test_asset_inventory_db():
     try:
         # discovery_source ustuvorligi: ARP (boy) keyin ICMP (kambag'al)
         # kelsa, ICMP discovery_source'ni ustidan yozmasligi kerak
-        dev = _upsert_device(s, "172.16.6.100", mac_address="CC:DD:EE:FF:00:01", discovery_source="arp_scan")
+        dev = _upsert_device(s, "10.254.6.100", mac_address="CC:DD:EE:FF:00:01", discovery_source="arp_scan")
         s.commit()
         dev_id = dev.id
 
-        _upsert_device(s, "172.16.6.100", discovery_source="icmp")
+        _upsert_device(s, "10.254.6.100", discovery_source="icmp")
         s.commit()
 
         refreshed = s.query(Device).filter(Device.id == dev_id).first()
@@ -2853,7 +2853,7 @@ def _test_agent_coverage():
         import agent_core.agent as agent_mod
         importlib.reload(agent_mod)
 
-        result = agent_mod.send_heartbeat("WIN-CI-HEARTBEAT", "172.16.11.200")
+        result = agent_mod.send_heartbeat("WIN-CI-HEARTBEAT", "10.254.11.200")
         assert result is True, "Heartbeat muvaffaqiyatli bo'lishi kerak edi"
     finally:
         api_proc.terminate()
@@ -2961,7 +2961,7 @@ dNSHostName: CI-MISSING.covci.local
         assert add_result.returncode == 0, f"ldapadd xatoligi: {add_result.stderr}"
 
         s = get_session()
-        s.add(Device(ip_address="172.16.11.201", hostname="CI-COVERED", agent_last_heartbeat=utcnow(), agent_version="1.0"))
+        s.add(Device(ip_address="10.254.11.201", hostname="CI-COVERED", agent_last_heartbeat=utcnow(), agent_version="1.0"))
         s.commit()
         s.close()
 
@@ -3022,8 +3022,8 @@ def clients():
     if request.headers.get("X-API-Key") != "ci-real-key":
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"data": [
-        {"macAddress": "aa:bb:cc:dd:ee:01", "ipAddress": "172.16.20.1", "name": "CI-PC-1", "type": "WIRED"},
-        {"macAddress": "aa:bb:cc:dd:ee:02", "ipAddress": "172.16.20.2", "name": "CI-PC-2", "type": "WIRELESS"},
+        {"macAddress": "aa:bb:cc:dd:ee:01", "ipAddress": "10.254.20.1", "name": "CI-PC-1", "type": "WIRED"},
+        {"macAddress": "aa:bb:cc:dd:ee:02", "ipAddress": "10.254.20.2", "name": "CI-PC-2", "type": "WIRELESS"},
     ]})
 
 # MUHIM: paginatsiya sinovi uchun alohida sayt - real production'da
@@ -3034,7 +3034,7 @@ def clients():
 # qoldirib) - real UniFi'ning eng qattiq xatti-harakatini taqlid qiladi.
 PAGINATION_TOTAL = 73
 PAGINATION_CLIENTS = [
-    {"macAddress": f"aa:bb:cc:dd:{i//256:02x}:{i%256:02x}", "ipAddress": f"172.16.21.{i}",
+    {"macAddress": f"aa:bb:cc:dd:{i//256:02x}:{i%256:02x}", "ipAddress": f"10.254.21.{i}",
      "name": f"PAG-DEVICE-{i}", "type": "WIRED" if i % 2 == 0 else "WIRELESS"}
     for i in range(PAGINATION_TOTAL)
 ]
@@ -3107,7 +3107,7 @@ if __name__ == "__main__":
         from response.base_adapter import TargetDevice
 
         adapter = UniFiAdapter()
-        device = TargetDevice(mac_address="AA:BB:CC:DD:EE:03", ip_address="172.16.20.3", connection_type="wifi")
+        device = TargetDevice(mac_address="AA:BB:CC:DD:EE:03", ip_address="10.254.20.3", connection_type="wifi")
         result = adapter.quarantine(device)
         assert result.success is True
         assert "API Key" in result.message
@@ -3120,7 +3120,7 @@ if __name__ == "__main__":
         os.environ["UNIFI_PASSWORD"] = "ci_pass"
 
         adapter2 = UniFiAdapter()
-        device2 = TargetDevice(mac_address="AA:BB:CC:DD:EE:04", ip_address="172.16.20.4", connection_type="wifi")
+        device2 = TargetDevice(mac_address="AA:BB:CC:DD:EE:04", ip_address="10.254.20.4", connection_type="wifi")
         result2 = adapter2.restore(device2)
         assert result2.success is False, f"API Key noto'g'ri bo'lsa, zaxira usuli YO'Q - muvaffaqiyatsiz bo'lishi kerak: {result2}"
         assert "legacy" not in result2.message
@@ -3191,7 +3191,7 @@ def _test_auto_column_migration():
     """)
     conn.execute(
         "INSERT INTO devices (ip_address, mac_address, hostname) VALUES (?, ?, ?)",
-        ("172.16.99.1", "AA:BB:CC:DD:EE:99", "MIGRATION-TEST-DEVICE"),
+        ("10.254.99.1", "AA:BB:CC:DD:EE:99", "MIGRATION-TEST-DEVICE"),
     )
     conn.commit()
     cols_before = [r[1] for r in conn.execute("PRAGMA table_info(devices)").fetchall()]
@@ -3217,7 +3217,7 @@ def _test_auto_column_migration():
     devices = s.query(Device).all()
     assert len(devices) == 1, "Mavjud yozuv yo'qolgan"
     assert devices[0].hostname == "MIGRATION-TEST-DEVICE", "Mavjud ma'lumot buzilgan"
-    assert devices[0].ip_address == "172.16.99.1"
+    assert devices[0].ip_address == "10.254.99.1"
     assert devices[0].agent_last_heartbeat is None  # yangi ustun, eski qator uchun NULL - to'g'ri
     s.close()
 
@@ -3253,7 +3253,7 @@ def _test_auto_column_migration():
             first_seen TIMESTAMP,
             last_seen TIMESTAMP
         );
-        INSERT INTO devices (ip_address, mac_address, hostname) VALUES ('172.16.99.2', 'BB:CC:DD:EE:FF:01', 'PG-MIGRATION-TEST');
+        INSERT INTO devices (ip_address, mac_address, hostname) VALUES ('10.254.99.2', 'BB:CC:DD:EE:FF:01', 'PG-MIGRATION-TEST');
         """
         subprocess.run(
             ["psql", "-h", "localhost", "-U", "postgres", "-d", "_ci_migration_test"],
@@ -3303,8 +3303,8 @@ def clients():
     if request.headers.get("X-API-Key") != "ai-test-key":
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"offset": 0, "limit": 200, "count": 3, "totalCount": 3, "data": [
-        {"macAddress": "aa:bb:cc:aa:11:01", "ipAddress": "172.16.31.1", "name": "AI-TEST-PC-1", "type": "WIRED"},
-        {"macAddress": "aa:bb:cc:aa:11:02", "ipAddress": "172.16.31.2", "name": "AI-TEST-PC-2", "type": "WIRELESS"},
+        {"macAddress": "aa:bb:cc:aa:11:01", "ipAddress": "10.254.31.1", "name": "AI-TEST-PC-1", "type": "WIRED"},
+        {"macAddress": "aa:bb:cc:aa:11:02", "ipAddress": "10.254.31.2", "name": "AI-TEST-PC-2", "type": "WIRELESS"},
         {"macAddress": "aa:bb:cc:aa:11:03", "ipAddress": "", "name": "IPSIZ-KLIENT", "type": "WIRELESS"},
     ]})
 
@@ -3330,11 +3330,11 @@ if __name__ == "__main__":
         unifi_devices = s.query(Device).filter(Device.discovery_source == "unifi").all()
         assert len(unifi_devices) == 2
         by_ip = {d.ip_address: d for d in unifi_devices}
-        assert "172.16.31.1" in by_ip and "172.16.31.2" in by_ip
-        assert by_ip["172.16.31.1"].mac_address == "AA:BB:CC:AA:11:01"
-        assert by_ip["172.16.31.1"].hostname == "AI-TEST-PC-1"
-        assert by_ip["172.16.31.1"].connection_type == "cable"
-        assert by_ip["172.16.31.2"].connection_type == "wifi"
+        assert "10.254.31.1" in by_ip and "10.254.31.2" in by_ip
+        assert by_ip["10.254.31.1"].mac_address == "AA:BB:CC:AA:11:01"
+        assert by_ip["10.254.31.1"].hostname == "AI-TEST-PC-1"
+        assert by_ip["10.254.31.1"].connection_type == "cable"
+        assert by_ip["10.254.31.2"].connection_type == "wifi"
         s.close()
 
         # --- 2) full_discovery() UNIFI_CONTROLLER_URL sozlangan bo'lsa UniFi'ni ham chaqirishi ---
@@ -3402,7 +3402,7 @@ def clients():
     if request.headers.get("X-API-Key") != "ci-e2e-key":
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"data": [
-        {"macAddress": "aa:bb:cc:dd:ee:60", "ipAddress": "172.16.31.60", "name": "CI-EMPLOYEE-LAPTOP", "type": "WIRELESS"},
+        {"macAddress": "aa:bb:cc:dd:ee:60", "ipAddress": "10.254.31.60", "name": "CI-EMPLOYEE-LAPTOP", "type": "WIRELESS"},
     ]})
 
 @app.route("/proxy/network/integration/v1/sites/ci-e2e-site/clients/<mac>/actions", methods=["POST"])
@@ -3439,7 +3439,7 @@ if __name__ == "__main__":
         assert n == 1, f"1 ta qurilma kashf qilinishi kerak edi, {n} keldi"
 
         s = get_session()
-        device = s.query(Device).filter(Device.ip_address == "172.16.31.60").first()
+        device = s.query(Device).filter(Device.ip_address == "10.254.31.60").first()
         assert device is not None, "UniFi orqali qurilma DB'ga yozilmadi"
         assert device.connection_type == "wifi", f"connection_type='wifi' kutilgan edi, '{device.connection_type}' keldi"
         device_id = device.id
@@ -3458,7 +3458,7 @@ if __name__ == "__main__":
         api_server.AGENT_API_KEY = "ci-e2e-agent-key"
         api_client = api_server.app.test_client()
         r = api_client.post("/api/v1/report_incident", json={
-            "hostname": "CI-EMPLOYEE-LAPTOP", "ip_address": "172.16.31.60",
+            "hostname": "CI-EMPLOYEE-LAPTOP", "ip_address": "10.254.31.60",
             "filename": "invoice.exe", "filepath": "C:\\Users\\ci\\Downloads\\invoice.exe",
             "sha256": "d" * 64, "threat_name": "Trojan.GenericKD",
             "file_deleted": True, "process_killed": False,
@@ -3539,7 +3539,7 @@ def _test_dashboard_timezone():
     from dashboard.create_user import create_user
 
     s = get_session()
-    dev = Device(ip_address="172.16.51.1", hostname="TZ-CI-TEST-PC")
+    dev = Device(ip_address="10.254.51.1", hostname="TZ-CI-TEST-PC")
     s.add(dev)
     s.commit()
     fixed_utc = datetime(2026, 3, 10, 8, 30, 0)
@@ -3605,7 +3605,7 @@ def clients():
     if request.headers.get("X-API-Key") != "ci-sync-key":
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"data": [
-        {"macAddress": "aa:bb:cc:dd:ee:80", "ipAddress": "172.16.41.80", "name": "CI-SYNC-PC", "type": "WIRELESS"},
+        {"macAddress": "aa:bb:cc:dd:ee:80", "ipAddress": "10.254.41.80", "name": "CI-SYNC-PC", "type": "WIRELESS"},
     ]})
 
 if __name__ == "__main__":
@@ -3625,7 +3625,7 @@ if __name__ == "__main__":
         assert n == 1, f"1 ta qurilma kutilgan edi, {n} keldi"
 
         s = get_session()
-        d = s.query(Device).filter(Device.ip_address == "172.16.41.80").first()
+        d = s.query(Device).filter(Device.ip_address == "10.254.41.80").first()
         assert d is not None, "unifi_sync_loop.py DB'ga yozmadi"
         assert d.hostname == "CI-SYNC-PC"
         s.close()
@@ -3660,7 +3660,7 @@ def _test_api_server_url_uses_http_not_https():
     edi - bu Windows Agent'ning serverga ulanishini JIM ravishda
     (aniq xatosiz) muvaffaqiyatsizlikka olib kelardi.
 
-    Bu test barcha tegishli fayllarda 'https://172.16.0.5:8443' (yoki
+    Bu test barcha tegishli fayllarda 'https://10.254.0.5:8443' (yoki
     shunga o'xshash) endi qolmaganini tekshiradi.
     """
     files_to_check = [
@@ -3677,8 +3677,8 @@ def _test_api_server_url_uses_http_not_https():
             continue
         with open(full_path) as f:
             content = f.read()
-        assert "https://172.16.0.5:8443" not in content, (
-            f"{filepath}'da hali ham noto'g'ri 'https://172.16.0.5:8443' bor - "
+        assert "https://10.254.0.5:8443" not in content, (
+            f"{filepath}'da hali ham noto'g'ri 'https://10.254.0.5:8443' bor - "
             f"server SSL/TLS'siz, bu jim ravishda ulanish xatosiga olib keladi"
         )
 
@@ -3731,7 +3731,7 @@ def _test_suricata_full_chain():
     with open(eve_path, "w") as f:
         f.write(
             '{"timestamp":"2026-08-17T10:00:00.000000+0500","event_type":"fileinfo",'
-            '"src_ip":"172.16.1.99","dest_ip":"93.184.216.34","proto":"TCP","app_proto":"http",'
+            '"src_ip":"10.254.1.99","dest_ip":"93.184.216.34","proto":"TCP","app_proto":"http",'
             f'"fileinfo":{{"filename":"ci_test_file.exe","magic":"PE32 executable","size":12345,'
             f'"sha256":"{test_sha256}","md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","stored":false}}}}\n'
         )
@@ -3744,7 +3744,7 @@ def _test_suricata_full_chain():
     fe = s.query(FileEvent).filter(FileEvent.sha256 == test_sha256).first()
     assert fe is not None, "FileEvent yaratilmadi"
     assert fe.filename == "ci_test_file.exe"
-    assert fe.src_ip == "172.16.1.99"
+    assert fe.src_ip == "10.254.1.99"
     assert fe.checked is False
     assert fe.stored_path is None, "'stored:false' bo'lgan fayl uchun stored_path BO'SH qolishi kerak (fayl diskka yozilmagan)"
     s.close()
@@ -3808,7 +3808,7 @@ def _test_suricata_filestore_stored_path_binding():
         # 1-qator: stored=true - HAQIQATAN diskka saqlangan fayl
         f.write(
             '{"timestamp":"2026-08-17T10:05:00.000000+0500","event_type":"fileinfo",'
-            '"src_ip":"172.16.1.150","dest_ip":"93.184.216.35","proto":"TCP","app_proto":"http",'
+            '"src_ip":"10.254.1.150","dest_ip":"93.184.216.35","proto":"TCP","app_proto":"http",'
             f'"fileinfo":{{"filename":"eicar_via_suricata.txt","magic":"ASCII text","size":{len(content)},'
             f'"sha256":"{sha256}","md5":"{md5_placeholder}","stored":true}}}}\n'
         )
@@ -3816,7 +3816,7 @@ def _test_suricata_filestore_stored_path_binding():
         # (masalan filestore qoidasiga mos kelmagan) - stored_path bo'sh qolishi kerak
         f.write(
             '{"timestamp":"2026-08-17T10:05:01.000000+0500","event_type":"fileinfo",'
-            '"src_ip":"172.16.1.151","dest_ip":"93.184.216.36","proto":"TCP","app_proto":"http",'
+            '"src_ip":"10.254.1.151","dest_ip":"93.184.216.36","proto":"TCP","app_proto":"http",'
             f'"fileinfo":{{"filename":"hash_only.bin","magic":"data","size":999,'
             f'"sha256":"{"9" * 64}","md5":"{md5_placeholder}","stored":false}}}}\n'
         )
@@ -4324,7 +4324,7 @@ def _test_web_activity_full_chain():
 
     # 1) Zeek HTTP log yozuvi
     http_rec = {
-        "ts": 1755500000.0, "id.orig_h": "172.16.61.1", "id.resp_h": "93.184.216.34",
+        "ts": 1755500000.0, "id.orig_h": "10.254.61.1", "id.resp_h": "93.184.216.34",
         "method": "GET", "host": "ci-test-site.com", "uri": "/page1",
         "status_code": 200, "user_agent": "TestAgent/1.0",
     }
@@ -4332,18 +4332,18 @@ def _test_web_activity_full_chain():
 
     # 2) Zeek SSL (TLS SNI) log yozuvi
     ssl_rec = {
-        "ts": 1755500010.0, "id.orig_h": "172.16.61.2", "id.resp_h": "142.250.1.1",
+        "ts": 1755500010.0, "id.orig_h": "10.254.61.2", "id.resp_h": "142.250.1.1",
         "server_name": "ci-secure-site.com",
     }
     zr.process_ssl(s, ssl_rec)
 
     # 3) Zeek DNS log yozuvi
-    dns_rec = {"ts": 1755500020.0, "id.orig_h": "172.16.61.3", "query": "ci-dns-site.com."}
+    dns_rec = {"ts": 1755500020.0, "id.orig_h": "10.254.61.3", "query": "ci-dns-site.com."}
     zr.process_dns(s, dns_rec)
 
     s.commit()
 
-    logs = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["172.16.61.1", "172.16.61.2", "172.16.61.3"])).all()
+    logs = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["10.254.61.1", "10.254.61.2", "10.254.61.3"])).all()
     assert len(logs) == 3, f"3 ta WebAccessLog yozuvi kutilgan edi, {len(logs)} keldi"
 
     http_log = next(l for l in logs if l.protocol == "HTTP")
@@ -4472,7 +4472,7 @@ def _test_file_analysis_confirmed_threshold():
     # 1) Mahalliy blacklist - har doim tasdiqlangan
     s = get_session()
     s.add(HashBlacklist(sha256="1" * 64, threat_name="CI.LocalMalware", source="ci_test"))
-    fe1 = FileEvent(src_ip="172.16.62.1", filename="local.exe", sha256="1" * 64, checked=False)
+    fe1 = FileEvent(src_ip="10.254.62.1", filename="local.exe", sha256="1" * 64, checked=False)
     s.add(fe1)
     s.commit()
     fae.analyze_one(s, fe1)
@@ -4485,7 +4485,7 @@ def _test_file_analysis_confirmed_threshold():
 
     # 2) VirusTotal past ishonch (1/70) - "shubhali" bo'lishi, karantin YO'Q
     s = get_session()
-    fe2 = FileEvent(src_ip="172.16.62.2", filename="low_confidence.exe", sha256="2" * 64, checked=False)
+    fe2 = FileEvent(src_ip="10.254.62.2", filename="low_confidence.exe", sha256="2" * 64, checked=False)
     s.add(fe2)
     s.commit()
     with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 1, "total": 70, "threat_name": "Generic"}), \
@@ -4505,7 +4505,7 @@ def _test_file_analysis_confirmed_threshold():
 
     # 3) VirusTotal yuqori ishonch (20/70, >=10 VA >=15%) - "tasdiqlangan"
     s = get_session()
-    fe3 = FileEvent(src_ip="172.16.62.3", filename="high_confidence.exe", sha256="3" * 64, checked=False)
+    fe3 = FileEvent(src_ip="10.254.62.3", filename="high_confidence.exe", sha256="3" * 64, checked=False)
     s.add(fe3)
     s.commit()
     with patch.object(fae, "check_virustotal", return_value={"malicious": True, "positives": 20, "total": 70, "threat_name": "Trojan.Confirmed"}), \
@@ -4556,7 +4556,7 @@ def _test_deep_scan_real_quarantine():
     sha256 = hashlib.sha256(eicar_content).hexdigest()
 
     s = get_session()
-    fe = FileEvent(src_ip="172.16.63.1", filename="eicar.txt", sha256=sha256,
+    fe = FileEvent(src_ip="10.254.63.1", filename="eicar.txt", sha256=sha256,
                     stored_path=eicar_path, checked=True, verdict="unknown")
     s.add(fe)
     s.commit()
@@ -4585,7 +4585,7 @@ print("\n=== 62) Windows Agent: tizim proksi sozlamalaridan mustaqil ulanish (re
 
 def _test_agent_bypasses_system_proxy():
     """
-    Real production'da topilgan xato: "Isobek" kompyuterida agent
+    Real production'da topilgan xato: "PrimaryUser" kompyuterida agent
     (LocalSystem hisobi) HAR BIR so'rovda ConnectionResetError bilan
     muvaffaqiyatsiz bo'lardi, garchi interaktiv foydalanuvchi
     sessiyasidan (Invoke-WebRequest) aynan bir xil serverga
@@ -4607,7 +4607,7 @@ def _test_agent_bypasses_system_proxy():
     try:
         _time.sleep(2)
 
-        # Mavjud bo'lmagan, xato beruvchi proksi - real "Isobek" holatini simulyatsiya qiladi
+        # Mavjud bo'lmagan, xato beruvchi proksi - real "PrimaryUser" holatini simulyatsiya qiladi
         os.environ["HTTP_PROXY"] = "http://127.0.0.1:19998"
         os.environ["HTTPS_PROXY"] = "http://127.0.0.1:19998"
         os.environ["API_SERVER_URL"] = "http://127.0.0.1:8443"
@@ -4620,7 +4620,7 @@ def _test_agent_bypasses_system_proxy():
         result = agent_mod.check_hash_with_server_or_cache("b" * 64, {})
         assert result["source"] != "no_data_offline", (
             "Agent noto'g'ri tizim proksisi bilan ulanib bo'lmadi - "
-            "bu real production'da 'Isobek' kompyuterida uchragan xato "
+            "bu real production'da 'PrimaryUser' kompyuterida uchragan xato "
             "(ConnectionResetError) bilan bir xil turkum"
         )
 
@@ -4646,10 +4646,10 @@ def _test_agent_bypasses_system_proxy():
             os.environ.pop(k, None)
 
 
-check("Windows Agent tizim proksi sozlamalaridan mustaqil (real 'Isobek' xatosi tuzatilgan)", _test_agent_bypasses_system_proxy)
+check("Windows Agent tizim proksi sozlamalaridan mustaqil (real 'PrimaryUser' xatosi tuzatilgan)", _test_agent_bypasses_system_proxy)
 
 # ---------------------------------------------------------------------------
-print("\n=== 63) Windows Agent: _windows_watch_dirs() diagnostika loglari va SystemDrive fallback (real 'Isobek' xatosi) ===")
+print("\n=== 63) Windows Agent: _windows_watch_dirs() diagnostika loglari va SystemDrive fallback (real 'PrimaryUser' xatosi) ===")
 
 
 def _test_windows_watch_dirs_diagnostics_and_fallback():
@@ -4689,7 +4689,7 @@ def _test_windows_watch_dirs_diagnostics_and_fallback():
     ast.parse(content)
 
 
-check("Windows Agent: _windows_watch_dirs() diagnostika + SystemDrive fallback (real 'Isobek' xatosi)", _test_windows_watch_dirs_diagnostics_and_fallback)
+check("Windows Agent: _windows_watch_dirs() diagnostika + SystemDrive fallback (real 'PrimaryUser' xatosi)", _test_windows_watch_dirs_diagnostics_and_fallback)
 
 # ---------------------------------------------------------------------------
 print("\n=== 65) Deploy skripti: API_SERVER_URL SYSVOL faylidan (versiya yangilanishida qayta sozlash shart emas) ===")
@@ -4843,11 +4843,11 @@ def _test_agent_online_offline_status():
     # --- 2) devices() route'da real qurilma online/offline ko'rinishi ---
     s = get_session()
     online_dev = Device(
-        ip_address="172.16.9.51", hostname="ONLINE-PC", source="endpoint_agent",
+        ip_address="10.254.9.51", hostname="ONLINE-PC", source="endpoint_agent",
         agent_last_heartbeat=now, agent_version="1.0.8", agent_os="windows",
     )
     offline_dev = Device(
-        ip_address="172.16.9.52", hostname="OFFLINE-PC", source="endpoint_agent",
+        ip_address="10.254.9.52", hostname="OFFLINE-PC", source="endpoint_agent",
         agent_last_heartbeat=now - timedelta(hours=5), agent_version="1.0.8", agent_os="windows",
     )
     s.add_all([online_dev, offline_dev])
@@ -4881,7 +4881,7 @@ def _test_agent_online_offline_status():
     clean_sha = "d" * 64
     r = api_client.post("/api/v1/check_hash", json={
         "sha256": clean_sha, "filename": "gilocht.pdf",
-        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+        "hostname": "ONLINE-PC", "ip_address": "10.254.9.51",
     }, headers={"X-API-Key": "test-key-online-offline"})
     assert r.status_code == 200
     assert r.get_json()["malicious"] is False
@@ -4893,7 +4893,7 @@ def _test_agent_online_offline_status():
 
     r = api_client.post("/api/v1/check_hash", json={
         "sha256": "e" * 64, "filename": "virus.exe",
-        "hostname": "ONLINE-PC", "ip_address": "172.16.9.51",
+        "hostname": "ONLINE-PC", "ip_address": "10.254.9.51",
     }, headers={"X-API-Key": "test-key-online-offline"})
     assert r.status_code == 200
     assert r.get_json()["malicious"] is True
@@ -5425,7 +5425,7 @@ def clients():
     group_id = request.args.get("group_id")
     if group_id == "901":
         return jsonify({"code": 0, "msg": "OK.", "totalCount": 2, "list": [
-            {"mac": "aabb.ccdd.9001", "ip": "172.16.51.1", "userName": "", "deviceName": "CI-RUIJIE-PC", "groupName": "CI-Filial", "connectType": "wire", "manufacturer": "CI-Vendor"},
+            {"mac": "aabb.ccdd.9001", "ip": "10.254.51.1", "userName": "", "deviceName": "CI-RUIJIE-PC", "groupName": "CI-Filial", "connectType": "wire", "manufacturer": "CI-Vendor"},
             {"mac": "aabb.ccdd.9002", "ip": "", "userName": "", "deviceName": "IPSIZ", "groupName": "CI-Filial", "connectType": "wifi", "manufacturer": "CI-Vendor"},
         ]})
     return jsonify({"code": 0, "msg": "OK.", "totalCount": 0, "list": []})
@@ -5447,7 +5447,7 @@ if __name__ == "__main__":
         clients = get_ruijie_clients()
         assert len(clients) == 2, f"2 ta klient kutilgan edi (guruh daraxti rekursiv o'qilishi kerak), {len(clients)} keldi"
         by_mac = {c.mac: c for c in clients}
-        assert by_mac["aabb.ccdd.9001"].ip == "172.16.51.1"
+        assert by_mac["aabb.ccdd.9001"].ip == "10.254.51.1"
         assert by_mac["aabb.ccdd.9001"].is_wired is True
         assert by_mac["aabb.ccdd.9002"].is_wired is False
 
@@ -5462,7 +5462,7 @@ if __name__ == "__main__":
         assert count == 1, f"1 ta qurilma kutilgan edi (IP'siz klient o'tkazib yuborilishi kerak), {count} keldi"
 
         s = get_session()
-        d = s.query(Device).filter(Device.ip_address == "172.16.51.1").first()
+        d = s.query(Device).filter(Device.ip_address == "10.254.51.1").first()
         assert d is not None
         assert d.mac_address == "aabb.ccdd.9001"
         assert d.hostname == "CI-RUIJIE-PC"
@@ -5609,7 +5609,7 @@ def _test_kerio_parser_real_format():
     assert parsed["protocol"] == "TCP"
 
     # IP-manzilli variant ham to'g'ri ishlashi (dest_ip to'ldirilishi)
-    ip_conn_line = "[18/Apr/2013 10:22:47] [Connection] UDP 172.16.1.45:53210 > 8.8.8.8:53"
+    ip_conn_line = "[18/Apr/2013 10:22:47] [Connection] UDP 10.254.1.45:53210 > 8.8.8.8:53"
     parsed_ip = conn.parse(ip_conn_line)
     assert parsed_ip["dest_ip"] == "8.8.8.8"
     assert parsed_ip["dest_domain"] is None
@@ -5649,7 +5649,7 @@ def _test_kerio_parser_real_format():
         os.remove(tmp_path)
 
     # --- Eski (noto'g'ri, endi mavjud bo'lmasligi kerak) format endi TANILMASLIGI ---
-    old_format_line = "<134>Jul 30 KERIO-GW Connection: SRC=172.16.1.45 DST=8.8.8.8 DPT=443 PROTO=TCP ACTION=Permit"
+    old_format_line = "<134>Jul 30 KERIO-GW Connection: SRC=10.254.1.45 DST=8.8.8.8 DPT=443 PROTO=TCP ACTION=Permit"
     assert not conn.can_parse(old_format_line), (
         "Eski (haqiqiy Kerio'da mavjud bo'lmagan) format endi ATAYLAB tanilmasligi kerak"
     )
@@ -5693,18 +5693,18 @@ def _test_kerio_parser_real_production_capture():
             # ham to'g'ri o'qiladi - "Saytlar tarixi" endi xom IP o'rniga
             # o'qilishi mumkin bo'lgan domen nomlarini ko'rsatadi.
             "[ID] 1831242 [Rule] Internet access (NAT) [Service] TCP 443 "
-            "[Connection] TCP sph-262.synergypharm.org (172.16.1.35):63579 -> "
+            "[Connection] TCP sph-262.example.internal (10.254.1.35):63579 -> "
             "lr-in-f95.1e100.net (209.85.233.95):443 [Iface] WAN0_Uztelecom "
             "[Duration] 31 sec [Bytes] 1458/9404/10862 [Packets] 8/10/18",
-            "172.16.1.35", "209.85.233.95", "lr-in-f95.1e100.net", 443,
+            "10.254.1.35", "209.85.233.95", "lr-in-f95.1e100.net", 443,
         ),
         (
             # Destinationda teskari DNS nomi YO'Q (faqat IP) - shu holat ham to'g'ri ishlashi kerak
             "[ID] 1826702 [Rule] Internet access (NAT) [Service] TCP 443 "
-            "[Connection] TCP a71-pol-zovatela-shirin.synergypharm.org (172.16.1.85):54514 -> "
+            "[Connection] TCP a71-pol-zovatela-shirin.example.internal (10.254.1.85):54514 -> "
             "149.154.167.41:443 [Iface] WAN0_Uztelecom [Duration] 215 sec "
             "[Bytes] 1098/906/2004 [Packets] 9/7/16",
-            "172.16.1.85", "149.154.167.41", None, 443,
+            "10.254.1.85", "149.154.167.41", None, 443,
         ),
     ]
     for raw, exp_src, exp_dst_ip, exp_dst_domain, exp_port in real_conn_lines:
@@ -5719,11 +5719,11 @@ def _test_kerio_parser_real_production_capture():
 
     # --- Production'dan olingan HAQIQIY Host log qatori: [Hostname] YO'Q ---
     # (faqat "IP address leased from DHCP" - MAC bor, Hostname yo'q)
-    real_host_no_hostname = "[IPv4] 172.16.1.132 [MAC] 02-59-62-cf-8d-7f - IP address leased from DHCP"
+    real_host_no_hostname = "[IPv4] 10.254.1.132 [MAC] 02-59-62-cf-8d-7f - IP address leased from DHCP"
     assert host.can_parse(real_host_no_hostname), "[Hostname]siz Host qatori ENDI ham tanilishi kerak"
     parsed_h = host.parse(real_host_no_hostname)
     assert parsed_h is not None
-    assert parsed_h["source_ip"] == "172.16.1.132"
+    assert parsed_h["source_ip"] == "10.254.1.132"
     assert parsed_h["mac_address"] == "02:59:62:CF:8D:7F"
     assert parsed_h["hostname"] is None
 
@@ -5837,15 +5837,15 @@ def _test_connection_events_feed_alerts_and_web_activity():
     s.add(BlacklistEntry(value="203.0.113.99", source="manual", reason="test"))
     s.add_all([
         # Domen bilan (teskari DNS mavjud) - WebAccessLog'da domen ko'rinishi kerak
-        RawLog(source_ip="172.16.0.1", raw_message=(
+        RawLog(source_ip="10.254.0.1", raw_message=(
             "[ID] 1 [Rule] Internet access (NAT) [Connection] TCP "
-            "ci-pc.local (172.16.9.201):51234 -> mail.example.com (198.51.100.5):443 "
+            "ci-pc.local (10.254.9.201):51234 -> mail.example.com (198.51.100.5):443 "
             "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
         )),
         # Blacklist'dagi IP'ga ulanish - Alert yaratilishi kerak
-        RawLog(source_ip="172.16.0.1", raw_message=(
+        RawLog(source_ip="10.254.0.1", raw_message=(
             "[ID] 2 [Rule] Internet access (NAT) [Connection] TCP "
-            "ci-pc2.local (172.16.9.202):51235 -> 203.0.113.99:443 "
+            "ci-pc2.local (10.254.9.202):51235 -> 203.0.113.99:443 "
             "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
         )),
     ])
@@ -5857,11 +5857,11 @@ def _test_connection_events_feed_alerts_and_web_activity():
     assert count == 2
 
     s = get_session()
-    web_entries = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["172.16.9.201", "172.16.9.202"])).all()
+    web_entries = s.query(WebAccessLog).filter(WebAccessLog.source_ip.in_(["10.254.9.201", "10.254.9.202"])).all()
     assert len(web_entries) == 2, "Connection hodisalari WebAccessLog'ga yozilmadi ('Saytlar tarixi' bo'sh qolgan sabab)"
     by_src = {w.source_ip: w for w in web_entries}
-    assert by_src["172.16.9.201"].domain == "mail.example.com", "Teskari DNS nomi mavjud bo'lsa, domen bilan yozilishi kerak"
-    assert by_src["172.16.9.202"].domain == "203.0.113.99", "Domen yo'q bo'lsa, IP bilan yozilishi kerak (fallback)"
+    assert by_src["10.254.9.201"].domain == "mail.example.com", "Teskari DNS nomi mavjud bo'lsa, domen bilan yozilishi kerak"
+    assert by_src["10.254.9.202"].domain == "203.0.113.99", "Domen yo'q bo'lsa, IP bilan yozilishi kerak (fallback)"
 
     alerts = s.query(Alert).filter(Alert.reason.like("%203.0.113.99%")).all()
     assert len(alerts) == 1, "Blacklist'dagi IP'ga ulanish uchun Alert yaratilmadi ('Alertlar' bo'sh qolgan sabab)"
@@ -5892,7 +5892,7 @@ def _test_device_mac_identity_no_duplicate_on_ip_change():
     bo'yicha qidiradi, topilsa xuddi shu qatorning IP'sini yangilaydi.
     """
     mac = "AA:BB:CC:99:88:77"
-    ip1, ip2 = "172.16.9.230", "172.16.9.231"
+    ip1, ip2 = "10.254.9.230", "10.254.9.231"
 
     s = get_session()
     s.query(Device).filter(Device.mac_address == mac).delete()
@@ -5951,7 +5951,7 @@ def _test_device_mac_identity_merges_ip_collision():
     from db.device_identity import find_or_create_device
 
     old_mac, new_mac = "11:22:33:AA:BB:CC", "CC:BB:AA:33:22:11"
-    shared_ip, other_ip = "172.16.9.240", "172.16.9.241"
+    shared_ip, other_ip = "10.254.9.240", "10.254.9.241"
 
     s = get_session()
     s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
@@ -6032,7 +6032,7 @@ def _test_device_mac_identity_merge_with_baseline():
     from db.models import DeviceBaseline
 
     old_mac, new_mac = "11:22:33:AA:BB:DD", "DD:BB:AA:33:22:11"
-    shared_ip, other_ip = "172.16.9.242", "172.16.9.243"
+    shared_ip, other_ip = "10.254.9.242", "10.254.9.243"
 
     s = get_session()
     s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
@@ -6104,7 +6104,7 @@ def _test_device_mac_identity_merge_with_incident():
     from db.models import Incident, utcnow
 
     old_mac, new_mac = "11:22:33:AA:BB:EE", "EE:BB:AA:33:22:11"
-    shared_ip, other_ip = "172.16.9.244", "172.16.9.245"
+    shared_ip, other_ip = "10.254.9.244", "10.254.9.245"
 
     s = get_session()
     s.query(Device).filter(Device.mac_address.in_([old_mac, new_mac])).delete(synchronize_session=False)
@@ -6186,7 +6186,7 @@ def _test_device_identity_concurrent_merge_no_deadlock():
     from db.device_identity import _merge_device
 
     mac_a, mac_b = "AA:11:22:33:44:66", "BB:11:22:33:44:66"
-    ip_a, ip_b = "172.16.9.252", "172.16.9.253"
+    ip_a, ip_b = "10.254.9.252", "10.254.9.253"
 
     s0 = get_session()
     s0.query(Device).filter(Device.mac_address.in_([mac_a, mac_b])).delete(synchronize_session=False)
@@ -6261,7 +6261,7 @@ def _test_devices_pagination_shows_all():
     """
     import re
 
-    marker_ips = [f"172.16.40.{i}" for i in range(1, 206)]  # 205 ta - 200 limitdan ortiq
+    marker_ips = [f"10.254.40.{i}" for i in range(1, 206)]  # 205 ta - 200 limitdan ortiq
     s = get_session()
     s.query(Device).filter(Device.ip_address.in_(marker_ips)).delete(synchronize_session=False)
     s.commit()
@@ -6321,19 +6321,19 @@ def _test_all_pages_column_filters():
     from api import token_manager
 
     s = get_session()
-    alpha = Device(ip_address="172.16.163.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
+    alpha = Device(ip_address="10.254.163.1", mac_address="AA:BB:CC:63:00:01", hostname="ALPHA-FILTER-PC",
                    connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(), risk_score=85,
                    discovery_source="arp_scan", device_type="workstation", vendor="Dell-Test")
-    beta = Device(ip_address="172.16.163.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
+    beta = Device(ip_address="10.254.163.2", mac_address="AA:BB:CC:63:00:02", hostname="BETA-FILTER-PC",
                   connection_type="cable", source="network_discovery", last_seen=utcnow(), risk_score=5,
                   discovery_source="icmp", device_type="server", vendor="HP-Test")
     s.add_all([alpha, beta])
     s.commit()
     s.add(Alert(severity="high", reason="ALPHA-FILTER-PC uchun test alert", device_id=alpha.id,
                 mitre_technique_id="T1204.002", acknowledged=False))
-    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="172.16.163.1", sha256="ab" * 32,
+    s.add(FileEvent(filename="filtertest_alpha.exe", src_ip="10.254.163.1", sha256="ab" * 32,
                      verdict="clean", channel="endpoint_agent"))
-    s.add(WebAccessLog(source_ip="172.16.163.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
+    s.add(WebAccessLog(source_ip="10.254.163.1", device_id=alpha.id, domain="filtertest-alpha.example", protocol="HTTPS"))
     s.commit()
     s.close()
 
@@ -6419,7 +6419,7 @@ print("\n=== 82) Endpoint Agent: heartbeat tsikli kutilmagan xatodan keyin ABADI
 
 def _test_heartbeat_loop_survives_unexpected_exception():
     """
-    Foydalanuvchi real production'da ("Isobek" - o'zi ishlatayotgan
+    Foydalanuvchi real production'da ("PrimaryUser" - o'zi ishlatayotgan
     kompyuter) xabar qildi: Dashboard'da Endpoint Agent "OFFLINE"
     ko'rsatilgan (`agent_last_heartbeat` ~16 soat eski), garchi
     fayllar sahifasida O'SHA agent orqali tekshirilgan fayllar
@@ -6491,7 +6491,7 @@ def _test_heartbeat_loop_survives_unexpected_exception():
         importlib.reload(agent_mod)
 
 
-check("Endpoint Agent: heartbeat tsikli kutilmagan xatodan keyin tirik qoladi (real 'Isobek' production xatosi tuzatilgan)", _test_heartbeat_loop_survives_unexpected_exception)
+check("Endpoint Agent: heartbeat tsikli kutilmagan xatodan keyin tirik qoladi (real 'PrimaryUser' production xatosi tuzatilgan)", _test_heartbeat_loop_survives_unexpected_exception)
 
 # ---------------------------------------------------------------------------
 print("\n=== 83) VirusTotal/MalwareBazaar checker'lari: 'topilmadi' endi 'toza' bilan aralashtirilmaydi ===")
@@ -6624,7 +6624,7 @@ def _test_verdict_taxonomy_end_to_end():
 
     # --- 1) analyze_one(): hech qanday manba ma'lumot bermasa -> "unknown" (avvalgi "clean" xatosi) ---
     s = get_session()
-    fe_unknown = FileEvent(src_ip="172.16.63.10", filename="brand_new_ransomware.exe", sha256="1a" * 32, checked=False)
+    fe_unknown = FileEvent(src_ip="10.254.63.10", filename="brand_new_ransomware.exe", sha256="1a" * 32, checked=False)
     s.add(fe_unknown)
     s.commit()
     with patch.object(fae, "check_virustotal", return_value=None), \
@@ -6638,7 +6638,7 @@ def _test_verdict_taxonomy_end_to_end():
 
     # --- 2) analyze_one(): VT HAQIQATAN tekshirib, toza deb topsa -> "clean" ---
     s = get_session()
-    fe_clean = FileEvent(src_ip="172.16.63.11", filename="notepad_replacement.exe", sha256="2a" * 32, checked=False)
+    fe_clean = FileEvent(src_ip="10.254.63.11", filename="notepad_replacement.exe", sha256="2a" * 32, checked=False)
     s.add(fe_clean)
     s.commit()
     with patch.object(fae, "check_virustotal", return_value={"malicious": False, "positives": 0, "total": 70, "threat_name": None}), \
@@ -6656,7 +6656,7 @@ def _test_verdict_taxonomy_end_to_end():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         r = api_client.post("/api/v1/check_hash", json={
             "sha256": "3a" * 32, "filename": "unclassified.bin",
-            "hostname": "TEST-PC-TAXONOMY", "ip_address": "172.16.63.12",
+            "hostname": "TEST-PC-TAXONOMY", "ip_address": "10.254.63.12",
         }, headers={"X-API-Key": "test-key-verdict-taxonomy"})
     assert r.status_code == 200
     resp_json = r.get_json()
@@ -6675,7 +6675,7 @@ def _test_verdict_taxonomy_end_to_end():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         r = api_client.post("/api/v1/check_hash", json={
             "sha256": "4a" * 32, "filename": "genuinely_clean.bin",
-            "hostname": "TEST-PC-TAXONOMY", "ip_address": "172.16.63.13",
+            "hostname": "TEST-PC-TAXONOMY", "ip_address": "10.254.63.13",
         }, headers={"X-API-Key": "test-key-verdict-taxonomy"})
     assert r.status_code == 200
     assert r.get_json()["malicious"] is False
@@ -6776,24 +6776,24 @@ def _test_parser_engine_domain_hierarchy_and_lexical_alert():
     s.add(BlacklistEntry(value="pe-hierarchy-evil.com", source="manual", reason="ci-test"))
     s.add_all([
         # 1) Subdomen orqali blacklist mosligi
-        RawLog(source_ip="172.16.0.1", raw_message=(
+        RawLog(source_ip="10.254.0.1", raw_message=(
             "[ID] 1 [Rule] Internet access (NAT) [Connection] TCP "
-            "pc1.local (172.16.30.1):51000 -> cdn.login.pe-hierarchy-evil.com (198.51.100.10):443 "
+            "pc1.local (10.254.30.1):51000 -> cdn.login.pe-hierarchy-evil.com (198.51.100.10):443 "
             "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
         )),
         # 2) "notevil" - substring o'xshash, lekin MOS KELMASLIGI kerak
-        RawLog(source_ip="172.16.0.1", raw_message=(
+        RawLog(source_ip="10.254.0.1", raw_message=(
             "[ID] 2 [Rule] Internet access (NAT) [Connection] TCP "
-            "pc2.local (172.16.30.2):51001 -> not-pe-hierarchy-evil.com (198.51.100.11):443 "
+            "pc2.local (10.254.30.2):51001 -> not-pe-hierarchy-evil.com (198.51.100.11):443 "
             "[Iface] WAN0 [Duration] 5 sec [Bytes] 100/200/300 [Packets] 2/3/5"
         )),
         # 3) Blacklist'da yo'q, lekin leksik jihatdan aniq fishing (haqiqiy Windows DNS parser formatida)
-        RawLog(source_ip="172.16.0.5", raw_message=(
-            '{"EventID":256,"ClientIP":"172.16.0.5","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
+        RawLog(source_ip="10.254.0.5", raw_message=(
+            '{"EventID":256,"ClientIP":"10.254.0.5","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
         )),
         # 4) Zararsiz, oddiy domen
-        RawLog(source_ip="172.16.0.5", raw_message=(
-            '{"EventID":256,"ClientIP":"172.16.0.5","QueryName":"google.com","QueryType":"A"}'
+        RawLog(source_ip="10.254.0.5", raw_message=(
+            '{"EventID":256,"ClientIP":"10.254.0.5","QueryName":"google.com","QueryType":"A"}'
         )),
     ])
     s.commit()
@@ -6828,8 +6828,8 @@ def _test_parser_engine_domain_hierarchy_and_lexical_alert():
     # --- Dedup: bir xil fishing domeniga ikkinchi marta DNS so'rovi kelsa,
     #     QAYTA alert yaratilmasligi kerak ---
     s = get_session()
-    s.add(RawLog(source_ip="172.16.0.6", raw_message=(
-        '{"EventID":256,"ClientIP":"172.16.0.6","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
+    s.add(RawLog(source_ip="10.254.0.6", raw_message=(
+        '{"EventID":256,"ClientIP":"10.254.0.6","QueryName":"microsoft-login-security-update.xyz","QueryType":"A"}'
     )))
     s.commit()
     s.close()
@@ -6915,7 +6915,7 @@ def _test_file_analysis_engine_detects_masquerade():
     # --- 1) Hash-intel hech narsa demaydi, lekin fayl niqoblangan -> malicious ---
     s = get_session()
     fe1 = FileEvent(
-        src_ip="172.16.64.1", filename="invoice.pdf", file_ext="pdf",
+        src_ip="10.254.64.1", filename="invoice.pdf", file_ext="pdf",
         magic="PE32 executable (GUI) Intel 80386, for MS Windows", sha256="1b" * 32, checked=False,
     )
     s.add(fe1)
@@ -6935,7 +6935,7 @@ def _test_file_analysis_engine_detects_masquerade():
     # --- 2) Mos keladigan fayl (chin PDF) - hech qanday mismatch alert yo'q, "unknown" (hech kim tasdiqlamagan) ---
     s = get_session()
     fe2 = FileEvent(
-        src_ip="172.16.64.2", filename="report.pdf", file_ext="pdf",
+        src_ip="10.254.64.2", filename="report.pdf", file_ext="pdf",
         magic="PDF document, version 1.4", sha256="2b" * 32, checked=False,
     )
     s.add(fe2)
@@ -6953,7 +6953,7 @@ def _test_file_analysis_engine_detects_masquerade():
     s = get_session()
     s.add(HashBlacklist(sha256="3b" * 32, threat_name="CI.KnownMalware", source="ci_test"))
     fe3 = FileEvent(
-        src_ip="172.16.64.3", filename="salary.xlsx", file_ext="xlsx",
+        src_ip="10.254.64.3", filename="salary.xlsx", file_ext="xlsx",
         magic="PE32 executable (GUI) Intel 80386, for MS Windows", sha256="3b" * 32, checked=False,
     )
     s.add(fe3)
@@ -7008,7 +7008,7 @@ def _test_deep_scan_engine_magic_mismatch_and_zip_bypass():
 
         s = get_session()
         fe1 = FileEvent(
-            src_ip="172.16.64.10", filename="invoice.pdf", file_ext="pdf",
+            src_ip="10.254.64.10", filename="invoice.pdf", file_ext="pdf",
             sha256="4b" * 32, checked=True, verdict="unknown",
             stored_path=fake_pdf_path,
         )
@@ -7035,7 +7035,7 @@ def _test_deep_scan_engine_magic_mismatch_and_zip_bypass():
 
         s = get_session()
         fe2 = FileEvent(
-            src_ip="172.16.64.11", filename="notes.txt", file_ext="txt",
+            src_ip="10.254.64.11", filename="notes.txt", file_ext="txt",
             sha256="5b" * 32, checked=True, verdict="unknown",
             stored_path=fake_zip_path,
         )
@@ -7176,7 +7176,7 @@ def _test_deep_scan_engine_pdf_integration():
 
         s = get_session()
         fe = FileEvent(
-            src_ip="172.16.64.20", filename="invoice_details.pdf", file_ext="pdf",
+            src_ip="10.254.64.20", filename="invoice_details.pdf", file_ext="pdf",
             sha256="6b" * 32, checked=True, verdict="unknown", stored_path=pdf_path,
         )
         s.add(fe)
@@ -7444,11 +7444,11 @@ def _test_devices_stale_hide():
 
     s = get_session()
     fresh = Device(
-        ip_address="172.16.72.1", mac_address="AA:BB:CC:72:00:01", hostname="FRESH-DEVICE-72H",
+        ip_address="10.254.72.1", mac_address="AA:BB:CC:72:00:01", hostname="FRESH-DEVICE-72H",
         connection_type="wifi", source="kerio_dhcp", last_seen=utcnow(),
     )
     stale = Device(
-        ip_address="172.16.72.2", mac_address="AA:BB:CC:72:00:02", hostname="STALE-DEVICE-72H",
+        ip_address="10.254.72.2", mac_address="AA:BB:CC:72:00:02", hostname="STALE-DEVICE-72H",
         connection_type="wifi", source="kerio_dhcp",
         last_seen=utcnow() - timedelta(hours=DEVICE_STALE_HIDE_HOURS + 1),
     )
@@ -7517,7 +7517,7 @@ def _test_notification_severity_filter():
     # ularni "xabar qilingan" deb belgilaymiz.
     s.query(Alert).filter(Alert.notified.isnot(True)).update({"notified": True}, synchronize_session=False)
     s.commit()
-    d = Device(ip_address="172.16.96.1", mac_address="AA:BB:CC:96:00:01",
+    d = Device(ip_address="10.254.96.1", mac_address="AA:BB:CC:96:00:01",
                hostname="SEVERITY-FILTER-PC", connection_type="wifi", source="test")
     s.add(d)
     s.flush()
@@ -7562,7 +7562,7 @@ def _test_notification_severity_filter():
         os.environ["NOTIFY_MIN_SEVERITIES"] = "critical"
         importlib.reload(notif_engine)
         s = get_session()
-        d2 = Device(ip_address="172.16.96.2", mac_address="AA:BB:CC:96:00:02",
+        d2 = Device(ip_address="10.254.96.2", mac_address="AA:BB:CC:96:00:02",
                     hostname="SEVERITY-FILTER-PC-2", connection_type="wifi", source="test")
         s.add(d2)
         s.flush()
@@ -7688,9 +7688,9 @@ def _test_correlation_engine():
     s.flush()
     s.query(Alert).filter(Alert.incident_id.is_(None)).update({"incident_id": _legacy.id}, synchronize_session=False)
     s.commit()
-    d1 = Device(ip_address="172.16.97.1", mac_address="AA:BB:CC:97:00:01", hostname="CORR-TEST-D1",
+    d1 = Device(ip_address="10.254.97.1", mac_address="AA:BB:CC:97:00:01", hostname="CORR-TEST-D1",
                 connection_type="wifi", source="test")
-    d2 = Device(ip_address="172.16.97.2", mac_address="AA:BB:CC:97:00:02", hostname="CORR-TEST-D2",
+    d2 = Device(ip_address="10.254.97.2", mac_address="AA:BB:CC:97:00:02", hostname="CORR-TEST-D2",
                 connection_type="wifi", source="test")
     s.add_all([d1, d2])
     s.flush()
@@ -7744,7 +7744,7 @@ def _test_incidents_dashboard():
     import engine.correlation_engine as ce
 
     s = get_session()
-    d = Device(ip_address="172.16.97.3", mac_address="AA:BB:CC:97:00:03", hostname="INCIDENT-DASH-TEST",
+    d = Device(ip_address="10.254.97.3", mac_address="AA:BB:CC:97:00:03", hostname="INCIDENT-DASH-TEST",
                connection_type="wifi", source="test")
     s.add(d)
     s.flush()
@@ -8118,7 +8118,7 @@ def _test_deep_scan_resolves_unknown():
 
         s = get_session()
         fe_clean = FileEvent(
-            src_ip="172.16.65.1", filename="utility.exe", file_ext="exe",
+            src_ip="10.254.65.1", filename="utility.exe", file_ext="exe",
             sha256="7b" * 32, checked=True, verdict="unknown", stored_path=clean_path,
         )
         s.add(fe_clean)
@@ -8143,7 +8143,7 @@ def _test_deep_scan_resolves_unknown():
 
         s = get_session()
         fe_susp = FileEvent(
-            src_ip="172.16.65.2", filename="packed_tool.exe", file_ext="exe",
+            src_ip="10.254.65.2", filename="packed_tool.exe", file_ext="exe",
             sha256="8b" * 32, checked=True, verdict="unknown", stored_path=suspicious_path,
         )
         s.add(fe_susp)
@@ -8202,8 +8202,8 @@ def _test_check_hash_resolves_unknown_via_agent_heuristic():
     headers = {"X-API-Key": "test-key-heuristic-unknown"}
 
     s = get_session()
-    dev1 = Device(ip_address="172.16.66.1", hostname="TEST-PC-HEUR-1", source="test")
-    dev2 = Device(ip_address="172.16.66.2", hostname="TEST-PC-HEUR-2", source="test")
+    dev1 = Device(ip_address="10.254.66.1", hostname="TEST-PC-HEUR-1", source="test")
+    dev2 = Device(ip_address="10.254.66.2", hostname="TEST-PC-HEUR-2", source="test")
     s.add_all([dev1, dev2])
     s.commit()
     dev1_id, dev2_id = dev1.id, dev2.id
@@ -8214,7 +8214,7 @@ def _test_check_hash_resolves_unknown_via_agent_heuristic():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         r = api_client.post("/api/v1/check_hash", json={
             "sha256": sha_suspicious, "filename": "packed_installer.exe",
-            "hostname": "TEST-PC-HEUR-1", "ip_address": "172.16.66.1",
+            "hostname": "TEST-PC-HEUR-1", "ip_address": "10.254.66.1",
             "magic": "PE", "heuristic_score": 55,
             "heuristic_findings": ["Yuqori entropiya (7.80/8.0)"],
             "heuristic_verdict": "suspicious",
@@ -8239,7 +8239,7 @@ def _test_check_hash_resolves_unknown_via_agent_heuristic():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         r2 = api_client.post("/api/v1/check_hash", json={
             "sha256": sha_malicious, "filename": "invoice.pdf",
-            "hostname": "TEST-PC-HEUR-2", "ip_address": "172.16.66.2",
+            "hostname": "TEST-PC-HEUR-2", "ip_address": "10.254.66.2",
             "magic": "PE", "heuristic_score": 100,
             "heuristic_findings": ["Fayl kengaytmasi '.pdf' (PDF kutilgan), lekin haqiqiy tarkib 'PE'"],
             "heuristic_verdict": "malicious",
@@ -8265,7 +8265,7 @@ def _test_check_hash_resolves_unknown_via_agent_heuristic():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         r3 = api_client.post("/api/v1/check_hash", json={
             "sha256": sha_no_heuristic, "filename": "old_agent_file.bin",
-            "hostname": "TEST-PC-HEUR-1", "ip_address": "172.16.66.1",
+            "hostname": "TEST-PC-HEUR-1", "ip_address": "10.254.66.1",
         }, headers=headers)
     assert r3.status_code == 200
     s = get_session()
@@ -8380,9 +8380,9 @@ def _test_full_file_path_reporting_and_display():
     with patch.object(agent_mod, "_save_cache", lambda c: None), \
          patch.object(agent_mod.requests, "post", return_value=resp) as mock_post:
         agent_mod.check_hash_with_server_or_cache(sha, cache, filename="invoice_final.pdf", hostname="PC1",
-                                                  ip_address="172.16.67.1", filepath=long_path)
+                                                  ip_address="10.254.67.1", filepath=long_path)
         agent_mod.check_hash_with_server_or_cache(sha, cache, filename="copy.pdf", hostname="PC1",
-                                                  ip_address="172.16.67.1", filepath="D:\\Other\\copy.pdf")
+                                                  ip_address="10.254.67.1", filepath="D:\\Other\\copy.pdf")
         assert mock_post.call_count == 2, "Keshdagi xesh uchun ham server har safar xabardor qilinishi kerak edi (yo'l yo'qolmasligi uchun)"
         assert mock_post.call_args_list[0].kwargs["json"]["filepath"] == long_path
         assert mock_post.call_args_list[1].kwargs["json"]["filepath"] == "D:\\Other\\copy.pdf"
@@ -8393,10 +8393,10 @@ def _test_full_file_path_reporting_and_display():
 
     # --- 2) Dashboard: to'liq yo'l qisqartirilmaydi; yo'li yo'q qatorlar uchun tushunarli izoh ---
     s = get_session()
-    s.add(FileEvent(filename="invoice_final.pdf", src_ip="172.16.67.1", sha256="6a" * 32, channel="endpoint_agent",
+    s.add(FileEvent(filename="invoice_final.pdf", src_ip="10.254.67.1", sha256="6a" * 32, channel="endpoint_agent",
                     verdict="clean", device_file_path=long_path))
-    s.add(FileEvent(filename="old_agent_file.bin", src_ip="172.16.67.2", sha256="6b" * 32, channel="endpoint_agent", verdict="unknown"))
-    s.add(FileEvent(filename="net_file.exe", src_ip="172.16.67.3", dest_ip="93.184.216.34", sha256="6c" * 32, channel="web", verdict="unknown"))
+    s.add(FileEvent(filename="old_agent_file.bin", src_ip="10.254.67.2", sha256="6b" * 32, channel="endpoint_agent", verdict="unknown"))
+    s.add(FileEvent(filename="net_file.exe", src_ip="10.254.67.3", dest_ip="93.184.216.34", sha256="6c" * 32, channel="web", verdict="unknown"))
     s.commit()
     s.close()
 
@@ -8410,7 +8410,7 @@ def _test_full_file_path_reporting_and_display():
     assert long_path in html or long_path.replace("\\", "&#92;") in html, "To'liq yo'l Dashboard'da ko'rinmadi"
     assert "very_long_folder_name_for_testing" in html
     assert "yo'l noma'lum" in html, "Yo'li yo'q endpoint yozuvi uchun izoh ko'rinmadi"
-    assert "tarmoq orqali: 172.16.67.3" in html and "93.184.216.34" in html, "Tarmoq yozuvi uchun manba/manzil ko'rinmadi"
+    assert "tarmoq orqali: 10.254.67.3" in html and "93.184.216.34" in html, "Tarmoq yozuvi uchun manba/manzil ko'rinmadi"
     assert "text-overflow: ellipsis" not in html.split("Qurilmadagi yo'l</th>")[1].split("</table>")[0], "Yo'l hali ham '...' bilan qisqartirilmoqda"
 
 
@@ -8895,12 +8895,12 @@ def _test_check_hash_vt_busy_defers():
     c = api_server.app.test_client()
     sha = hashlib.sha256(b"vt_busy_deferred_file").hexdigest()
     s = get_session()
-    s.add(Device(ip_address="172.16.99.9", hostname="TEST-VT-BUSY", source="test")); s.commit(); s.close()
+    s.add(Device(ip_address="10.254.99.9", hostname="TEST-VT-BUSY", source="test")); s.commit(); s.close()
     with patch.object(api_server, "vt_slot_busy", return_value=True), \
          patch.object(api_server, "check_virustotal", side_effect=AssertionError("VT chaqirilmasligi kerak")), \
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         t0 = time.time()
-        r = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "a.txt", "hostname": "TEST-VT-BUSY", "ip_address": "172.16.99.9"},
+        r = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "a.txt", "hostname": "TEST-VT-BUSY", "ip_address": "10.254.99.9"},
                    headers={"X-API-Key": "test-key-vt-busy"})
         assert r.status_code == 200 and time.time() - t0 < 3
     s = get_session()
@@ -8940,7 +8940,7 @@ def _test_false_positive_guards():
         with patch.object(api_server, "vt_slot_busy", return_value=False), \
              patch.object(api_server, "check_virustotal", return_value={"malicious": True, "positives": pos, "total": 70, "threat_name": "PUA.Generic"}), \
              patch.object(api_server, "check_malwarebazaar", return_value=None):
-            return c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "WinRAR.exe", "hostname": "T-FP", "ip_address": "172.16.98.1"}, headers=h).get_json()
+            return c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "WinRAR.exe", "hostname": "T-FP", "ip_address": "10.254.98.1"}, headers=h).get_json()
     assert call(b"fp_winrar_like", 4)["confirmed"] is False
     assert call(b"fp_real_malware_like", 40)["confirmed"] is True
     # 3) Agent: FAQAT server signali (mahalliy deterministik topilma YO'Q, admin qarori YO'Q) -
@@ -9000,7 +9000,7 @@ def _test_admin_file_decisions():
         api_server.AGENT_API_KEY = "test-key-decision"
         c = api_server.app.test_client(); h = {"X-API-Key": "test-key-decision"}
         s = get_session()
-        d1 = Device(ip_address="172.16.197.51", hostname="PC-A", source="test"); s.add(d1)
+        d1 = Device(ip_address="10.254.197.51", hostname="PC-A", source="test"); s.add(d1)
         s.add(HashBlacklist(sha256=sha, threat_name="FP", source="upload_scan")); s.commit(); s.close()
 
         # 1) agent: gumon fayl -> tegilmaydi, faqat 'awaiting_admin' alert
@@ -9018,19 +9018,19 @@ def _test_admin_file_decisions():
             assert not q.called and os.path.isfile(f), "admin qarorisiz fayl o'chirilmasligi kerak"
             assert rep.call_args.kwargs.get("awaiting_admin") is True
         # server alert (awaiting)
-        r = c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "172.16.197.51", "filename": "AnyDesk.exe", "sha256": sha,
+        r = c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "10.254.197.51", "filename": "AnyDesk.exe", "sha256": sha,
                    "threat_name": "VT", "file_deleted": False, "process_killed": False, "awaiting_admin": True}, headers=h)
         assert r.get_json()["status"] == "recorded"
-        assert c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "172.16.197.51", "filename": "AnyDesk.exe", "sha256": sha,
+        assert c.post("/api/v1/report_incident", json={"hostname": "PC-A", "ip_address": "10.254.197.51", "filename": "AnyDesk.exe", "sha256": sha,
                    "awaiting_admin": True}, headers=h).get_json()["status"] == "duplicate"
 
         # 2) Dashboard: tugmalar virus VA shubhali deb topilganda; 'virus emas' -> qaror saqlanadi
         s = get_session()
-        fe = FileEvent(src_ip="172.16.197.51", filename="AnyDesk.exe", sha256=sha, channel="endpoint_agent", verdict="malicious"); s.add(fe); s.commit()
+        fe = FileEvent(src_ip="10.254.197.51", filename="AnyDesk.exe", sha256=sha, channel="endpoint_agent", verdict="malicious"); s.add(fe); s.commit()
         al = s.query(Alert).filter(Alert.reason.like(f"%SHA256={sha}%")).first(); al.file_event_id = fe.id
-        clean_fe = FileEvent(src_ip="172.16.197.51", filename="ok.txt", sha256=hashlib.sha256(b"ok").hexdigest(), channel="endpoint_agent", verdict="clean")
+        clean_fe = FileEvent(src_ip="10.254.197.51", filename="ok.txt", sha256=hashlib.sha256(b"ok").hexdigest(), channel="endpoint_agent", verdict="clean")
         susp_sha = hashlib.sha256(b"suspicious_decision_file").hexdigest()
-        susp_fe = FileEvent(src_ip="172.16.197.51", filename="suspicious.dll", sha256=susp_sha, channel="endpoint_agent", verdict="suspicious")
+        susp_fe = FileEvent(src_ip="10.254.197.51", filename="suspicious.dll", sha256=susp_sha, channel="endpoint_agent", verdict="suspicious")
         s.add(clean_fe); s.add(susp_fe); s.commit(); s.close()
         cl = dash_app.test_client()
         with cl.session_transaction() as sess:
@@ -9054,7 +9054,7 @@ def _test_admin_file_decisions():
         r = cl.post("/files/decision", data={"sha256": sha, "decision": "safe", "csrf_token": "tok"})
         assert r.status_code in (302, 303), r.status_code
         # 3) boshqa qurilma: shu hash endi toza, qora ro'yxat tozalandi
-        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "172.16.197.52"}, headers=h).get_json()
+        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "10.254.197.52"}, headers=h).get_json()
         assert out["admin_decision"] == "safe" and not out["malicious"]
         s = get_session(); assert s.query(HashBlacklist).filter_by(sha256=sha).first() is None; s.close()
         # agent: safe -> tegmaydi
@@ -9062,7 +9062,7 @@ def _test_admin_file_decisions():
             ag._on_new_file(f); assert not q.called and os.path.isfile(f)
         # 4) admin 'virus' desa -> boshqa qurilmada o'chirish/karantin
         r = cl.post("/files/decision", data={"sha256": sha, "decision": "malicious", "csrf_token": "tok"})
-        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "172.16.197.52"}, headers=h).get_json()
+        out = c.post("/api/v1/check_hash", json={"sha256": sha, "filename": "AnyDesk.exe", "hostname": "PC-B", "ip_address": "10.254.197.52"}, headers=h).get_json()
         assert out["admin_action"] == "quarantine" and out["confirmed"]
         with patch.object(am.requests, "post", return_value=R(out)), patch.object(am, "analyze_file", return_value={"score": 0, "findings": [], "verdict_hint": "clean", "magic": "PE", "signed": True}), \
              patch.object(am, "quarantine_file", return_value={"quarantined": True, "source_removed": True, "quarantine_path": "q"}) as q, \
@@ -9158,7 +9158,7 @@ def _test_clamav_clamd_integration():
         importlib.reload(dse)
         sha = hashlib.sha256(eicar).hexdigest()
         s = get_session()
-        fe = FileEvent(src_ip="172.16.201.1", filename="eicar_clamd_test.txt", file_ext="txt",
+        fe = FileEvent(src_ip="10.254.201.1", filename="eicar_clamd_test.txt", file_ext="txt",
                        size=len(eicar), sha256=sha, md5="x", stored_path=eicar_path, checked=False)
         s.add(fe)
         s.commit()
@@ -9244,7 +9244,7 @@ def _test_agent_ip_and_username_in_alert():
         if addr[0] == "8.8.8.8":
             raise OSError("Network is unreachable")
         return real_connect(self, addr)
-    with patch.object(am, "API_SERVER_URL", "http://172.16.55.9:8443"), \
+    with patch.object(am, "API_SERVER_URL", "http://10.254.55.9:8443"), \
          patch.object(_socket.socket, "connect", fake_connect):
         ip = am._get_local_ip()
     assert ip != "127.0.0.1", f"internetga yo'l yo'q bo'lsa ham server manziliga yo'l orqali haqiqiy IP topilishi kerak edi, {ip!r} keldi"
@@ -9258,7 +9258,7 @@ def _test_agent_ip_and_username_in_alert():
     api_server.AGENT_API_KEY = "test-key-user"
     c = api_server.app.test_client(); h = {"X-API-Key": "test-key-user"}
     s = get_session()
-    s.add(Device(ip_address="172.16.199.1", hostname="SHP-278", source="test")); s.commit(); s.close()
+    s.add(Device(ip_address="10.254.199.1", hostname="SHP-278", source="test")); s.commit(); s.close()
     import hashlib
     sha = hashlib.sha256(b"pdf_username_test_file").hexdigest()
     with patch.object(api_server, "vt_slot_busy", return_value=False), \
@@ -9267,7 +9267,7 @@ def _test_agent_ip_and_username_in_alert():
         c.post("/api/v1/check_hash", json={
             "sha256": sha, "filename": "invoice.pdf",
             "filepath": r"C:\Users\d.turgunbaev-su\Downloads\invoice.pdf",
-            "hostname": "SHP-278", "ip_address": "172.16.199.1",
+            "hostname": "SHP-278", "ip_address": "10.254.199.1",
             "heuristic_score": 90, "heuristic_findings": ["PDF strukturasi: JavaScript topildi"],
             "heuristic_verdict": "malicious",
         }, headers=h)
@@ -9362,7 +9362,7 @@ def _test_authenticode_verification():
     api_server.AGENT_API_KEY = "test-key-auth"
     c = api_server.app.test_client(); h = {"X-API-Key": "test-key-auth"}
     s = get_session()
-    s.add(Device(ip_address="172.16.202.1", hostname="SYS-PC", source="test")); s.commit(); s.close()
+    s.add(Device(ip_address="10.254.202.1", hostname="SYS-PC", source="test")); s.commit(); s.close()
     import hashlib
     sha = hashlib.sha256(b"microsoft_signed_system_dll_test").hexdigest()
     with patch.object(api_server, "vt_slot_busy", return_value=False), \
@@ -9370,7 +9370,7 @@ def _test_authenticode_verification():
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         resp = c.post("/api/v1/check_hash", json={
             "sha256": sha, "filename": "Microsoft.PowerShell.Utility.dll",
-            "hostname": "SYS-PC", "ip_address": "172.16.202.1",
+            "hostname": "SYS-PC", "ip_address": "10.254.202.1",
             "heuristic_verdict": "clean", "trusted_signature": True,
         }, headers=h).get_json()
     assert resp["upload_required"] is False, resp
@@ -9385,7 +9385,7 @@ def _test_authenticode_verification():
          patch.object(api_server, "check_virustotal", return_value=None), \
          patch.object(api_server, "check_malwarebazaar", return_value=None):
         resp2 = c.post("/api/v1/check_hash", json={
-            "sha256": sha2, "filename": "unknown.bin", "hostname": "SYS-PC", "ip_address": "172.16.202.1",
+            "sha256": sha2, "filename": "unknown.bin", "hostname": "SYS-PC", "ip_address": "10.254.202.1",
         }, headers=h).get_json()
     assert resp2["upload_required"] is True
     s = get_session()
@@ -9436,7 +9436,7 @@ def _test_agent_watchdog_reconnect_button():
     Foydalanuvchi: tugma bosilganda o'sha qurilmada agentni qayta ishga tushirish skripti
     (watchdog) ishlasin; 1 daqiqa ichida ulanolmasa xabar berilsin. Server qurilmaga o'zi
     ulanmaydi - holat mashinasi: pending -> picked_up -> restarted -> success | failed.
-    Kompyuter Dashboard'da turli hostname'lar bilan (Kerio "Isobek a4:d7", agent "ISOBEK")
+    Kompyuter Dashboard'da turli hostname'lar bilan (Kerio "PrimaryUser a4:d7", agent "PRIMARYUSER")
     bo'lishi mumkin - MAC/IP/qisqa nom bo'yicha topiladi.
     """
     from datetime import timedelta
@@ -9452,11 +9452,11 @@ def _test_agent_watchdog_reconnect_button():
     h = {"X-API-Key": "test-key-watchdog"}
 
     s = get_session()
-    d1 = Device(ip_address="172.16.203.51", mac_address="A0:02:A5:B0:A4:D7", hostname="Isobek a4:d7",
+    d1 = Device(ip_address="10.254.203.51", mac_address="A0:02:A5:B0:A4:D7", hostname="PrimaryUser a4:d7",
                 connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
-    d2 = Device(ip_address="172.16.203.52", mac_address="AA:BB:CC:00:00:02", hostname="WD-FAIL-PC.corp.local",
+    d2 = Device(ip_address="10.254.203.52", mac_address="AA:BB:CC:00:00:02", hostname="WD-FAIL-PC.corp.local",
                 connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
-    d3 = Device(ip_address="172.16.203.53", mac_address="AA:BB:CC:00:00:03", hostname="WD-SILENT-PC",
+    d3 = Device(ip_address="10.254.203.53", mac_address="AA:BB:CC:00:00:03", hostname="WD-SILENT-PC",
                 connection_type="wifi", source="test", agent_last_heartbeat=utcnow() - timedelta(hours=3))
     s.add_all([d1, d2, d3]); s.commit()
     id1, id2, id3 = d1.id, d2.id, d3.id
@@ -9472,11 +9472,11 @@ def _test_agent_watchdog_reconnect_button():
         r = (d.agent_restart_status, d.agent_restart_message); ss.close(); return r
 
     # Bayroq yo'q -> watchdog False
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK"}, headers=h)
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "PRIMARYUSER"}, headers=h)
     assert r.status_code == 200 and r.get_json()["restart_requested"] is False
 
     # 1) Tugma ko'rinadi, bosilganda 'pending', ikkinchi marta bosilsa takror yaratilmaydi
-    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
+    page = client.get("/devices?hostname=PrimaryUser").get_data(as_text=True)
     assert "Qayta ulanishga urinish" in page
     assert client.post(f"/devices/{id1}/request_agent_restart").status_code in (302, 303)
     assert status_of(id1)[0] == "pending"
@@ -9484,29 +9484,29 @@ def _test_agent_watchdog_reconnect_button():
     ss = get_session()
     assert ss.query(AuditLog).filter(AuditLog.action == "request_agent_restart", AuditLog.target_id == str(id1)).count() == 1
     ss.close()
-    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
-    assert "data-restart-poll" in page and "Qayta ulanishga urinish" not in page.split("Isobek a4:d7")[1][:1500]
+    page = client.get("/devices?hostname=PrimaryUser").get_data(as_text=True)
+    assert "data-restart-poll" in page and "Qayta ulanishga urinish" not in page.split("PrimaryUser a4:d7")[1][:1500]
     j = client.get(f"/devices/{id1}/restart_status").get_json()
     assert j["status"] == "pending" and j["in_progress"] is True and j["deadline_seconds"] == 60
 
-    # 2) Watchdog kompyuter nomi ("ISOBEK") DB'dagi ("Isobek a4:d7") ga MOS EMAS - lekin MAC mos
-    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK", "ips": ["10.9.9.9"],
+    # 2) Watchdog kompyuter nomi ("PRIMARYUSER") DB'dagi ("PrimaryUser a4:d7") ga MOS EMAS - lekin MAC mos
+    r = api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "PRIMARYUSER", "ips": ["10.9.9.9"],
                         "macs": ["A0-02-A5-B0-A4-D7"]}, headers=h)
     assert r.get_json()["restart_requested"] is True, "MAC bo'yicha topilishi kerak edi"
     assert status_of(id1)[0] == "picked_up"
-    assert api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "ISOBEK", "macs": ["A0-02-A5-B0-A4-D7"]},
+    assert api_client.post("/api/v1/agent_watchdog_check", json={"hostname": "PRIMARYUSER", "macs": ["A0-02-A5-B0-A4-D7"]},
                            headers=h).get_json()["restart_requested"] is False, "consume-once"
 
     # 3) Watchdog natijasi: xizmat ishga tushdi -> 'restarted'; agent heartbeat -> 'success'
-    r = api_client.post("/api/v1/agent_watchdog_report", json={"hostname": "ISOBEK", "macs": ["A0-02-A5-B0-A4-D7"],
+    r = api_client.post("/api/v1/agent_watchdog_report", json={"hostname": "PRIMARYUSER", "macs": ["A0-02-A5-B0-A4-D7"],
                         "success": True, "message": "Xizmat qayta ishga tushirildi (Running)"}, headers=h)
     assert r.status_code == 200 and r.get_json()["updated"] == 1
     assert status_of(id1)[0] == "restarted"
-    r = api_client.post("/api/v1/agent_heartbeat", json={"hostname": "ISOBEK", "ip_address": "172.16.203.51",
+    r = api_client.post("/api/v1/agent_heartbeat", json={"hostname": "PRIMARYUSER", "ip_address": "10.254.203.51",
                         "agent_version": "1.0.22", "agent_os": "windows"}, headers=h)
     assert r.status_code == 200
     assert status_of(id1)[0] == "success"
-    page = client.get("/devices?hostname=Isobek").get_data(as_text=True)
+    page = client.get("/devices?hostname=PrimaryUser").get_data(as_text=True)
     assert "Qayta ulandi" in page
 
     # 4) Watchdog xizmatni ishga tushira olmadi -> darhol 'failed' + high Alert
@@ -9673,12 +9673,12 @@ def _test_agent_loopback_ip_normalized():
                       "agent_version": "1.0.17", "agent_os": "windows"}, headers=h,
                       environ_base={"REMOTE_ADDR": remote})
 
-    assert hb("IPN-PC-A", "127.0.0.1", "172.16.210.11").status_code == 200
-    assert hb("IPN-PC-B", "127.0.0.1", "172.16.210.12").status_code == 200
-    assert hb("IPN-PC-C", "172.16.210.13", "172.16.210.99").status_code == 200   # to'g'ri IP o'zgarmaydi
+    assert hb("IPN-PC-A", "127.0.0.1", "10.254.210.11").status_code == 200
+    assert hb("IPN-PC-B", "127.0.0.1", "10.254.210.12").status_code == 200
+    assert hb("IPN-PC-C", "10.254.210.13", "10.254.210.99").status_code == 200   # to'g'ri IP o'zgarmaydi
     s = get_session()
     rows = {d.hostname: d.ip_address for d in s.query(Device).filter(Device.hostname.like("IPN-PC-%")).all()}
-    assert rows == {"IPN-PC-A": "172.16.210.11", "IPN-PC-B": "172.16.210.12", "IPN-PC-C": "172.16.210.13"}, rows
+    assert rows == {"IPN-PC-A": "10.254.210.11", "IPN-PC-B": "10.254.210.12", "IPN-PC-C": "10.254.210.13"}, rows
     assert s.query(Device).filter(Device.ip_address == "127.0.0.1", Device.hostname.like("IPN-PC-%")).count() == 0
     s.close()
 
@@ -9698,11 +9698,11 @@ def _test_agent_loopback_ip_normalized():
     # almashtirish yo'lini tekshiradi. Docker gateway holati yuqorida alohida tekshirilgan.
     with patch.object(api_server, "_own_docker_network", return_value=None):
         r = c.post("/api/v1/check_hash", json={"sha256": check_hash_sha, "filename": "x.txt", "hostname": "IPN-PC-A",
-                   "ip_address": "127.0.0.1"}, headers=h, environ_base={"REMOTE_ADDR": "172.16.210.11"})
+                   "ip_address": "127.0.0.1"}, headers=h, environ_base={"REMOTE_ADDR": "10.254.210.11"})
     assert r.status_code == 200
     s = get_session()
     fe = s.query(FileEvent).filter(FileEvent.sha256 == check_hash_sha).order_by(FileEvent.id.desc()).first()
-    assert fe is not None and fe.src_ip == "172.16.210.11", fe and fe.src_ip
+    assert fe is not None and fe.src_ip == "10.254.210.11", fe and fe.src_ip
     s.close()
 
 
@@ -9872,7 +9872,7 @@ def _test_live_map_shows_names_not_raw_ip():
     client.post("/login", data={"username": "livemap_names_admin", "password": "livemapnamespass123"})
 
     s = get_session()
-    d = Device(ip_address="172.16.33.1", hostname="LIVEMAP-NAMES-TEST", connection_type="wifi", source="test", risk_score=0)
+    d = Device(ip_address="10.254.33.1", hostname="LIVEMAP-NAMES-TEST", connection_type="wifi", source="test", risk_score=0)
     s.add(d)
     s.flush()
     dev_id = d.id
@@ -9924,7 +9924,7 @@ def _test_live_map_list_not_truncated_at_60():
     client.post("/login", data={"username": "livemap_notrunc_admin", "password": "livemapnotruncpass123"})
 
     s = get_session()
-    d = Device(ip_address="172.16.34.1", hostname="LIVEMAP-NOTRUNC-TEST", connection_type="wifi", source="test", risk_score=0)
+    d = Device(ip_address="10.254.34.1", hostname="LIVEMAP-NOTRUNC-TEST", connection_type="wifi", source="test", risk_score=0)
     s.add(d)
     s.flush()
     dev_id = d.id
@@ -9961,14 +9961,14 @@ def _test_files_exact_counts_and_pagination():
     # 201 ta noyob SHA + bitta SHA ikki xil Endpoint yozuvida: 203 tekshiruv,
     # 202 noyob fayl va kamida ikki sahifa bo'lishi kerak.
     for i in range(201):
-        entries.append(FileEvent(filename=f"{prefix}{i:03}.bin", src_ip="172.16.254.10",
+        entries.append(FileEvent(filename=f"{prefix}{i:03}.bin", src_ip="10.254.254.10",
                                  sha256=(f"{i:064x}"), verdict="clean", channel="endpoint_agent"))
     entries.extend([
-        FileEvent(filename=f"{prefix}uploaded.bin", src_ip="172.16.254.10", sha256=shared_sha,
+        FileEvent(filename=f"{prefix}uploaded.bin", src_ip="10.254.254.10", sha256=shared_sha,
                   verdict="clean", channel="endpoint_upload"),
-        FileEvent(filename=f"{prefix}endpoint.bin", src_ip="172.16.254.10", sha256=shared_sha,
+        FileEvent(filename=f"{prefix}endpoint.bin", src_ip="10.254.254.10", sha256=shared_sha,
                   verdict="unknown", channel="endpoint_agent"),
-        FileEvent(filename=f"{prefix}yesterday.bin", src_ip="172.16.254.10", sha256="ed" * 32,
+        FileEvent(filename=f"{prefix}yesterday.bin", src_ip="10.254.254.10", sha256="ed" * 32,
                   verdict="clean", channel="endpoint_agent", timestamp=utcnow() - timedelta(days=1)),
     ])
     s.add_all(entries); s.commit(); s.close()

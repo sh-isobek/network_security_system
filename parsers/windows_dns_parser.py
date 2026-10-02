@@ -12,7 +12,7 @@ sozlanishi kerak):
 
     {
       "EventID": 256,
-      "ClientIP": "172.16.2.30",
+      "ClientIP": "10.254.2.30",
       "QueryName": "malicious-domain.com",
       "QueryType": "A",
       "Timestamp": "2026-07-30T13:05:00Z"

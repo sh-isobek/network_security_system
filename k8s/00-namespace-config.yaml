@@ -9,8 +9,8 @@ metadata:
   name: app-config
   namespace: network-security
 data:
-  NETWORK_RANGE_START: "172.16.0.11"
-  NETWORK_RANGE_END: "172.16.3.254"
+  NETWORK_RANGE_START: "192.0.2.10"
+  NETWORK_RANGE_END: "192.0.2.250"
   SYSLOG_HOST: "0.0.0.0"
   SYSLOG_PORT: "5140"
   LOG_LEVEL: "INFO"
@@ -33,18 +33,4 @@ data:
 #     --from-literal=VT_API_KEY='...'
 # yoki tashqi Secret manager (Vault, AWS Secrets Manager, Sealed Secrets)
 # orqali boshqarilishi tavsiya etiladi.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: app-secrets
-  namespace: network-security
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: "CHANGE_ME_STRONG_PASSWORD"
-  AGENT_API_KEY: "CHANGE_ME_STRONG_RANDOM_KEY"
-  DASHBOARD_SECRET_KEY: "CHANGE_ME_RANDOM_SECRET"
-  # To'liq URL secret bo'lishi kerak: ConfigMap ichidagi $(VAR) kengaymaydi.
-  DATABASE_URL: "postgresql://security_admin:CHANGE_ME_STRONG_PASSWORD@postgres:5432/security_system"
-  RABBITMQ_DEFAULT_USER: "network_security"
-  RABBITMQ_DEFAULT_PASS: "CHANGE_ME_STRONG_RABBITMQ_PASSWORD"
-  RABBITMQ_URL: "amqp://network_security:CHANGE_ME_STRONG_RABBITMQ_PASSWORD@rabbitmq:5672/%2F"
+# Secret manifestini Git'ga commit qilmang: workloadlar mavjud `app-secrets` Secret'iga secretRef orqali ulanadi.

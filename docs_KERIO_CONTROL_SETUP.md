@@ -70,7 +70,7 @@ Host/Http/Security/Warning/Web) kerakli logni tanlang:
 3. Log ichida istalgan joyga o'ng tugma bosing → **Log Settings**.
 4. **External Logging** tab'ida **"Enable Syslog logging"**ni belgilang.
 5. **Syslog Server** maydoniga bu serverning manzilini kiriting:
-   `<server-IP>:514` (masalan `172.16.1.206:514` - standart syslog
+   `<server-IP>:514` (masalan `192.0.2.25:514` - standart syslog
    porti, agent_api/dashboard portlari bilan aralashtirmang).
 6. Xuddi shu amalni **Host** log uchun ham takrorlang (2-5 qadamlar) -
    bu allaqachon sizda ishlab turibdi (real testda tasdiqlangan).

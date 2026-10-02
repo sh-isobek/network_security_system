@@ -21,7 +21,7 @@
 
 param(
     [string]$ServerShare = "",
-    [string]$ApiServerUrl = "http://172.16.0.5:8443",
+    [string]$ApiServerUrl = "https://security-agent-api.company.local:8443",
     [string]$InstallDir = "C:\Program Files\NetworkSecurityAgent",
     [string]$ServiceName = "NetworkSecurityEndpointAgent",
     [string]$LogFile = "C:\ProgramData\NetworkSecurityAgent\deploy.log"
@@ -68,7 +68,7 @@ if (-not $ServerShare) {
     $ServerShare = "\\$DomainName\SYSVOL\$DomainName\scripts\NetworkSecurityAgent"
 
     # MUHIM (real production'da aniqlangan xato - Kerio VPN): VPN'dagi DNS
-    # domen ildizi nomini (masalan synergypharm.org) DC'ga EMAS, ochiq
+    # domen ildizi nomini (masalan example.internal) DC'ga EMAS, ochiq
     # internet IP'ga hal qiladi, shuning uchun yuqoridagi DFS-yo'l VPN'da
     # ishlamaydi. Tartib: (1) skriptning o'zi turgan papka (SYSVOL'dan
     # ishga tushirilgan bo'lsa - VERSION shu yerda), (2) DC locator
