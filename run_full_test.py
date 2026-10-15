@@ -8863,7 +8863,8 @@ def _test_agent_all_drives():
         seen = []
         ag._on_new_file = lambda p, bulk=False: seen.append((p, bulk)) or False
         # yangi disk ulandi
-        with patch.object(am, "list_local_drives", return_value=[main, usb]):
+        # Foydalanuvchi talabi: disklar standart holatda QO'SHILMAYDI - faqat AGENT_WATCH_ALL_DRIVES=true bilan
+        with patch.object(am, "WATCH_ALL_DRIVES", True), patch.object(am, "list_local_drives", return_value=[main, usb]):
             ag._drive_watch_once()
         for _ in range(50):
             if any(p.endswith("virus.exe") for p, _b in seen):
@@ -9998,6 +9999,141 @@ def _test_files_exact_counts_and_pagination():
 
 
 check("Fayllar: haqiqiy jami/noyob/filtr sonlari va 200 qatorlik sahifalash", _test_files_exact_counts_and_pagination)
+
+# ---------------------------------------------------------------------------
+print("\n=== 126) Agent: FAQAT barcha profillardagi Downloads va Telegram papkalari tekshiriladi (qolgani - yo'q) ===")
+
+
+def _test_agent_only_downloads_and_telegram():
+    """
+    Foydalanuvchi: "barcha fayllarni tekshirmasin - barcha profillardagi zagruzka va telegram
+    papkalarini tekshirsin, qolgan fayllarni tekshirmasin". HAQIQIY papka daraxti va HAQIQIY
+    watchdog kuzatuvchisi bilan (mock emas).
+    """
+    import shutil, tempfile, time
+    from unittest.mock import patch
+    import agent_core.agent as am
+    from agent_core.target_dirs import scan_dirs_for_users_root, scan_dirs_for_profile
+
+    root = tempfile.mkdtemp(prefix="nsa_profiles_")
+    users = os.path.join(root, "Users")
+
+    def mk(*parts, content=None):
+        path = os.path.join(users, *parts)
+        if content is None:
+            os.makedirs(path, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").write(content)
+        return path
+
+    # alice: Downloads (ichida Telegram Desktop), Documents\\Telegram Desktop, Desktop, Documents\\hisobot
+    mk("alice", "Downloads", "Telegram Desktop", "tg_in_downloads.exe", content=b"1")
+    mk("alice", "Documents", "Telegram Desktop", "tg_in_documents.exe", content=b"2")
+    mk("alice", "Documents", "hisobot", "oddiy.docx", content=b"3")
+    mk("alice", "Desktop", "desktop.exe", content=b"4")
+    # bob: faqat Downloads
+    mk("bob", "Downloads", "setup.exe", content=b"5")
+    # tizim profili - o'tkazib yuboriladi
+    mk("Public", "Downloads", "public.exe", content=b"6")
+    mk("Default", "Downloads", "default.exe", content=b"7")
+
+    old_cache = am.LOCAL_CACHE_FILE
+    am.LOCAL_CACHE_FILE = os.path.join(root, "cache.json")
+    ag = None
+    try:
+        found = scan_dirs_for_users_root(users)
+        expected = {
+            os.path.join(users, "alice", "Downloads"),
+            os.path.join(users, "alice", "Documents", "Telegram Desktop"),
+            os.path.join(users, "bob", "Downloads"),
+        }
+        assert set(found) == expected, f"faqat Downloads+Telegram kutilgan edi: {sorted(found)}"
+        # Telegram ichki papkasi Downloads ichida - alohida qo'shilmaydi (Downloads allaqachon rekursiv)
+        assert not any(d.endswith(os.path.join("Downloads", "Telegram Desktop")) for d in found)
+        assert scan_dirs_for_profile(os.path.join(users, "nomavjud")) == []
+
+        # --- service_wrapper._windows_watch_dirs() (soxta pywin32 bilan, HAQIQIY papka daraxti) ---
+        fake = os.path.join(root, "fake_pywin32"); os.makedirs(fake)
+        open(os.path.join(fake, "win32event.py"), "w").write("INFINITE=-1\ndef CreateEvent(*a, **k): return object()\ndef SetEvent(*a, **k): pass\ndef WaitForSingleObject(*a, **k): pass\n")
+        open(os.path.join(fake, "win32service.py"), "w").write("SERVICE_RUNNING=4\nSERVICE_STOP_PENDING=3\n")
+        open(os.path.join(fake, "win32serviceutil.py"), "w").write("class ServiceFramework:\n    def __init__(self, a): pass\n    def ReportServiceStatus(self, s): pass\ndef HandleCommandLine(c): pass\n")
+        open(os.path.join(fake, "servicemanager.py"), "w").write("def LogMsg(*a, **k): pass\ndef LogErrorMsg(*a, **k): pass\ndef LogWarningMsg(*a, **k): pass\ndef LogInfoMsg(*a, **k): pass\ndef Initialize(): pass\ndef PrepareToHostSingle(c): pass\ndef StartServiceCtrlDispatcher(): pass\n")
+        sys.path.insert(0, fake)
+        mods = ["windows_agent.service_wrapper", "win32event", "win32service", "win32serviceutil", "servicemanager"]
+        for m in mods:
+            sys.modules.pop(m, None)
+        try:
+            with patch.dict(os.environ, {"SystemDrive": root}):
+                import windows_agent.service_wrapper as sw
+                assert set(sw._windows_watch_dirs()) == expected, "service_wrapper ham FAQAT Downloads+Telegram bermog'i kerak"
+                assert set(sw._windows_watch_dirs(quiet=True)) == expected
+        finally:
+            sys.path.remove(fake)
+            for m in mods:
+                sys.modules.pop(m, None)
+            import windows_agent.agent  # noqa: F401
+
+        # --- HAQIQIY kuzatuv: Downloads/Telegram'ga tushgan fayl tekshiriladi, Desktop/Documents - yo'q ---
+        provider_calls = []
+        def provider():
+            provider_calls.append(1)
+            return scan_dirs_for_users_root(users)
+
+        ag = am.EndpointAgent(provider(), dirs_provider=provider)
+        seen = []
+        ag._on_new_file = lambda p, bulk=False: seen.append((p, bulk)) or False
+        ag.monitor.handler._on_new_file = ag._on_new_file
+        ag.monitor.start()
+        try:
+            time.sleep(0.5)
+            open(os.path.join(users, "alice", "Downloads", "yangi_yuklama.exe"), "wb").write(b"y1")
+            open(os.path.join(users, "alice", "Documents", "Telegram Desktop", "tg_yangi.exe"), "wb").write(b"y2")
+            open(os.path.join(users, "alice", "Desktop", "desktop_yangi.exe"), "wb").write(b"y3")
+            open(os.path.join(users, "alice", "Documents", "hisobot", "boshqa.docx"), "wb").write(b"y4")
+            for _ in range(80):
+                names = {os.path.basename(p) for p, _b in seen}
+                if {"yangi_yuklama.exe", "tg_yangi.exe"} <= names:
+                    break
+                time.sleep(0.1)
+            time.sleep(1.0)   # keraksiz fayllar kelib qolsa, ulgurishi uchun
+            names = {os.path.basename(p) for p, _b in seen}
+            assert {"yangi_yuklama.exe", "tg_yangi.exe"} <= names, f"Downloads/Telegram fayllari tekshirilishi kerak: {names}"
+            assert "desktop_yangi.exe" not in names and "boshqa.docx" not in names, f"Boshqa papkalar tekshirilmasligi kerak: {names}"
+
+            # --- yangi profil paydo bo'ldi (birinchi kirish) -> Downloads'i avtomatik qo'shiladi, mavjud fayllari tekshiriladi ---
+            seen.clear()
+            mk("carol", "Downloads", "carol_old.exe", content=b"c")
+            mk("carol", "Desktop", "carol_desktop.exe", content=b"d")
+            ag._drive_watch_once()
+            for _ in range(50):
+                if any(p.endswith("carol_old.exe") for p, _b in seen):
+                    break
+                time.sleep(0.1)
+            assert os.path.join(users, "carol", "Downloads") in ag.monitor.watch_dirs, "yangi profil Downloads'i qo'shilishi kerak"
+            assert any(p.endswith("carol_old.exe") and b for p, b in seen), "yangi Downloads'dagi mavjud fayl tekshirilishi kerak"
+            assert not any(p.endswith("carol_desktop.exe") for p, _b in seen), "yangi profilning Desktop'i tekshirilmasligi kerak"
+            # bir xil papka qayta qo'shilmaydi
+            n = len(ag.monitor.watch_dirs)
+            ag._drive_watch_once()
+            assert len(ag.monitor.watch_dirs) == n
+        finally:
+            ag.monitor.stop()
+
+        # --- provider yo'q: disklar standart holatda QO'SHILMAYDI (faqat AGENT_WATCH_ALL_DRIVES=true bilan) ---
+        usb = os.path.join(root, "usb"); os.makedirs(usb)
+        open(os.path.join(usb, "u.exe"), "wb").write(b"u")
+        ag2 = am.EndpointAgent([os.path.join(users, "bob", "Downloads")])
+        with patch.object(am, "list_local_drives", return_value=[usb]):
+            assert am.WATCH_ALL_DRIVES is False, "standart holatda barcha disklarni kuzatish O'CHIQ bo'lishi kerak"
+            ag2._drive_watch_once()
+        assert usb not in ag2.monitor.watch_dirs, "disk avtomatik kuzatuvga qo'shilmasligi kerak"
+    finally:
+        am.LOCAL_CACHE_FILE = old_cache
+        shutil.rmtree(root, ignore_errors=True)
+
+
+check("Agent: faqat barcha profillardagi Downloads+Telegram papkalari tekshiriladi (Desktop/boshqa disklar - yo'q), yangi profil avtomatik qo'shiladi", _test_agent_only_downloads_and_telegram)
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)

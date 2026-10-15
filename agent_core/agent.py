@@ -131,14 +131,14 @@ API_TIMEOUT = 5  # soniya - server sekin javob bersa ham foydalanuvchini kutdirm
 UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 MAX_SCAN_BYTES = int(os.getenv("AGENT_MAX_SCAN_BYTES", str(1024 * 1024 * 1024)))  # 1 GB
 DRIVE_POLL_SECONDS = int(os.getenv("AGENT_DRIVE_POLL_SECONDS", "30"))
+# Foydalanuvchi talabi: "barcha fayllarni tekshirmasin" - disklar (C:, D:, USB) avtomatik kuzatuvga
+# QO'SHILMAYDI. Eski xatti-harakat kerak bo'lsa: AGENT_WATCH_ALL_DRIVES=true (standart - o'chiq).
+WATCH_ALL_DRIVES = os.getenv("AGENT_WATCH_ALL_DRIVES", "").strip().lower() in ("1", "true", "yes")
 BULK_SERVER_DELAY = float(os.getenv("AGENT_BULK_SERVER_DELAY", "0.7"))  # server chegarasi (100/daq) ostida qolish uchun
 RECHECK_INTERVAL_SECONDS = int(os.getenv("AGENT_RECHECK_INTERVAL_SECONDS", "60"))
 
 DEFAULT_WATCH_DIRS_WINDOWS = [
     os.path.expandvars(r"%USERPROFILE%\Downloads"),
-    os.path.expandvars(r"%USERPROFILE%\Desktop"),
-    os.path.expandvars(r"%TEMP%"),
-    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Outlook"),
 ]
 
 DEFAULT_WATCH_DIRS_LINUX = [
@@ -464,7 +464,12 @@ def _get_local_ip() -> str:
 
 
 class EndpointAgent:
-    def __init__(self, watch_dirs):
+    def __init__(self, watch_dirs, dirs_provider=None):
+        # `dirs_provider` - ixtiyoriy funksiya (-> papkalar ro'yxati): berilsa, agent har
+        # `DRIVE_POLL_SECONDS`da uni chaqirib, YANGI paydo bo'lgan papkalarni (yangi profil,
+        # yangi Telegram papkasi) kuzatuvga qo'shadi - butun disklarni EMAS (Windows agenti
+        # faqat Downloads/Telegram papkalarini tekshiradi).
+        self.dirs_provider = dirs_provider
         self.hostname = platform.node()
         self.ip_address = _get_local_ip()
         self.cache = _load_cache()
@@ -800,10 +805,22 @@ class EndpointAgent:
         logger.info(f"Qayta skanerlash tugadi: {sum(counts)} ta fayl tekshirildi")
 
     def _drive_watch_once(self):
-        """Yangi ulangan disk (USB/flesh) topilsa - kuzatuvga qo'shadi va undagi mavjud fayllarni tekshiradi."""
-        for root in list_local_drives():
+        """
+        Yangi papka paydo bo'lsa - kuzatuvga qo'shadi va undagi mavjud fayllarni tekshiradi.
+
+        `dirs_provider` berilgan bo'lsa (Windows agenti): faqat undan kelgan papkalar (yangi
+        profilning Downloads'i, yangi Telegram papkasi). Berilmagan bo'lsa: hech narsa - faqat
+        `AGENT_WATCH_ALL_DRIVES=true` bo'lsa yangi ulangan disk (USB/flesh) ildizi qo'shiladi.
+        """
+        if self.dirs_provider:
+            roots = self.dirs_provider()
+        elif WATCH_ALL_DRIVES:
+            roots = list_local_drives()
+        else:
+            roots = []
+        for root in roots:
             if root not in self.monitor.watch_dirs and self.monitor.add_dir(root):
-                logger.info(f"Yangi disk ulandi: {root} - undagi fayllar tekshirilmoqda")
+                logger.info(f"Yangi papka/disk topildi: {root} - undagi fayllar tekshirilmoqda")
                 threading.Thread(target=self._rescan_tree, args=(root,), name="AgentDriveScan", daemon=True).start()
 
     def _drive_watch_loop(self):
@@ -833,7 +850,9 @@ class EndpointAgent:
 def _default_watch_dirs():
     system = platform.system()
     if system == "Windows":
-        return DEFAULT_WATCH_DIRS_WINDOWS
+        # Foydalanuvchi talabi: faqat Downloads va Telegram papkalari (Desktop/Temp/Outlook - YO'Q)
+        from agent_core.target_dirs import scan_dirs_for_profile
+        return scan_dirs_for_profile(os.path.expanduser("~")) or DEFAULT_WATCH_DIRS_WINDOWS
     if system == "Darwin":
         return DEFAULT_WATCH_DIRS_MACOS
     # Linux (va noma'lum/test muhitlari uchun standart)
@@ -846,5 +865,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     dirs = args.watch_dirs or _default_watch_dirs()
-    agent = EndpointAgent(dirs)
+    provider = _default_watch_dirs if (not args.watch_dirs and platform.system() == "Windows") else None
+    agent = EndpointAgent(dirs, dirs_provider=provider)
     agent.run()

@@ -17,5 +17,5 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     dirs = args.watch_dirs or _default_watch_dirs()
-    agent = EndpointAgent(dirs)
+    agent = EndpointAgent(dirs, dirs_provider=None if args.watch_dirs else _default_watch_dirs)
     agent.run()

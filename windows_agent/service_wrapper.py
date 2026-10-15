@@ -32,15 +32,21 @@ except ImportError:
 
 from windows_agent.agent import EndpointAgent
 from agent_core.agent import logger
-from agent_core.file_monitor import list_local_drives
+from agent_core.target_dirs import scan_dirs_for_users_root
 
 
 SERVICE_NAME = "NetworkSecurityEndpointAgent"
 
 
-def _windows_watch_dirs():
-    """Enumerate real Windows user profiles plus system temp directories."""
+def _windows_watch_dirs(quiet=False):
+    """Barcha Windows profillaridagi Downloads va Telegram papkalari (boshqa hech narsa).
+
+    `quiet=True` - agent ishlayotganda har 30 soniyada qayta tekshirish uchun (yangi profil/Telegram
+    papkasi paydo bo'lganini payqash): bunda loglar `debug` darajasida, aks holda log fayli to'lib ketardi.
+    """
     result = []
+    log_info = logger.debug if quiet else logger.info
+    log_warning = logger.debug if quiet else logger.warning
 
     # MUHIM (real production'da aniqlangan xato turkumi - bu loyihada
     # bir necha marta uchragan): agar `SystemDrive` muhit o'zgaruvchisi
@@ -59,66 +65,27 @@ def _windows_watch_dirs():
 
     users_root = None
     for candidate in candidates:
-        logger.info(f"Foydalanuvchilar papkasini tekshirish: {candidate}")
+        log_info(f"Foydalanuvchilar papkasini tekshirish: {candidate}")
         if os.path.isdir(candidate):
             users_root = candidate
             break
 
     if users_root is None:
-        logger.warning(f"Hech qanday foydalanuvchilar papkasi topilmadi (sinalgan: {candidates})")
+        log_warning(f"Hech qanday foydalanuvchilar papkasi topilmadi (sinalgan: {candidates})")
     else:
-        try:
-            usernames = os.listdir(users_root)
-        except OSError as exc:
-            logger.warning(f"{users_root} ro'yxatini o'qib bo'lmadi: {exc}")
-            usernames = []
-
-        logger.info(f"Topilgan profil papkalari ({len(usernames)}): {usernames}")
-
-        for username in usernames:
-            profile = os.path.join(users_root, username)
-            try:
-                if not os.path.isdir(profile):
-                    continue
-                if username.lower() in {"default", "default user", "public", "all users"}:
-                    logger.debug(f"O'tkazib yuborildi (tizim profili): {username}")
-                    continue
-
-                found_any = False
-                for folder in ("Downloads", "Desktop"):
-                    path = os.path.join(profile, folder)
-                    if os.path.isdir(path):
-                        result.append(path)
-                        found_any = True
-                    else:
-                        # MUHIM: bu holat papka mavjud emasligini VA
-                        # LocalSystem kirish huquqi yo'qligini bir xil
-                        # ko'rsatadi (os.path.isdir xato bermay False
-                        # qaytaradi) - shuning uchun aniq ogohlantiramiz.
-                        logger.debug(f"Topilmadi/kirish yo'q: {path}")
-
-                outlook = os.path.join(profile, "AppData", "Local", "Microsoft", "Outlook")
-                if os.path.isdir(outlook):
-                    result.append(outlook)
-                    found_any = True
-
-                if found_any:
-                    logger.info(f"Profil qo'shildi: {username}")
-                else:
-                    logger.warning(f"'{username}' profilida kuzatiladigan papka topilmadi (Downloads/Desktop yo'q yoki LocalSystem kirish huquqi cheklangan)")
-            except OSError as exc:
-                logger.warning(f"'{username}' profilini tekshirishda xatolik: {exc}")
-
-    for path in (
-        os.environ.get("TEMP", r"C:\Windows\Temp"),
-        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Temp"),
-    ):
-        if os.path.isdir(path):
-            result.append(path)
+        # FOYDALANUVCHI TALABI: faqat HAR BIR profildagi Downloads va Telegram
+        # papkalari tekshiriladi (Desktop/Outlook/Temp/boshqa disklar - YO'Q).
+        # Mantiq `agent_core/target_dirs.py`da (Linux'da ham sinab ko'riladi).
+        result = scan_dirs_for_users_root(users_root)
+        if not result:
+            log_warning(
+                f"{users_root} ichida hech bir profilda Downloads/Telegram papkasi topilmadi "
+                "(papka yo'q yoki LocalSystem kirish huquqi cheklangan)"
+            )
 
     # Preserve order and remove duplicates.
     final = list(dict.fromkeys(result))
-    logger.info(f"Yakuniy kuzatiladigan papkalar ro'yxati ({len(final)}): {final}")
+    log_info(f"Yakuniy kuzatiladigan papkalar ro'yxati ({len(final)}): {final}")
     return final
 
 
@@ -155,16 +122,16 @@ class EndpointAgentService(win32serviceutil.ServiceFramework):
         )
 
         try:
-            # BARCHA mahalliy va olinadigan (USB/flesh) disklar - virusli fayl istalgan joyda bo'lishi
-            # mumkin. Disk aniqlanmasa, eski (foydalanuvchi profillari) ro'yxatga qaytiladi.
-            watch_dirs = list_local_drives() or _windows_watch_dirs()
-            logger.info(f"Kuzatiladigan ildizlar: {watch_dirs}")
+            # FAQAT barcha profillardagi Downloads va Telegram papkalari. Yangi profil yoki
+            # yangi Telegram papkasi paydo bo'lsa, agent o'zi qo'shadi (`dirs_provider`).
+            watch_dirs = _windows_watch_dirs()
+            logger.info(f"Kuzatiladigan papkalar: {watch_dirs}")
             if not watch_dirs:
                 servicemanager.LogWarningMsg(
-                    "No Windows user folders found; monitoring system Temp only if available."
+                    "No Downloads/Telegram folders found in any Windows profile yet; will keep looking."
                 )
 
-            self.agent = EndpointAgent(watch_dirs)
+            self.agent = EndpointAgent(watch_dirs, dirs_provider=lambda: _windows_watch_dirs(quiet=True))
             self.agent.start_background(self.stop_event)
 
             # Wait until SvcStop signals the event.

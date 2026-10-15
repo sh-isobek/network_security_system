@@ -5,7 +5,7 @@
 ```
 [Windows PC]                                    [Markaziy Server]
   Endpoint Agent (Windows Service)
-    - Downloads/Desktop/Temp kuzatiladi
+    - Barcha profillardagi Downloads va Telegram papkalari kuzatiladi
     - Yangi fayl -> SHA256 hisoblash
     - -----POST /api/v1/check_hash------------>  api/server.py (Flask)
     - <----{"malicious": true/false}------------      |
@@ -107,15 +107,21 @@ orqali barcha kompyuterlarga avtomatik tarqatish mumkin.
 
 ## 4. Kuzatiladigan papkalar (standart)
 
-`windows_agent/agent.py` ichida standart ravishda quyidagilar kuzatiladi:
-- `%USERPROFILE%\Downloads`
-- `%USERPROFILE%\Desktop`
-- `%TEMP%`
-- `%LOCALAPPDATA%\Microsoft\Outlook` (Outlook email ilovalari shu yerga
-  vaqtincha saqlanadi)
+Agent **faqat** quyidagilarni tekshiradi (qolgan fayllar - Desktop, Temp, Outlook,
+boshqa disklar/USB - **tekshirilmaydi**):
 
-Boshqa papka qo'shish uchun `--watch-dirs` argumentini ishlating yoki
-`_default_watch_dirs()` funksiyasini tahrirlang.
+- **Barcha foydalanuvchi profillaridagi** `C:\Users\<profil>\Downloads` (rekursiv -
+  Telegram Desktop standart holatda `Downloads\Telegram Desktop`ga saqlaydi, u shu yerga kiradi);
+- Har bir profildagi `Documents`/`Desktop`/`Pictures`/`Videos`/`Music` ichidagi `Telegram*`
+  nomli papkalar (masalan `Documents\Telegram Desktop` - Telegram'da "Download path" o'zgartirilgan bo'lsa).
+
+Tizim profillari (`Default`, `Public`, `All Users`) o'tkazib yuboriladi. Agent ishlab turganda
+yangi profil yoki yangi Telegram papkasi paydo bo'lsa, **30 soniya ichida** o'zi kuzatuvga qo'shadi
+va undagi mavjud fayllarni ham tekshiradi (qayta ishga tushirish shart emas).
+
+Logika: `agent_core/target_dirs.py`. Eski xatti-harakat (barcha disklarni kuzatish) kerak bo'lsa,
+`AGENT_WATCH_ALL_DRIVES=true` muhit o'zgaruvchisini o'rnating (standart - o'chiq).
+Qo'lda boshqa papka qo'shish uchun `--watch-dirs` argumentidan foydalaning.
 
 ## 5. Active Directory orqali avtomatik tarqatish (GPO)
 
