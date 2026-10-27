@@ -98,6 +98,17 @@ def _add_new_entries(session, candidates: list) -> int:
     return added
 
 
+def ip_blocklist_enabled() -> bool:
+    """IP/domen blocklist (URLhaus/ThreatFox -> `blacklist` jadvali) ATAYLAB standart holatda O'CHIQ.
+
+    MUHIM (real production soxta-pozitivi, foydalanuvchi qarori bilan o'chirilgan): ThreatFox
+    IP ro'yxati umumiy bulut manzillarini (Google 142.250.0.0/15 va h.k.) ham "C2" deb berib,
+    7 kunda 1852 ta soxta HIGH alert va 1463 ta UniFi bloklash urinishiga sabab bo'ldi.
+    Fayl hashlari (`hash_blacklist`) bundan MUSTAQIL - ular sinxronlanishda davom etadi.
+    Qayta yoqish: IP_BLOCKLIST_ENABLED=true."""
+    return os.getenv("IP_BLOCKLIST_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
 def urlhaus_enabled() -> bool:
     """URLhaus ATAYLAB standart holatda O'CHIQ: feed noto'g'ri (umumiy platformalar,
     qonuniy CDN'lar) ma'lumot berib, soxta-pozitiv alertlarga olib keldi.
@@ -106,7 +117,7 @@ def urlhaus_enabled() -> bool:
 
 
 def sync_urlhaus(session) -> int:
-    if not urlhaus_enabled() or not urlhaus_configured():
+    if not ip_blocklist_enabled() or not urlhaus_enabled() or not urlhaus_configured():
         return 0
     urls = fetch_recent_urls()
     if urls is None:
@@ -127,7 +138,7 @@ def sync_urlhaus(session) -> int:
 
 
 def sync_threatfox(session) -> int:
-    if not threatfox_configured():
+    if not ip_blocklist_enabled() or not threatfox_configured():
         return 0
     iocs = fetch_recent_iocs()
     if iocs is None:
@@ -185,7 +196,8 @@ def run_once() -> int:
 
 def run_loop(interval_seconds: int = THREAT_INTEL_POLL_INTERVAL):
     logger.info(
-        f"Threat Intel sync tsiklda ishga tushdi (URLhaus: {urlhaus_configured()}, "
+        f"Threat Intel sync tsiklda ishga tushdi (IP/domen blocklist: {ip_blocklist_enabled()}, "
+        f"URLhaus: {urlhaus_configured()}, "
         f"ThreatFox: {threatfox_configured()}, interval: {interval_seconds}s)"
     )
     while True:

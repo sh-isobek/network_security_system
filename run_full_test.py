@@ -7819,6 +7819,7 @@ def _test_threat_intel_sync():
 
     for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY", "URLHAUS_ENABLED"]:
         os.environ.pop(k, None)
+    os.environ["IP_BLOCKLIST_ENABLED"] = "true"   # IP/domen blocklist standart holatda o'chiq - bu test uni ataylab yoqadi
 
     try:
         # 1) Auth-Key sozlanmagan holatda - tarmoqqa UMUMAN chiqmasligi kerak
@@ -7899,7 +7900,7 @@ def _test_threat_intel_sync():
             added2 = tis.run_once()
         assert added2 == 0, f"ikkinchi chaqiruvda takroriy yozuv qo'shilmasligi kerak edi, {added2} ta qo'shdi"
     finally:
-        for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY", "URLHAUS_ENABLED"]:
+        for k in ["URLHAUS_AUTH_KEY", "THREATFOX_AUTH_KEY", "URLHAUS_ENABLED", "IP_BLOCKLIST_ENABLED"]:
             os.environ.pop(k, None)
 
 
@@ -7926,6 +7927,7 @@ def _test_threat_intel_skips_shared_platforms():
     assert not tis.is_shared_platform_host("update.googlecert.help")
 
     os.environ["URLHAUS_AUTH_KEY"] = "test-urlhaus-key"; os.environ["URLHAUS_ENABLED"] = "true"
+    os.environ["IP_BLOCKLIST_ENABLED"] = "true"
     os.environ.pop("THREATFOX_AUTH_KEY", None)
     try:
         resp = MagicMock()
@@ -7943,7 +7945,7 @@ def _test_threat_intel_skips_shared_platforms():
         assert s.query(BlacklistEntry).filter(BlacklistEntry.value == "sharedplatform-test-evil.example").first() is not None, "haqiqiy zararli host qo'shilishi kerak"
         s.close()
     finally:
-        os.environ.pop("URLHAUS_AUTH_KEY", None); os.environ.pop("URLHAUS_ENABLED", None)
+        os.environ.pop("URLHAUS_AUTH_KEY", None); os.environ.pop("URLHAUS_ENABLED", None); os.environ.pop("IP_BLOCKLIST_ENABLED", None)
 
 
 check("Threat Intelligence: umumiy platformalar (github.com va h.k.) blacklist'ga kirmaydi", _test_threat_intel_skips_shared_platforms)
@@ -7995,6 +7997,55 @@ def _test_threatfox_hash_iocs_to_hash_blacklist():
 
 
 check("Threat Intelligence: ThreatFox sha256 IOC -> mahalliy hash_blacklist (idempotent)", _test_threatfox_hash_iocs_to_hash_blacklist)
+
+
+def _test_ip_blocklist_disabled_by_default_hashes_still_sync():
+    """
+    Foydalanuvchi qarori ("bloklistni butunlay olib tashla" -> faqat IP/domen): ThreatFox IP ro'yxati
+    Google kabi umumiy bulut IP'larini ham bergani uchun 7 kunda 1852 ta soxta HIGH alert bo'lgan.
+    Standart holatda (IP_BLOCKLIST_ENABLED o'rnatilmagan) ThreatFox'dan IP/domen `blacklist`ga
+    YOZILMASLIGI, lekin sha256 hashlar `hash_blacklist`ga yozilishda DAVOM etishi kerak.
+    """
+    from unittest.mock import MagicMock, patch
+    from db.models import BlacklistEntry, HashBlacklist
+    import threat_intel.threatfox_feed as tf
+    import engine.threat_intel_sync as tis
+    os.environ["THREATFOX_AUTH_KEY"] = "test-threatfox-key"
+    for k in ("IP_BLOCKLIST_ENABLED", "URLHAUS_ENABLED"):
+        os.environ.pop(k, None)
+    sha = "cd34" * 16
+    try:
+        assert tis.ip_blocklist_enabled() is False, "IP/domen blocklist standart holatda O'CHIQ bo'lishi kerak"
+        resp = MagicMock(); resp.raise_for_status = lambda: None
+        resp.json.return_value = {"query_status": "ok", "data": [
+            {"ioc": "142.251.20.132:443", "ioc_type": "ip:port", "malware_printable": "Cobalt Strike", "confidence_level": 75},
+            {"ioc": "ipblocklist-off-test.example", "ioc_type": "domain", "malware_printable": "Dridex", "confidence_level": 50},
+            {"ioc": sha, "ioc_type": "sha256_hash", "malware_printable": "Lumma"},
+        ]}
+        with patch.object(tf.requests, "post", return_value=resp):
+            tis.run_once()
+        s = get_session()
+        assert s.query(BlacklistEntry).filter(BlacklistEntry.value.in_(["142.251.20.132", "ipblocklist-off-test.example"])).count() == 0, \
+            "IP/domen blocklist o'chiq bo'lsa, blacklist jadvaliga hech narsa yozilmasligi kerak"
+        assert s.query(HashBlacklist).filter(HashBlacklist.sha256 == sha).count() == 1, \
+            "fayl hashlari IP blocklist'dan MUSTAQIL ravishda sinxronlanishi kerak"
+        s.close()
+
+        # Bo'sh blacklist bilan Google IP'ga ulanish endi HECH QANDAY alert yaratmaydi (real parser_engine orqali)
+        from db.models import RawLog, Alert
+        from engine.parser_engine import run_once as parse_once
+        s = get_session()
+        s.add(RawLog(source_ip="172.16.0.253", raw_message="[Connection] TCP sph-ipbl.synergypharm.org (172.16.77.7):51111 -> 142.251.20.132:443 [Iface] WAN0"))
+        s.commit(); s.close()
+        parse_once()
+        s = get_session()
+        assert s.query(Alert).filter(Alert.reason.ilike("%142.251.20.132%")).count() == 0, "Google IP'ga ulanish alert yaratmasligi kerak"
+        s.close()
+    finally:
+        os.environ.pop("THREATFOX_AUTH_KEY", None)
+
+
+check("Threat Intelligence: IP/domen blocklist standart holatda o'chiq (Google IP soxta-pozitivi), fayl hashlari sinxronlanaveradi", _test_ip_blocklist_disabled_by_default_hashes_still_sync)
 
 # ---------------------------------------------------------------------------
 print("\n=== 101) Heuristik tahlil moduli (entropiya/skript naqshi/kengaytma-nomuvofiqlik/PDF) - 'unknown' hech qachon qolmasin ===")
