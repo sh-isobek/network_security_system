@@ -10186,6 +10186,51 @@ def _test_agent_only_downloads_and_telegram():
 
 check("Agent: faqat barcha profillardagi Downloads+Telegram papkalari tekshiriladi (Desktop/boshqa disklar - yo'q), yangi profil avtomatik qo'shiladi", _test_agent_only_downloads_and_telegram)
 
+
+def _test_corporate_design_shell():
+    """
+    Korporativ dizayn (design/corporate-ui): yangi shell barcha sahifalarda
+    ishlashi, breadcrumb joriy bo'limni ko'rsatishi, admin menyusi viewer'ga
+    ko'rinmasligi va MFA tasdiqlash sahifasida til tanlagich (UZ/RU)
+    saqlanib qolishi (dizayn branch'ida u tushib qolgan edi).
+    """
+    from dashboard import app as dash_app
+    from dashboard.create_user import create_user
+
+    create_user("design_shell_admin", "designshellpass123", "admin")
+    create_user("design_shell_viewer", "designshellpass123", "viewer")
+    dash_app.app.secret_key = "test-secret-design-shell"
+
+    client = _dash_client(dash_app.app)
+    client.post("/login", data={"username": "design_shell_admin", "password": "designshellpass123"})
+    for path in ("/", "/alerts", "/incidents", "/devices", "/agent-coverage", "/asset-inventory",
+                 "/web-activity", "/files", "/users", "/api-tokens", "/audit", "/live-map", "/mfa/setup"):
+        r = client.get(path)
+        assert r.status_code == 200, f"{path} -> {r.status_code}"
+    html = client.get("/devices").get_data(as_text=True)
+    assert '<aside class="sidebar">' in html and "<strong>Qurilmalar</strong>" in html, \
+        "Breadcrumb joriy bo'limni (Qurilmalar) ko'rsatishi kerak edi"
+
+    viewer = _dash_client(dash_app.app)
+    viewer.post("/login", data={"username": "design_shell_viewer", "password": "designshellpass123"})
+    html = viewer.get("/").get_data(as_text=True)
+    assert 'href="/users"' not in html and 'href="/agent-coverage"' not in html, \
+        "Viewer admin menyusini ko'rmasligi kerak"
+
+    s = get_session()
+    uid = s.query(User).filter(User.username == "design_shell_admin").first().id
+    s.close()
+    pending = _dash_client(dash_app.app)
+    with pending.session_transaction() as sess:
+        sess["pending_mfa_user_id"] = uid
+    r = pending.get("/mfa/verify")
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and "auth-language" in html and "language_url" not in html, \
+        "MFA tasdiqlash sahifasida til tanlagich (UZ/RU) bo'lishi kerak"
+
+
+check("Dizayn: yangi shell barcha sahifalarda, breadcrumb, viewer menyusi, MFA sahifasida til tanlagich", _test_corporate_design_shell)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
