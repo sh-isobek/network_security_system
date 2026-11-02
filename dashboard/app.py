@@ -15,6 +15,7 @@ tavsiflangan. Boshlang'ich admin foydalanuvchini yaratish:
 Ishga tushirish:
     python -m dashboard.app
 """
+import mimetypes
 import os
 import secrets
 import sys
@@ -47,6 +48,10 @@ from dashboard.i18n import SUPPORTED_LANGUAGES, translate_html
 def _device_online_cutoff():
     """Qurilma 'onlayn/tarmoqqa ulangan' hisoblanishi uchun eng eski last_seen chegarasi."""
     return utcnow() - timedelta(minutes=DEVICE_OFFLINE_THRESHOLD_MINUTES)
+
+# Slim Docker image'da .woff2 uchun MIME turi yo'q - mahalliy shriftlar
+# (static/fonts) application/octet-stream bo'lib ketmasligi uchun.
+mimetypes.add_type("font/woff2", ".woff2")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("DASHBOARD_SECRET_KEY", "")

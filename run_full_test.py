@@ -10265,6 +10265,7 @@ def _test_fonts_served_locally():
         assert "://" not in f, f"fonts.css tashqi manzilga ishora qilyapti: {f}"
         resp = client.get("/static/fonts/" + f)
         assert resp.status_code == 200 and resp.data[:4] == b"wOF2", f"{f} berilmadi yoki woff2 emas"
+        assert resp.mimetype == "font/woff2", f"{f} MIME turi xato: {resp.mimetype}"
         resp.close()
 
 
