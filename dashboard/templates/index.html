@@ -24,7 +24,7 @@
     <tr>
         <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
-        <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
+        <td><span class="badge badge--{{ a.severity | lower }}">{{ a.severity | upper }}</span></td>
         <td>{{ a.hostname or a.ip_address or 'Nomalum' }}</td>
         <td>{{ (a.reason or '')[:80] }}{% if (a.reason or '')|length > 80 %}...{% endif %}</td>
         <td class="mono">{% if a.mitre_technique_id %}{{ a.mitre_technique_id }}{% endif %}</td>
