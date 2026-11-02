@@ -160,3 +160,30 @@ haqiqiy client sertifikat bilan muvaffaqiyatli o'tishi; mTLS
 yoqilganda ham Dashboard'ning oddiy TLS bilan ishlashda davom etishi.
 
 Ham SQLite, ham PostgreSQL'da tasdiqlangan.
+
+## 8. Bosqichma-bosqich o'tish (agentlar uzilmasdan) - production'da qo'llangan
+
+Production'da agentlar `http://<server>:8443` orqali ishlardi. nginx'ni
+o'sha 8443 portga qo'yish barcha agentlarni BIR LAHZADA uzardi, shuning
+uchun o'tish bosqichma-bosqich:
+
+1. **Server** (`.env`): `AGENT_API_TLS_PORT=9443` va `COMPOSE_PROFILES=tls`.
+   nginx TLS 9443'da, `agent_api` esa hali 8443'da HTTP bilan ishlaydi.
+   `agent_api` `X-Real-IP`ga FAQAT nginx konteyneridan kelgan so'rovda
+   ishonadi (`api/server.py::TrustedProxyRealIP`).
+2. **Agent paketi** (1.0.27+): `agent-ca.crt` (faqat sertifikat, kalit
+   serverda qoladi) va `AgentTls.ps1`. Deploy `https://<.env'dagi host>:9443/api/v1/health`ni
+   shu CA bilan tekshiradi va FAQAT muvaffaqiyatli bo'lsa `API_SERVER_URL`
+   va `AGENT_CA_BUNDLE_FILE`ni o'rnatadi; aks holda agent HTTP'da qoladi.
+   CA Windows "Trusted Root" do'koniga QO'SHILMAYDI - unga faqat agent
+   jarayonlari ishonadi (aks holda CA kaliti bilan har qanday sayt uchun
+   soxta sertifikat yasash mumkin bo'lardi). CI (`build-windows-agent.yml`)
+   buni haqiqiy Windows PowerShell 5.1 va Python agent bilan tekshiradi.
+3. **Barcha agentlar o'tgach** (nginx access log'da ko'rinadi, Dashboard'da
+   agent versiyasi 1.0.27+): SYSVOL `.env`da `API_SERVER_URL=https://<server>:9443`
+   va server `.env`da `AGENT_API_HOST_IP=127.0.0.1` - HTTP 8443 LAN'dan yopiladi.
+
+CA qayta yaratilsa (`deploy/pki/certs/ca.key` yo'qolsa), yangi `ca.crt`ni
+`deploy/windows_agent_gpo/agent-ca.crt`ga nusxalab, agent versiyasini
+ko'tarish SHART - aks holda HTTPS'dagi agentlar serverga ishonmay qoladi.
+`deploy/pki/certs/ca.key` zaxirasini xavfsiz joyda saqlang.
