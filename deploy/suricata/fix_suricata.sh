@@ -24,12 +24,18 @@ echo "== 1/4 suricata.yaml"
 cp -a "$CONF" "$CONF.bak-$STAMP"
 echo "   zaxira: $CONF.bak-$STAMP"
 python3 "$HERE/configure_suricata.py" "$CONF" "$CONF.new"
-if ! suricata -T -c "$CONF.new" >/tmp/suricata-configtest.log 2>&1; then
+# -T ham chiqish fayllarini ochadi: haqiqiy /var/log/suricata'da (u yerda
+# hali soxta eve.json papkasi bo'lishi mumkin; root yaratgan eve.json'ga esa
+# keyin `suricata` foydalanuvchisi yoza olmaydi) emas, vaqtinchalik papkada.
+TESTDIR="$(mktemp -d)"
+if ! suricata -T -c "$CONF.new" -l "$TESTDIR" >"$TESTDIR/configtest.log" 2>&1; then
     echo "   XATO: yangi sozlama tekshiruvdan o'tmadi - o'zgartirilmadi:"
-    tail -n 15 /tmp/suricata-configtest.log
+    tail -n 15 "$TESTDIR/configtest.log"
     rm -f "$CONF.new"
+    rm -rf "$TESTDIR"
     exit 1
 fi
+rm -rf "$TESTDIR"
 chown --reference="$CONF" "$CONF.new"
 chmod --reference="$CONF" "$CONF.new"
 mv "$CONF.new" "$CONF"
