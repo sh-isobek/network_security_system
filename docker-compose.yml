@@ -18,6 +18,21 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    # Xotira sozlamalari (standart shared_buffers=128MB ~50 GB baza va HDD
+    # disk uchun juda kichik edi - dashboard/engine so'rovlari diskdan
+    # o'qirdi). Server: 15 GB RAM, boshqa xizmatlar bilan bo'lishiladi.
+    # shm_size: parallel so'rovlar /dev/shm ishlatadi (Docker standarti 64MB).
+    shm_size: 1gb
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-3GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-10GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-512MB}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-security_system}
       POSTGRES_USER: ${POSTGRES_USER:-security_admin}

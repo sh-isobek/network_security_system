@@ -10390,6 +10390,27 @@ def _test_dashboard_speed_fixes():
 
 check("Tezlik: /files noyob son bir marta+kesh, / hodisalar soni keshi, Live Map PTR qayta kutmaydi", _test_dashboard_speed_fixes)
 
+
+def _test_postgres_memory_tuning_compose():
+    """
+    Production'da PostgreSQL standart shared_buffers=128MB bilan ishlardi
+    (~50 GB baza, HDD). docker-compose.yml postgres xizmati xotira
+    sozlamalarini va parallel so'rovlar uchun kattaroq /dev/shm'ni berishi shart.
+    """
+    import yaml
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docker-compose.yml")
+    with open(path, encoding="utf-8") as fh:
+        pg = yaml.safe_load(fh)["services"]["postgres"]
+    cmd = " ".join(str(x) for x in pg.get("command", []))
+    assert cmd.startswith("postgres "), cmd
+    for key in ("shared_buffers=", "effective_cache_size=", "work_mem=", "maintenance_work_mem="):
+        assert key in cmd, f"postgres command'da {key} yo'q"
+    assert "${PG_SHARED_BUFFERS:-3GB}" in cmd
+    assert str(pg.get("shm_size", "")).lower() in ("1gb", "1g"), pg.get("shm_size")
+
+
+check("PostgreSQL: docker-compose xotira sozlamalari (shared_buffers 3GB, shm 1GB)", _test_postgres_memory_tuning_compose)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
