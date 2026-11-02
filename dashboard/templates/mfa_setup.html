@@ -5,28 +5,28 @@
 
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-        <div style="padding: 8px 12px; border-radius: 5px; font-size: 13px; margin-bottom: 12px; background: {% if category == 'error' %}#fdecea; color: #c0392b{% else %}#eafaf1; color: #27ae60{% endif %};">{{ message }}</div>
+        <div class="flash {{ category }}">{{ message }}</div>
     {% endfor %}
 {% endwith %}
 
 {% if already_enabled %}
-<div class="surface-card" style="background: #fff; padding: 24px; border-radius: 6px; max-width: 420px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-    <p style="color: #27ae60; font-weight: 600; margin-bottom: 16px;">✅ MFA sizning hisobingiz uchun yoqilgan</p>
+<div class="surface-card form-card">
+    <p class="status-ok">MFA sizning hisobingiz uchun yoqilgan</p>
     <form method="POST" action="/mfa/disable">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="btn btn-danger" type="submit">MFA'ni o'chirish</button>
     </form>
 </div>
 {% else %}
-<div class="surface-card" style="background: #fff; padding: 24px; border-radius: 6px; max-width: 420px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+<div class="surface-card form-card">
     <p style="margin-bottom: 16px;">1. Google Authenticator, Microsoft Authenticator yoki shunga o'xshash ilova bilan quyidagi QR-kodni skanerlang:</p>
     <img src="{{ qr_data_uri }}" alt="MFA QR kod" style="display: block; margin: 0 auto 16px;">
-    <p style="font-size: 12px; color: #65748b; margin-bottom: 16px;">Qo'lda kiritish uchun kalit: <code style="background:#f4f6f8; padding:2px 6px; border-radius:3px;">{{ secret }}</code></p>
+    <p class="page-lede tight">Qo'lda kiritish uchun kalit: <code>{{ secret }}</code></p>
     <p style="margin-bottom: 8px;">2. Ilovada ko'rsatilgan 6 xonali kodni kiriting:</p>
     <form method="POST">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required
-               style="width:100%; padding:10px; border:1px solid #dde3e8; border-radius:4px; font-size:18px; text-align:center; letter-spacing:4px; margin-bottom:12px;">
+        <input class="mfa-code" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required
+              >
         <button class="btn btn-primary" type="submit" style="width:100%">Yoqish</button>
     </form>
 </div>
