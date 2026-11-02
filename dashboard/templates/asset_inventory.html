@@ -2,7 +2,7 @@
 {% block title %}Asset Inventory - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
 <h1>Asset Inventory ({{ devices | length }})</h1>
-<p style="font-size:13px; color:#5a6673; margin-bottom:14px;">
+<p class="page-lede">
     Network Discovery orqali (ARP/ICMP/SNMP/TCP scan) aniqlangan qurilmalar.
     Yangilash: <code>python -m network_discovery.asset_inventory --cidr ... --interface ...</code>
 </p>
@@ -62,14 +62,14 @@
         <td>{{ d.hostname or '-' }}</td>
         <td>
             {% set type_colors = {'switch': '#3498db', 'router': '#9b59b6', 'printer': '#16a085', 'ups': '#e67e22', 'server': '#c0392b', 'workstation': '#7f8c8d'} %}
-            <span class="badge" style="background: {{ type_colors.get(d.device_type, '#95a5a6') }};">{{ d.device_type }}</span>
+            <span class="badge badge--type badge--type-{{ d.device_type }}">{{ d.device_type }}</span>
         </td>
         <td>{{ d.vendor or '-' }}</td>
         <td>{{ d.os_guess or '-' }}</td>
         <td class="mono">{{ d.discovery_source }}</td>
         <td>
             {% if d.open_ports %}
-            {% for p in d.open_ports[:5] %}<span class="mono" style="font-size:11px; background:#f4f6f8; padding:1px 5px; border-radius:3px; margin-right:3px;">{{ p.port }}/{{ p.service or '?' }}</span>{% endfor %}
+            {% for p in d.open_ports[:5] %}<span class="mono port-chip">{{ p.port }}/{{ p.service or '?' }}</span>{% endfor %}
             {% else %}-{% endif %}
         </td>
         <td class="mono">{{ d.last_discovered_at | local_dt('%Y-%m-%d %H:%M') }}</td>
@@ -87,7 +87,7 @@
     {% for t in topology %}
     <tr>
         <td class="mono">{{ loop.index }}</td>
-        <td><span class="badge" style="background: {% if t.protocol == 'lldp' %}#3498db{% else %}#16a085{% endif %};">{{ t.protocol | upper }}</span></td>
+        <td><span class="badge badge--{{ t.protocol | lower }}">{{ t.protocol | upper }}</span></td>
         <td>{{ t.neighbor_system_name or '-' }}</td>
         <td class="mono">{{ t.neighbor_chassis_id or '-' }}</td>
         <td class="mono">{{ t.neighbor_port_id or '-' }}</td>
