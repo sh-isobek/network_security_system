@@ -76,7 +76,7 @@ def _submit(ip: str):
     return fut, True
 
 
-def resolve_ptr_batch(ips) -> dict:
+def resolve_ptr_batch(ips, wait_seconds=None) -> dict:
     """Berilgan IP'lar uchun {ip: hostname_yoki_None} qaytaradi.
 
     Keshda (hali muddati o'tmagan) bo'lganlar darhol qaytadi. Yo'q
@@ -84,6 +84,9 @@ def resolve_ptr_batch(ips) -> dict:
     `_WAIT_TIMEOUT_SECONDS` ichida kelmasa, o'sha IP natijada yo'q
     (chaqiruvchi buni "hozircha nomalum" deb, xom IP bilan ko'rsatishi
     kerak) - fon so'rovi baribir davom etadi, keshga keyinroq tushadi.
+
+    `wait_seconds=0` - umuman kutmaydi: faqat keshdagi natijalar
+    qaytadi, yangi IP'lar uchun so'rov fonda yuboriladi.
     """
     now = time.time()
     result = {}
@@ -112,7 +115,8 @@ def resolve_ptr_batch(ips) -> dict:
             futures[fut] = ip
     if not futures:
         return result
-    done, _pending = concurrent.futures.wait(futures, timeout=_WAIT_TIMEOUT_SECONDS)
+    timeout = _WAIT_TIMEOUT_SECONDS if wait_seconds is None else wait_seconds
+    done, _pending = concurrent.futures.wait(futures, timeout=timeout)
     for fut in done:
         ip = futures[fut]
         try:

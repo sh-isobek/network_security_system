@@ -10317,6 +10317,28 @@ def _test_dashboard_speed_fixes():
         ptr_lookup._CACHE.clear()
         ptr_lookup._PENDING.clear()
 
+    # wait_seconds=0 (Live Map ro'yxati): umuman kutmaydi, natija fonda keshga tushadi
+    gate = _threading.Event()
+
+    def gated_lookup(ip):
+        gate.wait(timeout=10)
+        return "fon.example"
+
+    with patch.object(ptr_lookup, "_lookup_one", side_effect=gated_lookup):
+        t0 = _time.monotonic()
+        assert ptr_lookup.resolve_ptr_batch(["203.0.113.8"], wait_seconds=0) == {}
+        assert _time.monotonic() - t0 < 0.3, "wait_seconds=0 kutmasligi kerak edi"
+        gate.set()
+        for _ in range(50):
+            with ptr_lookup._CACHE_LOCK:
+                if "203.0.113.8" in ptr_lookup._CACHE:
+                    break
+            _time.sleep(0.05)
+        assert ptr_lookup.resolve_ptr_batch(["203.0.113.8"], wait_seconds=0) == {"203.0.113.8": "fon.example"}
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+
     # 2) Noyob SHA256 soni yangi (tezroq) so'rov bilan ham AYNAN to'g'ri
     s = get_session()
     s.add_all([

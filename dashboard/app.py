@@ -1401,8 +1401,12 @@ def api_topology():
             event.dest_ip for event, _device, _raw_message in connection_rows
             if not event.dest_domain and event.dest_ip
         })
+        # Ro'yxatdagi so'nggi ulanishlarda har 15 soniyada YANGI IP'lar
+        # bo'ladi - ular uchun PTR kutilmaydi (har so'rov +1.5 s edi):
+        # keshdagi nom darhol, qolganlari fonda aniqlanib, keyingi
+        # yangilanishda ko'rinadi.
         connection_ptr_map = (
-            ptr_lookup.resolve_ptr_batch(connection_ips_needing_ptr)
+            ptr_lookup.resolve_ptr_batch(connection_ips_needing_ptr, wait_seconds=0)
             if connection_ips_needing_ptr else {}
         )
         connections = []
