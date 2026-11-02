@@ -126,6 +126,10 @@ jobs:
           # jarayonida ishonishini, begona CA va noto'g'ri nomni rad etishini
           # haqiqiy Windows PowerShell 5.1 va haqiqiy TLS serverlari bilan tekshiradi.
           # Xato tafsilotlari ::error:: izohi sifatida chiqadi (loglarsiz ham ko'rinadi).
+          # Actions 'Stop' qo'yadi - PS 5.1'da native stderr'ni (openssl) yo'naltirish
+          # shunda butun qadamni to'xtatardi; chiqish kodlarini o'zimiz tekshiramiz.
+          $ErrorActionPreference = 'Continue'
+          trap { Write-Host "::error title=Agent HTTPS test (kutilmagan xato)::$($_ | Out-String)"; exit 1 }
           $certs = Join-Path $env:RUNNER_TEMP "agent-tls"
           New-Item -ItemType Directory -Force -Path $certs | Out-Null
           function Fail([string]$title, [string]$logFile) {
