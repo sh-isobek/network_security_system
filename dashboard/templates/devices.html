@@ -4,17 +4,17 @@
 <h1>Barcha qurilmalar ({{ total_count }})</h1>
 
 <div class="summary-grid">
-    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700;">{{ total_count }}</div>
-        <div style="font-size: 12px; color: #65748b;">Jami qurilmalar</div>
+    <div class="surface-card">
+        <div class="stat-value">{{ total_count }}</div>
+        <div class="stat-label">Jami qurilmalar</div>
     </div>
-    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #27ae60;">{{ online_count }}</div>
-        <div style="font-size: 12px; color: #65748b;">Tarmoqqa ulangan (onlayn)</div>
+    <div class="surface-card">
+        <div class="stat-value text-green">{{ online_count }}</div>
+        <div class="stat-label">Tarmoqqa ulangan (onlayn)</div>
     </div>
-    <div class="surface-card" style="background: #fff; padding: 18px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div style="font-size: 26px; font-weight: 700; color: #65748b;">{{ offline_count }}</div>
-        <div style="font-size: 12px; color: #65748b;">Uzilgan (offlayn)</div>
+    <div class="surface-card">
+        <div class="stat-value muted">{{ offline_count }}</div>
+        <div class="stat-label">Uzilgan (offlayn)</div>
     </div>
 </div>
 
@@ -78,7 +78,7 @@
 {% if stale_count > 0 and not show_stale %}
 {% set sargs = request.args.to_dict() %}
 {% set _ = sargs.update({'show_stale': '1'}) %}
-<div style="background: #fdf6e3; border: 1px solid #f1c40f; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px;">
+<div class="note note--info">
     {{ stale_count }} ta qurilma {{ stale_hide_hours }}+ soatdan beri ko'rinmagani uchun ro'yxatdan yashirilgan
     (tarixi bazada saqlanmoqda).
     <a href="{{ url_for('devices', **sargs) }}">Ularni ham ko'rsatish</a>
@@ -113,24 +113,24 @@
             {% elif d.agent_status == 'offline' %}
             <span class="badge-soft badge-soft-red">OFFLINE</span>
             {% else %}
-            <span style="color: #65748b;">o'rnatilmagan</span>
+            <span class="muted">o'rnatilmagan</span>
             {% endif %}
             {% if d.agent_last_heartbeat %}
-            <div style="font-size:11px; color: #65748b; margin-top:2px;">
+            <div class="meta-line">
                 {{ d.agent_os or '' }} {{ d.agent_version or '' }} &middot; {{ d.agent_last_heartbeat | local_dt }}
             </div>
             {% endif %}
             {% set rs = d.agent_restart_status %}
             {% if rs in ('pending', 'picked_up', 'restarted') %}
-            <div class="restart-status" data-restart-poll="{{ d.id }}" style="font-size:11px; color:#e67e22; margin-top:4px;">
-                ⏳ Qayta ulanish so'ralgan ({{ d.agent_restart_requested_at | local_dt('%H:%M:%S') }})...
+            <div class="restart-status meta-line text-amber" data-restart-poll="{{ d.id }}">
+                Qayta ulanish so'ralgan ({{ d.agent_restart_requested_at | local_dt('%H:%M:%S') }})...
             </div>
             {% elif d.restart_success_recent %}
-            <div style="font-size:11px; color:#27ae60; margin-top:4px;">✅ Qayta ulandi ({{ d.agent_restart_finished_at | local_dt('%H:%M:%S') }})</div>
+            <div class="meta-line text-green">Qayta ulandi ({{ d.agent_restart_finished_at | local_dt('%H:%M:%S') }})</div>
             {% else %}
             {% if rs == 'failed' and d.agent_status == 'offline' %}
-            <div style="font-size:11px; color:#c0392b; margin-top:4px; max-width:260px;" title="{{ d.agent_restart_message }}">
-                ❌ Ulanmadi ({{ d.agent_restart_finished_at | local_dt('%H:%M:%S') }}): {{ d.agent_restart_message }}
+            <div class="meta-line text-red" title="{{ d.agent_restart_message }}">
+                Ulanmadi ({{ d.agent_restart_finished_at | local_dt('%H:%M:%S') }}): {{ d.agent_restart_message }}
             </div>
             {% endif %}
             {% if d.agent_status == 'offline' and current_user.role in ('analyst', 'admin') %}
@@ -143,18 +143,18 @@
         </td>
         <td>
             {% if d.alert_count > 0 %}
-            <span class="badge" style="background: #c0392b;">{{ d.alert_count }}</span>
+            <span class="badge badge--critical">{{ d.alert_count }}</span>
             {% else %}0{% endif %}
         </td>
         <td>
             {% if d.risk_score >= 70 %}
-            <span class="badge" style="background: #c0392b;">{{ d.risk_score }}</span>
+            <span class="badge badge--critical">{{ d.risk_score }}</span>
             {% elif d.risk_score >= 30 %}
-            <span class="badge" style="background: #e67e22;">{{ d.risk_score }}</span>
+            <span class="badge badge--high">{{ d.risk_score }}</span>
             {% elif d.risk_score > 0 %}
-            <span class="badge" style="background: #f1c40f;">{{ d.risk_score }}</span>
+            <span class="badge badge--medium">{{ d.risk_score }}</span>
             {% else %}
-            <span style="color: #65748b;">0</span>
+            <span class="muted">0</span>
             {% endif %}
         </td>
     </tr>
@@ -164,11 +164,11 @@
 {% if total_pages > 1 %}
 {% set pargs = request.args.to_dict() %}
 {% set _ = pargs.pop('page', None) %}
-<div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+<div class="pager">
     {% if page > 1 %}
     <a href="{{ url_for('devices', page=page - 1, **pargs) }}">&laquo; Oldingi</a>
     {% endif %}
-    <span style="color: #65748b; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta qurilma)</span>
+    <span class="pager-info">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta qurilma)</span>
     {% if page < total_pages %}
     <a href="{{ url_for('devices', page=page + 1, **pargs) }}">Keyingi &raquo;</a>
     {% endif %}
