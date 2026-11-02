@@ -3,11 +3,11 @@
 {% block content %}
 <p><a href="/incidents">&laquo; Hodisalar ro'yxatiga qaytish</a></p>
 <h1>
-    <span class="badge" style="background: {{ incident.severity | severity_color }}">{{ incident.severity | upper }}</span>
+    <span class="badge badge--{{ incident.severity | lower }}">{{ incident.severity | upper }}</span>
     {{ incident.title }}
 </h1>
 
-<div class="surface-card" style="background:#fff; padding:16px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:18px;">
+<div class="surface-card detail-card">
     <p><strong>Qurilma:</strong> {{ incident.hostname or incident.ip_address or "Noma'lum" }}</p>
     <p><strong>Birinchi ko'rilgan:</strong> {{ incident.first_seen | local_dt(fallback='') }}</p>
     <p><strong>Oxirgi faollik:</strong> {{ incident.last_seen | local_dt(fallback='') }}</p>
@@ -24,8 +24,8 @@
     <tr>
         <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
-        <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
-        <td style="max-width: 420px; white-space: pre-line;">{{ a.reason }}</td>
+        <td><span class="badge badge--{{ a.severity | lower }}">{{ a.severity | upper }}</span></td>
+        <td class="cell-detail">{{ a.reason }}</td>
         <td class="mono" title="{{ a.mitre_technique_name }} ({{ a.mitre_tactic }})">
             {% if a.mitre_technique_id %}{{ a.mitre_technique_id }}{% else %}-{% endif %}
         </td>
