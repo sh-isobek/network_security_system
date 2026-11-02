@@ -2,16 +2,16 @@
 {% block title %}Alertlar - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
 {% macro decision_buttons(sha, current) %}
-{% if current == 'safe' %}<span style="color:#27ae60; font-size:12px;">✅ Virus emas (admin)</span>
-{% elif current == 'malicious' %}<span style="color:#c0392b; font-size:12px;">🛑 Virus (admin)</span>
+{% if current == 'safe' %}<span class="status-ok">✅ Virus emas (admin)</span>
+{% elif current == 'malicious' %}<span class="status-bad">🛑 Virus (admin)</span>
 {% elif current_user.role in ('analyst', 'admin') %}
-<form method="POST" action="/files/decision" style="display:flex; gap:4px; flex-direction:column;">
+<form method="POST" action="/files/decision">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="sha256" value="{{ sha }}">
     <button class="btn btn-danger" name="decision" value="malicious" type="submit" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
     <button class="btn btn-success" name="decision" value="safe" type="submit">Virus emas</button>
 </form>
-{% else %}<span style="color: #65748b; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
+{% else %}<span class="status-idle">⏳ Admin qarori kutilmoqda</span>{% endif %}
 {% endmacro %}
 <h1>Barcha alertlar ({{ alerts | length }})</h1>
 
@@ -21,11 +21,11 @@
     <a href="/alerts?severity=high" class="{% if severity_filter == 'high' %}active{% endif %}">High</a>
     <a href="/alerts?severity=medium" class="{% if severity_filter == 'medium' %}active{% endif %}">Medium</a>
     <a href="/alerts?severity=low" class="{% if severity_filter == 'low' %}active{% endif %}">Low</a>
-    <span style="float: right;">
-        <a href="/reports/download?period_days=7&format=csv">📥 CSV (7 kun)</a>
-        <a href="/reports/download?period_days=7&format=json">📥 JSON (7 kun)</a>
-        <a href="/reports/download?period_days=7&format=pdf">📥 PDF (7 kun)</a>
-        <a href="/reports/download?period_days=30&format=excel">📥 Excel (30 kun)</a>
+    <span class="filters-extras">
+        <a href="/reports/download?period_days=7&format=csv">CSV (7 kun)</a>
+        <a href="/reports/download?period_days=7&format=json">JSON (7 kun)</a>
+        <a href="/reports/download?period_days=7&format=pdf">PDF (7 kun)</a>
+        <a href="/reports/download?period_days=30&format=excel">Excel (30 kun)</a>
     </span>
 </div>
 
@@ -60,15 +60,15 @@
     <tr>
         <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ a.timestamp | local_dt(fallback='') }}</td>
-        <td><span class="badge" style="background: {{ a.severity | severity_color }}">{{ a.severity | upper }}</span></td>
+        <td><span class="badge badge--{{ a.severity | lower }}">{{ a.severity | upper }}</span></td>
         <td>{{ a.hostname or 'Nomalum' }}</td>
         <td class="mono">{{ a.ip_address or '-' }}</td>
-        <td style="max-width: 320px; white-space: pre-line;">{{ a.reason }}</td>
+        <td class="cell-detail">{{ a.reason }}</td>
         <td class="mono" title="{{ a.mitre_technique_name }} ({{ a.mitre_tactic }})">
             {% if a.mitre_technique_id %}{{ a.mitre_technique_id }}{% else %}-{% endif %}
         </td>
         <td>{{ a.action_taken }}</td>
-        <td>{% if a.notified %}✅{% else %}⏳{% endif %}</td>
+        <td>{% if a.notified %}<span class="mark mark-ok" role="img" aria-label="Yuborilgan"></span>{% else %}<span class="mark mark-wait" role="img" aria-label="Kutilmoqda"></span>{% endif %}</td>
         <td>
             {% if a.show_decision %}{{ decision_buttons(a.file_sha256, a.file_decision) }}{% else %}-{% endif %}
         </td>
