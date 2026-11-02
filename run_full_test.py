@@ -10411,6 +10411,217 @@ def _test_postgres_memory_tuning_compose():
 
 check("PostgreSQL: docker-compose xotira sozlamalari (shared_buffers 3GB, shm 1GB)", _test_postgres_memory_tuning_compose)
 
+
+def _test_suricata_eve_config_real_engine():
+    """
+    Real production topilmasi: Suricata 18-avgustdan beri eve.json yozmasdi
+    (Docker o'rniga PAPKA yaratib qo'ygan), standart sozlama esa fileinfo'ga
+    SHA256 qo'shmasdi (reader bunday yozuvni tashlab yuboradi) va
+    flow/http/stats kabi keraksiz hodisalarni yozardi. `deploy/suricata/
+    configure_suricata.py`: faqat eve-log va stats bloklarini o'zgartiradi,
+    idempotent. Host'da `suricata` bo'lsa - HAQIQIY Suricata HTTP yuklanishli
+    pcap'ni o'qiydi va eve.json'da faqat SHA256'li fileinfo bo'lishi,
+    suricata_reader esa uni file_events'ga yozishi tekshiriladi.
+    """
+    import json
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    import shutil
+    import subprocess
+    import tempfile
+    sys.path.insert(0, os.path.join(BASE_DIR, "deploy", "suricata"))
+    import configure_suricata
+
+    sample = """%YAML 1.1
+---
+default-log-dir: /var/log/suricata/
+outputs:
+  # fast
+  - fast:
+      enabled: yes
+      filename: fast.log
+  - eve-log:
+      enabled: yes
+      filetype: regular #regular|syslog
+      filename: eve.json
+      types:
+        - alert:
+            tagged-packets: yes
+        - http:
+            extended: yes
+        - files:
+            #force-hash: [md5]
+        - stats:
+            totals: yes
+        - flow
+        # - netflow
+
+  # Stats.log contains data
+  - stats:
+      enabled: yes
+      filename: stats.log
+  - file-store:
+      version: 2
+      enabled: no
+logging:
+  default-file-mode: 0644
+  time: "1:30"
+"""
+    once = configure_suricata.configure(sample)
+    assert configure_suricata.configure(once) == once, "configure_suricata idempotent emas"
+    assert "force-hash: [sha256, md5]" in once and "- flow" not in once and "- http:" not in once
+    assert "  - stats:\n      enabled: no\n" in once
+    assert "  - fast:\n      enabled: yes\n" in once and "default-file-mode: 0644" in once and 'time: "1:30"' in once, \
+        "eve-log/stats'dan tashqaridagi qatorlar o'zgarmasligi kerak"
+    assert "  # Stats.log contains data\n  - stats:" in once
+
+    suricata = shutil.which("suricata")
+    if not suricata:
+        print("   (host'da suricata yo'q - real engine qismi o'tkazib yuborildi)")
+        return
+    work = tempfile.mkdtemp(prefix="suricata-eve-test-")
+    try:
+        conf = os.path.join(work, "suricata.yaml")
+        with open(conf, "w") as fh:
+            fh.write(configure_suricata.configure(sample))
+        rules = os.path.join(work, "empty.rules")
+        open(rules, "w").close()
+        for name in ("classification.config", "reference.config", "threshold.config"):
+            open(os.path.join(work, name), "w").close()
+        pcap = os.path.join(work, "http.pcap")
+        expected = subprocess.run([sys.executable, os.path.join(BASE_DIR, "deploy", "suricata", "make_test_pcap.py"), pcap],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        out = os.path.join(work, "out")
+        os.makedirs(out)
+        subprocess.run([suricata, "-c", conf, "-S", rules, "-r", pcap, "-k", "none", "-l", out,
+                        "--set", f"classification-file={work}/classification.config",
+                        "--set", f"reference-config-file={work}/reference.config",
+                        "--set", f"threshold-file={work}/threshold.config",
+                        "--set", f"sgh-mpm-caching-path={out}"],
+                       check=True, capture_output=True, timeout=120)
+        assert not os.path.exists(os.path.join(out, "stats.log")), "stats.log yaratilmasligi kerak edi"
+        with open(os.path.join(out, "eve.json")) as fh:
+            events = [json.loads(line) for line in fh if line.strip()]
+        kinds = {e["event_type"] for e in events}
+        assert kinds == {"fileinfo"}, f"faqat fileinfo kutilgan edi: {kinds}"
+        assert events[0]["fileinfo"]["sha256"] == expected, "Suricata SHA256 hisoblamadi (force-hash)"
+
+        from collectors.suricata_reader import read_existing
+        assert read_existing(os.path.join(out, "eve.json")) == 1
+        s = get_session()
+        fe = s.query(FileEvent).filter(FileEvent.sha256 == expected).first()
+        s.close()
+        assert fe is not None and fe.filename == "setup.exe", "reader real Suricata yozuvini file_events'ga yozmadi"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+check("Suricata: configure_suricata.py + REAL Suricata (pcap) -> eve.json fileinfo SHA256 -> file_events", _test_suricata_eve_config_real_engine)
+
+
+def _test_suricata_reader_follow_robust():
+    """
+    suricata_reader real production'da `IsADirectoryError` bilan cheksiz
+    qayta ishga tushardi (eve.json o'rnida papka). Endi: papka/fayl yo'q
+    bo'lsa kutadi; fayl paydo bo'lganda oxiridan boshlaydi; logrotate
+    (yangi inode) va qisqartirishdan keyin yangi yozuvlarni o'qiydi;
+    chala qatorni yo'qotmaydi. docker-compose papkani bog'laydi.
+    """
+    import json
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    import shutil
+    import tempfile
+    import threading as _threading
+    import time as _time
+    import yaml
+    from collectors import suricata_reader
+
+    with open(os.path.join(BASE_DIR, "docker-compose.yml"), encoding="utf-8") as fh:
+        svc = yaml.safe_load(fh)["services"]["suricata_reader"]
+    assert "/var/log/suricata:/var/log/suricata:ro" in svc["volumes"], svc["volumes"]
+    assert not any(v.startswith("/var/log/suricata/eve.json") for v in svc["volumes"])
+    assert svc.get("group_add"), "konteynerga suricata guruhi berilmagan"
+
+    def line(sha, name):
+        return json.dumps({"event_type": "fileinfo", "src_ip": "10.254.249.1", "dest_ip": "203.0.113.9",
+                           "proto": "TCP", "fileinfo": {"filename": name, "sha256": sha, "size": 10}}) + "\n"
+
+    def has(sha):
+        s = get_session()
+        try:
+            return s.query(FileEvent).filter(FileEvent.sha256 == sha).first() is not None
+        finally:
+            s.close()
+
+    def wait_for(sha, timeout=5.0):
+        end = _time.monotonic() + timeout
+        while _time.monotonic() < end:
+            if has(sha):
+                return True
+            _time.sleep(0.05)
+        return False
+
+    work = tempfile.mkdtemp(prefix="suricata-follow-")
+    eve = os.path.join(work, "eve.json")
+    os.mkdir(eve)   # production holati: fayl o'rnida papka
+    stop = _threading.Event()
+    errors = []
+
+    def run():
+        try:
+            suricata_reader.follow_file(eve, interval=0.05, stop=stop)
+        except Exception as exc:   # pragma: no cover - aynan shu bo'lmasligi kerak
+            errors.append(exc)
+
+    t = _threading.Thread(target=run, daemon=True)
+    t.start()
+    try:
+        _time.sleep(0.3)
+        assert t.is_alive() and not errors, f"papka holatida reader yiqildi: {errors}"
+        os.rmdir(eve)
+        old_sha = "c1" * 32
+        with open(eve, "w") as fh:
+            fh.write(line(old_sha, "backlog.exe"))   # reader ochishidan OLDIN yozilgan
+        _time.sleep(0.3)
+        a, b, c, d = ("c2" * 32, "c3" * 32, "c4" * 32, "c5" * 32)
+        with open(eve, "a") as fh:
+            fh.write(line(a, "new.exe"))
+        assert wait_for(a), "yangi fayldagi yozuv o'qilmadi"
+        assert not has(old_sha), "eski backlog qayta yozilmasligi kerak (oxiridan boshlash)"
+
+        # Chala qator: ikki bo'lakda yozilsa ham yo'qolmaydi
+        text = line(b, "partial.exe")
+        with open(eve, "a") as fh:
+            fh.write(text[:25]); fh.flush()
+            _time.sleep(0.2)
+            fh.write(text[25:])
+        assert wait_for(b), "ikki bo'lakda yozilgan qator yo'qoldi"
+
+        # logrotate: fayl nomi o'zgartiriladi (eski faylga oxirgi lahzada ham
+        # yoziladi), yangi fayl yaratiladi
+        late = "c6" * 32
+        os.rename(eve, eve + ".1")
+        _time.sleep(0.2)   # yangi fayl hali yo'q oraliq - reader yiqilmasligi/yopmasligi kerak
+        with open(eve + ".1", "a") as fh:
+            fh.write(line(late, "late-old-file.exe"))
+        _time.sleep(0.2)
+        with open(eve, "w") as fh:
+            fh.write(line(c, "rotated.exe"))
+        assert wait_for(c), "logrotate'dan keyingi yangi fayl o'qilmadi"
+        assert wait_for(late), "aylantirilgan eski faylga oxirgi lahzada yozilgan qator yo'qoldi"
+
+        # qisqartirish (copytruncate)
+        with open(eve, "w") as fh:
+            fh.write(line(d, "truncated.exe"))
+        assert wait_for(d), "qisqartirilgan fayldagi yozuv o'qilmadi"
+        assert not errors, errors
+    finally:
+        stop.set()
+        t.join(timeout=3)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+check("Suricata reader: papka/yo'q fayl, logrotate, qisqartirish, chala qator - yiqilmaydi va o'qiydi", _test_suricata_reader_follow_robust)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

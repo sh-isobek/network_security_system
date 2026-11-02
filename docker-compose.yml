@@ -229,11 +229,20 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-security_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-security_system}
+    # Host'dagi /var/log/suricata (0770 suricata:suricata) papkasini o'qish
+    # uchun konteyner foydalanuvchisiga host'ning `suricata` guruhi beriladi
+    # (`getent group suricata` - production'da 115).
+    group_add:
+      - "${SURICATA_LOG_GID:-115}"
     volumes:
-      # Host'dagi Suricata eve.json faylini shu yerga bog'lang (Suricata
-      # o'rnatilmagan/ishga tushirilmagan bo'lsa, bu xizmat shunchaki
-      # faylni kutib turadi - xato bermaydi).
-      - /var/log/suricata/eve.json:/var/log/suricata/eve.json:ro
+      # MUHIM (real production xatosi): avval FAYL bog'lanardi
+      # (/var/log/suricata/eve.json). Suricata hali faylni yaratmagan paytda
+      # Docker host'da shu nomda bo'sh PAPKA yaratib qo'ydi - Suricata
+      # 18-avgustdan beri "Is a directory" xatosi bilan eve.json'ni yoza
+      # olmadi, bu xizmat esa cheksiz qayta ishga tushdi. Endi PAPKA
+      # bog'lanadi: Docker hech narsa yaratmaydi, logrotate almashtirgan
+      # yangi fayl ham konteynerga ko'rinadi. Fayl yo'q bo'lsa, reader kutadi.
+      - /var/log/suricata:/var/log/suricata:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,0 +1,22 @@
+# /etc/logrotate.d/suricata - deploy/suricata/fix_suricata.sh o'rnatadi.
+# Suricata SIGHUP olganda log fayllarini qayta ochadi (rasmiy xatti-harakat),
+# shuning uchun copytruncate kerak emas. suricata_reader yangi faylni
+# (yangi inode) o'zi topib, boshidan o'qiydi.
+/var/log/suricata/eve.json
+/var/log/suricata/fast.log
+/var/log/suricata/stats.log
+/var/log/suricata/suricata.log
+{
+    daily
+    maxsize 1G
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0664 suricata suricata
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP suricata.service >/dev/null 2>&1 || true
+    endscript
+}

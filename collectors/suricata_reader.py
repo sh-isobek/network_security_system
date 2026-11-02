@@ -39,6 +39,7 @@ import argparse
 import json
 import logging
 import os
+import stat
 import sys
 import time
 
@@ -143,33 +144,115 @@ def read_existing(filepath: str):
     return count
 
 
-def follow_file(filepath: str, interval: float = 1.0):
-    """eve.json faylini tail -f uslubida doimiy kuzatadi."""
-    logger.info(f"eve.json kuzatilmoqda: {filepath}")
-    with open(filepath, "r", encoding="utf-8") as f:
-        f.seek(0, os.SEEK_END)  # faylning oxiridan boshlaymiz
-        while True:
-            line = f.readline()
-            if not line:
+def _process_line(line: str):
+    line = line.strip()
+    if not line:
+        return
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return
+    if event.get("event_type") != "fileinfo":
+        return
+    session = get_session()
+    try:
+        process_fileinfo_event(session, event)
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.error(f"Xatolik: {exc}")
+    finally:
+        session.close()
+
+
+def follow_file(filepath: str, interval: float = 1.0, stop=None):
+    """eve.json faylini tail -F uslubida doimiy kuzatadi.
+
+    MUHIM (real production xatosi tuzatilgan): avval fayl yo'q bo'lsa yoki
+    uning o'rnida papka bo'lsa (Docker yo'q faylni bind-mount qilganda
+    shunday papka yaratib qo'yadi) xizmat `IsADirectoryError` bilan
+    yiqilib, cheksiz qayta ishga tushardi. Logrotate faylni almashtirganda
+    (yangi inode) yoki qisqartirganda esa eski faylga yopishib qolib,
+    yangi hodisalarni ko'rmasdi. Endi:
+      - fayl paydo bo'lguncha xatosiz kutadi;
+      - birinchi ochishda faylning OXIRIDAN boshlaydi (eski backlog
+        qayta yozilmaydi), aylantirilgan YANGI faylni esa BOSHIDAN o'qiydi;
+      - qisqartirilib qayta yozilgan faylni (hatto hajmi avvalgidek yoki
+        kattaroq bo'lsa ham - oxirgi o'qilgan qator joyida yo'qligidan)
+        aniqlaydi;
+      - chala yozilgan (hali `\\n` bilan tugamagan) qatorni yo'qotmaydi.
+    Fayl binar rejimda o'qiladi - `tell()`/`seek()` aniq bayt pozitsiyasi.
+    `stop` - testlar uchun `threading.Event`.
+    """
+    f = None
+    inode = None
+    first_open = True
+    waiting_logged = False
+    partial = b""
+    last_line = b""        # oxirgi to'liq o'qilgan qator (qayta yozilganini aniqlash uchun)
+    seen_mtime = None
+    while stop is None or not stop.is_set():
+        if f is None:
+            if not os.path.isfile(filepath):
+                if not waiting_logged:
+                    kind = "papka (fayl emas)" if os.path.isdir(filepath) else "mavjud emas"
+                    logger.warning(f"{filepath} {kind} - Suricata faylni yaratishi kutilmoqda")
+                    waiting_logged = True
                 time.sleep(interval)
                 continue
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("event_type") == "fileinfo":
-                session = get_session()
-                try:
-                    process_fileinfo_event(session, event)
-                    session.commit()
-                except Exception as exc:
-                    session.rollback()
-                    logger.error(f"Xatolik: {exc}")
-                finally:
-                    session.close()
+            f = open(filepath, "rb")
+            inode = os.fstat(f.fileno()).st_ino
+            if first_open:
+                f.seek(0, os.SEEK_END)
+            first_open = False
+            waiting_logged = False
+            partial, last_line, seen_mtime = b"", b"", None
+            logger.info(f"eve.json kuzatilmoqda: {filepath}")
+
+        chunk = f.readline()
+        if chunk:
+            partial += chunk
+            if partial.endswith(b"\n"):
+                _process_line(partial.decode("utf-8", errors="replace"))
+                last_line = partial
+                partial = b""
+            continue
+
+        # Fayl oxiri. Kutib, YANGI ma'lumotni o'qishdan OLDIN tekshiramiz:
+        # aylantirildimi (boshqa inode / o'chirildi) yoki qisqartirildimi?
+        time.sleep(interval)
+        try:
+            st = os.stat(filepath)
+        except OSError:
+            # Nomi o'zgartirilgan, yangisi hali yaratilmagan (logrotate oralig'i):
+            # Suricata HUP olguncha eski faylga yozadi - shundan o'qishda davom etamiz.
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        if st.st_ino != inode:
+            # Aylantirilgan eski faylga oxirgi lahzada yozilgan qatorlarni ham olamiz
+            for rest in f:
+                partial += rest
+                if partial.endswith(b"\n"):
+                    _process_line(partial.decode("utf-8", errors="replace"))
+                    partial = b""
+            f.close()
+            f = None
+            continue
+        pos = f.tell()
+        rewritten = st.st_size < pos
+        if not rewritten and last_line and st.st_mtime_ns != seen_mtime:
+            # Fayl yozilgan (hajmi avvalgidek yoki kattaroq): oxirgi o'qilgan
+            # qatorimiz hali joyidami? Yo'q bo'lsa - qisqartirilib qayta yozilgan.
+            f.seek(pos - len(last_line) - len(partial))
+            rewritten = f.read(len(last_line)) != last_line
+            f.seek(pos)
+        seen_mtime = st.st_mtime_ns
+        if rewritten:
+            f.seek(0)
+            partial, last_line = b"", b""
+    if f is not None:
+        f.close()
 
 
 if __name__ == "__main__":
