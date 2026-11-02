@@ -2,19 +2,19 @@
 {% block title %}Fayllar - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
 {% macro decision_buttons(sha, current) %}
-{% if current == 'safe' %}<span style="color:#27ae60; font-size:12px;">✅ Virus emas (admin)</span>
-{% elif current == 'malicious' %}<span style="color:#c0392b; font-size:12px;">🛑 Virus (admin)</span>
+{% if current == 'safe' %}<span class="status-ok">✅ Virus emas (admin)</span>
+{% elif current == 'malicious' %}<span class="status-bad">🛑 Virus (admin)</span>
 {% elif current_user.role in ('analyst', 'admin') %}
-<form method="POST" action="/files/decision" style="display:flex; gap:4px; flex-direction:column;">
+<form method="POST" action="/files/decision">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="sha256" value="{{ sha }}">
     <button class="btn btn-danger" name="decision" value="malicious" type="submit" onclick="return confirm('Bu fayl VIRUS deb belgilanadi va BARCHA qurilmalarda o\'chirilib karantinga olinadi. Davom etasizmi?')">Virusni o'chirish</button>
     <button class="btn btn-success" name="decision" value="safe" type="submit">Virus emas</button>
 </form>
-{% else %}<span style="color: #65748b; font-size:12px;">⏳ Admin qarori kutilmoqda</span>{% endif %}
+{% else %}<span class="status-idle">⏳ Admin qarori kutilmoqda</span>{% endif %}
 {% endmacro %}
 <h1>Tekshirilgan fayllar ({{ filtered_count }} ta tekshiruv)</h1>
-<div style="display:flex; flex-wrap:wrap; gap:10px; margin:0 0 16px; color:#46566f; font-size:13px;">
+<div class="file-summary">
     <a href="{{ url_for('files', period='today') }}" {% if period_filter == 'today' %}class="active"{% endif %}><strong>{{ today_count }}</strong> bugun tekshirilgan fayl</a>
     <a href="{{ url_for('files', period='all') }}" {% if period_filter == 'all' %}class="active"{% endif %}><strong>{{ total_count }}</strong> shu kungacha tekshirilgan fayl</a>
     <span><strong>{{ unique_count }}</strong> noyob fayl (SHA-256)</span>
@@ -62,35 +62,35 @@
     <tr>
         <td class="mono">{{ loop.index }}</td>
         <td class="mono">{{ f.timestamp | local_dt(fallback='') }}</td>
-        <td>{% if f.filename %}{{ f.filename }}{% else %}<span style="color:#65748b;">nom yuborilmagan (eski upload)</span>{% endif %}{% if f.parent_file_event_id %} <span style="color: #65748b; font-size:11px;">(arxivdan)</span>{% endif %}</td>
-        <td class="mono" style="font-size: 11px; min-width: 240px; max-width: 460px; white-space: normal; word-break: break-all;" title="{{ f.device_file_path or '' }}">
+        <td>{% if f.filename %}{{ f.filename }}{% else %}<span class="muted">nom yuborilmagan (eski upload)</span>{% endif %}{% if f.parent_file_event_id %} <span class="cell-dim">(arxivdan)</span>{% endif %}</td>
+        <td class="mono cell-path" title="{{ f.device_file_path or '' }}">
             {%- if f.device_file_path -%}
                 {{ f.device_file_path }}
             {%- elif f.channel == 'endpoint_agent' -%}
-                <span style="color: #65748b;">yo'l noma'lum (eski agent versiyasi yubormagan)</span>
+                <span class="muted">yo'l noma'lum (eski agent versiyasi yubormagan)</span>
             {%- elif f.dest_ip -%}
-                <span style="color: #65748b;">tarmoq orqali: {{ f.src_ip }} &rarr; {{ f.dest_ip }}</span>
+                <span class="muted">tarmoq orqali: {{ f.src_ip }} &rarr; {{ f.dest_ip }}</span>
             {%- else -%}
                 -
             {%- endif -%}
         </td>
         <td class="mono">{{ f.src_ip }}</td>
-        <td>{% if f.channel == 'endpoint_agent' %}<span class="badge" style="background:#2980b9;">Endpoint Agent</span>{% else %}{{ f.channel or '-' }}{% endif %}</td>
+        <td>{% if f.channel == 'endpoint_agent' %}<span class="badge badge--info">Endpoint Agent</span>{% else %}{{ f.channel or '-' }}{% endif %}</td>
         <td>
             {% if f.verdict == 'malicious' %}
-            <span class="badge" style="background: #c0392b;">ZARARLI</span>
+            <span class="badge badge--critical">ZARARLI</span>
             {% elif f.verdict == 'suspicious' %}
-            <span class="badge" style="background: #e67e22;">SHUBHALI</span>
+            <span class="badge badge--high">SHUBHALI</span>
             {% elif f.verdict == 'clean' %}
-            <span class="badge" style="background: #27ae60;">TOZA</span>
+            <span class="badge badge--success">TOZA</span>
             {% elif f.verdict == 'unknown' %}
-            <span class="badge" style="background: #7f8c8d;" title="Hech qanday manba (local/VirusTotal/MalwareBazaar) bu fayl haqida ishonchli ma'lumot bermadi - bu 'toza' emas, 'hali klassifikatsiya qilinmagan'">NOMA'LUM</span>
+            <span class="badge badge--neutral" title="Hech qanday manba (local/VirusTotal/MalwareBazaar) bu fayl haqida ishonchli ma'lumot bermadi - bu 'toza' emas, 'hali klassifikatsiya qilinmagan'">NOMA'LUM</span>
             {% else %}
-            <span class="badge" style="background: #95a5a6;">TEKSHIRILMOQDA</span>
+            <span class="badge badge--muted">TEKSHIRILMOQDA</span>
             {% endif %}
         </td>
         <td>{{ f.threat_score }}</td>
-        <td class="mono" style="font-size: 11px;">{{ (f.sha256 or '')[:16] }}...</td>
+        <td class="mono cell-dim">{{ (f.sha256 or '')[:16] }}...</td>
         <td class="mono">{{ f.checked_sources or '-' }}</td>
         <td>{% if f.verdict in ('malicious', 'suspicious') or file_decisions.get(f.sha256) %}{{ decision_buttons(f.sha256, file_decisions.get(f.sha256)) }}{% else %}-{% endif %}</td>
     </tr>
@@ -100,9 +100,9 @@
 {% if total_pages > 1 %}
 {% set pargs = request.args.to_dict() %}
 {% set _ = pargs.pop('page', None) %}
-<div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+<div class="pager">
     {% if page > 1 %}<a href="{{ url_for('files', page=page - 1, **pargs) }}">&laquo; Oldingi</a>{% endif %}
-    <span style="color:#65748b; font-size:13px;">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta tekshiruv)</span>
+    <span class="pager-info">Sahifa {{ page }} / {{ total_pages }} ({{ filtered_count }} ta tekshiruv)</span>
     {% if page < total_pages %}<a href="{{ url_for('files', page=page + 1, **pargs) }}">Keyingi &raquo;</a>{% endif %}
 </div>
 {% endif %}
