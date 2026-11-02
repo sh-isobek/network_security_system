@@ -19,6 +19,8 @@ import mimetypes
 import os
 import secrets
 import sys
+import threading
+import time
 from urllib.parse import urlencode
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,6 +45,40 @@ from config.settings import (
     LIVE_MAP_GRAPH_EDGE_LIMIT, TIMEZONE_OFFSET_HOURS,
 )
 from dashboard.i18n import SUPPORTED_LANGUAGES, translate_html
+
+
+# Millionlab qatorli jadvallar ustidagi FILTRSIZ umumiy sonlar (masalan
+# 45 mln `events`ni sanash ~1.3 s, 1.1 mln `file_events`dagi noyob SHA256
+# ~1-2 s) har sahifa ochilishida qayta hisoblanmasligi uchun qisqa muddat
+# keshlanadi. Filtrli sonlar (foydalanuvchi qidiruvi) har doim aniq,
+# keshsiz hisoblanadi.
+AGGREGATE_CACHE_SECONDS = 60
+_AGGREGATE_CACHE = {}
+_AGGREGATE_CACHE_LOCK = threading.Lock()
+
+
+def _cached_aggregate(key, compute):
+    now = time.monotonic()
+    with _AGGREGATE_CACHE_LOCK:
+        hit = _AGGREGATE_CACHE.get(key)
+        if hit is not None and hit[1] > now:
+            return hit[0]
+    value = compute()
+    with _AGGREGATE_CACHE_LOCK:
+        _AGGREGATE_CACHE[key] = (value, now + AGGREGATE_CACHE_SECONDS)
+    return value
+
+
+def _count_unique_sha256(query):
+    # `count(DISTINCT ...)` o'rniga `SELECT DISTINCT` ichki so'rovi -
+    # PostgreSQL uni HashAggregate bilan ~2 baravar tezroq bajaradi.
+    unique = (
+        query.with_entities(FileEvent.sha256)
+        .filter(FileEvent.sha256.isnot(None), FileEvent.sha256 != "")
+        .distinct()
+        .subquery()
+    )
+    return query.session.query(func.count()).select_from(unique).scalar() or 0
 
 
 def _device_online_cutoff():
@@ -286,7 +322,7 @@ def index():
             "suspicious_files": session.query(FileEvent).filter(FileEvent.verdict == "suspicious").count(),
             "clean_files": session.query(FileEvent).filter(FileEvent.verdict == "clean").count(),
             "unknown_files": session.query(FileEvent).filter(FileEvent.verdict == "unknown").count(),
-            "event_count": session.query(Event).count(),
+            "event_count": _cached_aggregate("event_count", lambda: session.query(func.count(Event.id)).scalar() or 0),
             "agents_online": agents_online,
             "agents_offline": agents_installed - agents_online,
         }
@@ -805,11 +841,7 @@ def files():
             .filter(FileEvent.timestamp >= today_start_utc, FileEvent.timestamp < tomorrow_start_utc)
             .scalar() or 0
         )
-        unique_count = (
-            session.query(func.count(func.distinct(FileEvent.sha256)))
-            .filter(FileEvent.sha256.isnot(None), FileEvent.sha256 != "")
-            .scalar() or 0
-        )
+        unique_count = _cached_aggregate("file_unique_sha256", lambda: _count_unique_sha256(session.query(FileEvent)))
         verdict_counts = dict(
             session.query(FileEvent.verdict, func.count(FileEvent.id))
             .group_by(FileEvent.verdict)
@@ -840,12 +872,16 @@ def files():
         if sha256_filter:
             query = query.filter(FileEvent.sha256.ilike(f"{sha256_filter}%"))
 
-        filtered_count = query.count()
-        filtered_unique_count = (
-            query.with_entities(func.count(func.distinct(FileEvent.sha256)))
-            .filter(FileEvent.sha256.isnot(None), FileEvent.sha256 != "")
-            .scalar() or 0
-        )
+        has_filters = any((period_filter == "today", verdict_filter, channel_filter, filename_filter,
+                           path_filter, ip_filter, sha256_filter))
+        if has_filters:
+            filtered_count = query.count()
+            filtered_unique_count = _count_unique_sha256(query)
+        else:
+            # Filtr yo'q - yuqorida hisoblangan umumiy sonlarning o'zi
+            # (millionlab qatorni ikkinchi marta sanamaslik uchun).
+            filtered_count = total_count
+            filtered_unique_count = unique_count
         page = request.args.get("page", 1, type=int) or 1
         page = max(page, 1)
         total_pages = max(1, (filtered_count + FILES_PAGE_SIZE - 1) // FILES_PAGE_SIZE)

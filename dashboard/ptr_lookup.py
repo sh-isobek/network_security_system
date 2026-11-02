@@ -53,10 +53,11 @@ def _lookup_one(ip: str):
 
 
 def _submit(ip: str):
+    """(future, yangi_yuborildimi) qaytaradi."""
     with _CACHE_LOCK:
         fut = _PENDING.get(ip)
         if fut is not None and not fut.done():
-            return fut
+            return fut, False
         fut = _EXECUTOR.submit(_lookup_one, ip)
         _PENDING[ip] = fut
 
@@ -72,7 +73,7 @@ def _submit(ip: str):
                 del _PENDING[ip]
 
     fut.add_done_callback(_on_done)
-    return fut
+    return fut, True
 
 
 def resolve_ptr_batch(ips) -> dict:
@@ -98,7 +99,19 @@ def resolve_ptr_batch(ips) -> dict:
     if not to_resolve:
         return result
 
-    futures = {_submit(ip): ip for ip in to_resolve}
+    # FAQAT shu chaqiruvda YANGI yuborilgan so'rovlar kutiladi. Oldingi
+    # chaqiruvdan beri javobsiz turgan (sekin/javobsiz DNS) IP'lar uchun
+    # qayta kutilmaydi - aks holda Live Map (15 soniyada bir) har safar
+    # to'liq `_WAIT_TIMEOUT_SECONDS`ni yo'qotib, sekin ochilardi.
+    futures = {}
+    for ip in to_resolve:
+        fut, is_new = _submit(ip)
+        if is_new:
+            futures[fut] = ip
+        elif fut.done():
+            futures[fut] = ip
+    if not futures:
+        return result
     done, _pending = concurrent.futures.wait(futures, timeout=_WAIT_TIMEOUT_SECONDS)
     for fut in done:
         ip = futures[fut]

@@ -10271,6 +10271,103 @@ def _test_fonts_served_locally():
 
 check("Dizayn: shriftlar serverning o'zidan (Google Fonts'siz), barcha woff2 fayllar mavjud", _test_fonts_served_locally)
 
+
+def _test_dashboard_speed_fixes():
+    """
+    Foydalanuvchi: "platforma sekin ishlayabdi". Production o'lchovi:
+    `/files` 4.9 s (noyob SHA256 1.1 mln qatorda IKKI marta sanalardi),
+    `/` 1.9 s (45 mln `events` har safar sanalardi), `/api/topology`
+    3.9 s (har 15 soniyada; oldingi so'rovdan beri javobsiz turgan PTR
+    IP'lari uchun har safar 1.5 s qayta kutilardi).
+    """
+    import threading as _threading
+    from sqlalchemy import func
+    import time as _time
+    from unittest.mock import patch
+    from dashboard import app as dash_app
+    from dashboard import ptr_lookup
+    from dashboard.create_user import create_user
+
+    # 1) PTR: oldingi chaqiruvdan beri javobsiz IP uchun qayta kutilmaydi
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+    release = _threading.Event()
+
+    def slow_lookup(ip):
+        release.wait(timeout=10)
+        return None
+
+    old_wait = ptr_lookup._WAIT_TIMEOUT_SECONDS
+    ptr_lookup._WAIT_TIMEOUT_SECONDS = 1.0
+    try:
+        with patch.object(ptr_lookup, "_lookup_one", side_effect=slow_lookup):
+            t0 = _time.monotonic()
+            assert ptr_lookup.resolve_ptr_batch(["203.0.113.7"]) == {}
+            first = _time.monotonic() - t0
+            t0 = _time.monotonic()
+            assert ptr_lookup.resolve_ptr_batch(["203.0.113.7"]) == {}
+            second = _time.monotonic() - t0
+    finally:
+        release.set()
+        ptr_lookup._WAIT_TIMEOUT_SECONDS = old_wait
+    assert first >= 0.9, f"yangi IP uchun qisqa kutish bo'lishi kerak edi ({first:.2f} s)"
+    assert second < 0.3, f"allaqachon kutilayotgan IP uchun qayta kutilmasligi kerak edi ({second:.2f} s)"
+    with ptr_lookup._CACHE_LOCK:
+        ptr_lookup._CACHE.clear()
+        ptr_lookup._PENDING.clear()
+
+    # 2) Noyob SHA256 soni yangi (tezroq) so'rov bilan ham AYNAN to'g'ri
+    s = get_session()
+    s.add_all([
+        FileEvent(filename="speed-a.bin", src_ip="10.254.250.1", sha256="5a" * 32, verdict="clean"),
+        FileEvent(filename="speed-b.bin", src_ip="10.254.250.1", sha256="5a" * 32, verdict="clean"),
+        FileEvent(filename="speed-c.bin", src_ip="10.254.250.1", sha256="5b" * 32, verdict="clean"),
+        FileEvent(filename="speed-d.bin", src_ip="10.254.250.1", sha256="", verdict="clean"),
+        FileEvent(filename="speed-e.bin", src_ip="10.254.250.1", sha256=None, verdict="clean"),
+    ])
+    s.commit()
+    exact = s.query(func.count(func.distinct(FileEvent.sha256))).filter(
+        FileEvent.sha256.isnot(None), FileEvent.sha256 != "").scalar()
+    assert dash_app._count_unique_sha256(s.query(FileEvent)) == exact
+    only_speed = s.query(FileEvent).filter(FileEvent.filename.like("speed-%"))
+    assert dash_app._count_unique_sha256(only_speed) == 2
+    total = s.query(func.count(FileEvent.id)).scalar()
+    s.close()
+
+    # 3) Filtrsiz /files: noyob son FAQAT bir marta sanaladi, qiymatlar aniq
+    with dash_app._AGGREGATE_CACHE_LOCK:
+        dash_app._AGGREGATE_CACHE.clear()
+    create_user("speed_admin", "speedadminpass123", "admin")
+    dash_app.app.secret_key = "test-secret-speed"
+    client = _dash_client(dash_app.app)
+    client.post("/login", data={"username": "speed_admin", "password": "speedadminpass123"})
+    calls = []
+    real = dash_app._count_unique_sha256
+
+    def counting(query):
+        calls.append(1)
+        return real(query)
+
+    with patch.object(dash_app, "_count_unique_sha256", side_effect=counting):
+        html = " ".join(client.get("/files").get_data(as_text=True).split())
+        assert len(calls) == 1, f"filtrsiz sahifada noyob son {len(calls)} marta sanaldi"
+        assert f"Tekshirilgan fayllar ({total} ta tekshiruv)" in html, "filtrsiz jami son noto'g'ri"
+        assert f"<strong>{exact}</strong> noyob fayl (SHA-256)" in html, "filtrsiz noyob son noto'g'ri"
+        # Kesh: qayta ochilganda og'ir sanoq takrorlanmaydi
+        client.get("/files")
+        assert len(calls) == 1, "noyob son keshlanmadi"
+        # Filtrli qidiruv har doim aniq, keshsiz
+        html = " ".join(client.get("/files?filename=speed-").get_data(as_text=True).split())
+        assert len(calls) == 2
+        assert "<strong>5</strong> filtrga mos tekshiruv, <strong>2</strong> noyob fayl" in html, "filtrli sonlar noto'g'ri"
+    with dash_app._AGGREGATE_CACHE_LOCK:
+        dash_app._AGGREGATE_CACHE.clear()
+    assert client.get("/").status_code == 200
+
+
+check("Tezlik: /files noyob son bir marta+kesh, / hodisalar soni keshi, Live Map PTR qayta kutmaydi", _test_dashboard_speed_fixes)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
