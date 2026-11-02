@@ -10668,6 +10668,62 @@ def _test_suricata_reader_skips_own_agent_traffic():
 
 check("Suricata reader: o'z agent serverimiz trafigi va JSON tanalari fayl sifatida yozilmaydi", _test_suricata_reader_skips_own_agent_traffic)
 
+
+def _test_agent_https_migration_server_side():
+    """
+    Agentlarni HTTPS'ga o'tkazish (nginx TLS, 9443): agent_api nginx orqasida
+    agentning haqiqiy IP'sini X-Real-IP'dan oladi, LEKIN faqat so'rov aynan
+    nginx konteyneridan kelganda - to'g'ridan-to'g'ri HTTP portga ulangan
+    mijoz IP'sini soxtalashtira olmaydi. docker-compose nginx portlari
+    sozlanadigan (o'tish davrida HTTP 8443 bilan bir vaqtda ishlashi uchun),
+    paketdagi agent-ca.crt haqiqiy CA (kalitsiz).
+    """
+    import yaml
+    from flask import Flask, request as flask_request
+    from api.server import TrustedProxyRealIP
+
+    probe = Flask("proxy_probe")
+
+    @probe.route("/ip")
+    def _ip():
+        return flask_request.remote_addr
+
+    mw = TrustedProxyRealIP(probe.wsgi_app, proxy_host="")
+    mw._ips, mw._resolved_at = frozenset({"172.18.0.30"}), float("inf")
+    probe.wsgi_app = mw
+    c = probe.test_client()
+    via_nginx = c.get("/ip", headers={"X-Real-IP": "172.16.0.51"}, environ_base={"REMOTE_ADDR": "172.18.0.30"})
+    assert via_nginx.get_data(as_text=True) == "172.16.0.51", "nginx orqali kelganda haqiqiy agent IP'si olinmadi"
+    spoof = c.get("/ip", headers={"X-Real-IP": "10.9.9.9"}, environ_base={"REMOTE_ADDR": "172.16.0.77"})
+    assert spoof.get_data(as_text=True) == "172.16.0.77", "nginx bo'lmagan mijoz X-Real-IP bilan IP'sini soxtalashtirdi"
+    junk = c.get("/ip", headers={"X-Real-IP": "not-an-ip"}, environ_base={"REMOTE_ADDR": "172.18.0.30"})
+    assert junk.get_data(as_text=True) == "172.18.0.30"
+    assert TrustedProxyRealIP(probe.wsgi_app, proxy_host="no-such-host.invalid").proxy_ips() == frozenset()
+
+    base = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base, "docker-compose.yml"), encoding="utf-8") as fh:
+        nginx = yaml.safe_load(fh)["services"]["nginx"]
+    assert "${AGENT_API_TLS_PORT:-8443}:8443" in nginx["ports"], nginx["ports"]
+
+    with open(os.path.join(base, "deploy", "windows_agent_gpo", "agent-ca.crt"), encoding="ascii") as fh:
+        ca = fh.read()
+    assert ca.startswith("-----BEGIN CERTIFICATE-----") and "PRIVATE KEY" not in ca, "agent-ca.crt faqat sertifikat bo'lishi kerak"
+
+    with open(os.path.join(base, ".github", "workflows", "build-windows-agent.yml"), encoding="utf-8") as fh:
+        wf = fh.read()
+    for needed in ("AgentTls.ps1", "agent-ca.crt", "Test-AgentTls.ps1"):
+        assert needed in wf, f"release workflow'da {needed} yo'q"
+    with open(os.path.join(base, "deploy", "windows_agent_gpo", "Deploy-NetworkSecurityAgent.ps1"), encoding="utf-8") as fh:
+        deploy = fh.read()
+    assert "Test-AgentHttpsUrl" in deploy and "AGENT_CA_BUNDLE_FILE" in deploy
+    with open(os.path.join(base, "deploy", "windows_agent_gpo", "AgentTls.ps1"), encoding="utf-8") as fh:
+        lib = fh.read()
+    assert "Cert:\\LocalMachine\\Root" not in lib and "Import-Certificate" not in lib, \
+        "ichki CA Windows Trusted Root'ga qo'shilmasligi kerak"
+
+
+check("Agent HTTPS: X-Real-IP faqat nginx'dan, sozlanadigan TLS port, paketdagi CA, Deploy HTTPS tekshiruvi", _test_agent_https_migration_server_side)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

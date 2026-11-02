@@ -127,6 +127,17 @@ if (-not $cfg.url -or -not $cfg.key) {
     Log "OGOHLANTIRISH: API_SERVER_URL/AGENT_API_KEY topilmadi - server so'rovi o'tkazib yuborildi (faqat mahalliy tekshiruv)"
     exit 0
 }
+if ($cfg.url -like "https://*") {
+    # Ichki CA'ga faqat shu jarayonda ishonish (AgentTls.ps1 - Windows Trusted Root'ga qo'shilmaydi)
+    try {
+        . (Join-Path $PSScriptRoot "AgentTls.ps1")
+        $caFile = [Environment]::GetEnvironmentVariable("AGENT_CA_BUNDLE_FILE", "Machine")
+        if ($caFile) { Enable-AgentCaTrust -CaFile $caFile }
+        else { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 }
+    } catch {
+        Log "OGOHLANTIRISH: HTTPS (ichki CA) sozlashda xato: $_"
+    }
+}
 $identity = Get-Identity
 
 $errLogged = $false

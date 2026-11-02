@@ -248,6 +248,42 @@ if ($envValues.Count -gt 0) {
     }
 }
 
+# --- 4.1) HTTPS (ichki CA) - bosqichma-bosqich o'tish ---
+# Paketda ichki CA sertifikati (agent-ca.crt) va AgentTls.ps1 bo'lsa, server
+# HTTPS portida (standart 9443, SYSVOL .env: AGENT_API_TLS_PORT) javob
+# berayotgani va sertifikati AYNAN shu CA'dan ekani tekshiriladi. Faqat
+# shunda agent HTTPS'ga o'tkaziladi; aks holda HTTP'da qoladi (server
+# tomonda TLS hali yoqilmagan bo'lsa ham hech bir agent uzilmaydi).
+# Server IP'si repoda yo'q - SYSVOL .env'dagi mavjud manzildan olinadi.
+$caInstalled = Join-Path $InstallDir "agent-ca.crt"
+$tlsLib = Join-Path $InstallDir "AgentTls.ps1"
+$tlsPort = 9443
+if ($envValues.ContainsKey("AGENT_API_TLS_PORT") -and $envValues["AGENT_API_TLS_PORT"] -match '^[0-9]+$') {
+    $tlsPort = [int]$envValues["AGENT_API_TLS_PORT"]
+}
+if ((Test-Path $caInstalled) -and (Test-Path $tlsLib)) {
+    try {
+        . $tlsLib
+        if ($ApiServerUrl -like "https://*") {
+            $httpsUrl = $ApiServerUrl.TrimEnd('/')
+        } else {
+            $httpsUrl = ConvertTo-AgentHttpsUrl -HttpUrl $ApiServerUrl -Port $tlsPort
+        }
+        if (Test-AgentHttpsUrl -Url $httpsUrl -CaFile $caInstalled) {
+            $ApiServerUrl = $httpsUrl
+            [Environment]::SetEnvironmentVariable("AGENT_CA_BUNDLE_FILE", $caInstalled, "Machine")
+            Write-DeployLog "HTTPS: $httpsUrl ishlayapti, sertifikat ichki CA'dan - agent HTTPS'ga o'tkazildi"
+        } elseif ($ApiServerUrl -like "https://*") {
+            [Environment]::SetEnvironmentVariable("AGENT_CA_BUNDLE_FILE", $caInstalled, "Machine")
+            Write-DeployLog "OGOHLANTIRISH: .env'dagi HTTPS manzil ($httpsUrl) hozir javob bermadi - baribir shu manzil saqlanadi"
+        } else {
+            Write-DeployLog "HTTPS: $httpsUrl hozircha ishlamadi - agent HTTP'da qoldi ($ApiServerUrl)"
+        }
+    } catch {
+        Write-DeployLog "OGOHLANTIRISH: HTTPS tekshiruvida xato ($_) - agent HTTP'da qoldi ($ApiServerUrl)"
+    }
+}
+
 [Environment]::SetEnvironmentVariable("API_SERVER_URL", $ApiServerUrl, "Machine")
 [Environment]::SetEnvironmentVariable("AGENT_VERSION", $availableVersion, "Machine")
 

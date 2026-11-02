@@ -487,8 +487,12 @@ services:
       # sertifikat (mTLS) talab qiladi - docs_TLS_SETUP.md'ga qarang.
       AGENT_MTLS_REQUIRED: ${AGENT_MTLS_REQUIRED:-false}
     ports:
-      - "8443:8443"   # Agent API (TLS) - LAN'ga OCHIQ (10.254.0.0/22)
-      - "8843:8843"   # Dashboard (TLS) - LAN'ga OCHIQ
+      # Tashqi portlar sozlanadi: HTTP'dan HTTPS'ga bosqichma-bosqich o'tishda
+      # agent_api hali 8443'da oddiy HTTP bilan ishlab turadi, TLS esa
+      # boshqa portda (.env: AGENT_API_TLS_PORT=9443) - agentlar uzilmasdan
+      # o'tadi (docs_TLS_SETUP.md, "Bosqichma-bosqich o'tish").
+      - "${AGENT_API_TLS_PORT:-8443}:8443"   # Agent API (TLS)
+      - "${DASHBOARD_TLS_PORT:-8843}:8843"   # Dashboard (TLS)
     depends_on:
       - agent_api
       - dashboard

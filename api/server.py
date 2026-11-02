@@ -58,7 +58,49 @@ logger = logging.getLogger("api_server")
 VT_CONFIRM_MIN_ENGINES = int(os.getenv("VT_CONFIRM_MIN_ENGINES", "10"))
 VT_CONFIRM_MIN_RATIO = float(os.getenv("VT_CONFIRM_MIN_RATIO", "0.15"))
 
+class TrustedProxyRealIP:
+    """
+    nginx TLS proxy (docker-compose `nginx`, deploy/nginx/nginx.conf.template)
+    orqasida `request.remote_addr` doim nginx konteynerining IP'si bo'ladi -
+    barcha agentlar bitta rate-limit chelagiga tushib, IP tuzatish
+    (`normalize_agent_ip`) va alert `src_ip`lari buzilardi. nginx haqiqiy
+    manzilni `X-Real-IP`da yuboradi. XAVFSIZLIK: bu sarlavhaga FAQAT so'rov
+    aynan `TRUSTED_PROXY_HOST` (standart: `nginx`) konteyneridan kelganda
+    ishoniladi - o'tish davrida ochiq qolgan to'g'ridan-to'g'ri HTTP portga
+    ulangan mijoz o'z IP'sini soxtalashtira olmaydi.
+    """
+
+    _CACHE_SECONDS = 60
+
+    def __init__(self, wsgi_app, proxy_host=None):
+        self.wsgi_app = wsgi_app
+        self.proxy_host = proxy_host if proxy_host is not None else os.getenv("TRUSTED_PROXY_HOST", "nginx")
+        self._ips = frozenset()
+        self._resolved_at = None
+
+    def proxy_ips(self):
+        import time
+        now = time.monotonic()
+        if self._resolved_at is None or now - self._resolved_at > self._CACHE_SECONDS:
+            try:
+                self._ips = frozenset(socket.gethostbyname_ex(self.proxy_host)[2]) if self.proxy_host else frozenset()
+            except OSError:
+                self._ips = frozenset()   # nginx ishlamayapti - hech kimga ishonilmaydi
+            self._resolved_at = now
+        return self._ips
+
+    def __call__(self, environ, start_response):
+        real_ip = (environ.get("HTTP_X_REAL_IP") or "").strip()
+        if real_ip and environ.get("REMOTE_ADDR") in self.proxy_ips():
+            try:
+                environ["REMOTE_ADDR"] = str(ipaddress.ip_address(real_ip))
+            except ValueError:
+                pass
+        return self.wsgi_app(environ, start_response)
+
+
 app = Flask(__name__)
+app.wsgi_app = TrustedProxyRealIP(app.wsgi_app)
 app.config["UPLOAD_SCAN_ROOT"] = os.getenv("UPLOAD_SCAN_ROOT", "/tmp/endpoint-scans")
 app.config["UPLOAD_SCAN_MAX_BYTES"] = MAX_UPLOAD_BYTES
 

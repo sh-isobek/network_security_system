@@ -14,6 +14,7 @@ on:
       - "threat_intel/url_intel.py"
       - "requirements-agent.txt"
       - "deploy/windows_agent_gpo/**"
+      - ".github/agent-tls-test/**"
       - ".github/workflows/build-windows-agent.yml"
   workflow_dispatch: {}   # qo'lda ham ishga tushirish mumkin
 
@@ -118,6 +119,28 @@ jobs:
             & "dist/NetworkSecurityAgent.exe" remove
           }
 
+      - name: Agent HTTPS (ichki CA) - haqiqiy TLS ulanishlari bilan test
+        shell: powershell
+        run: |
+          # AgentTls.ps1 (Deploy/Watchdog) va Python agent ichki CA'ga FAQAT o'z
+          # jarayonida ishonishini, begona CA va noto'g'ri nomni rad etishini
+          # haqiqiy Windows PowerShell 5.1 va haqiqiy TLS serverlari bilan tekshiradi.
+          $certs = Join-Path $env:RUNNER_TEMP "agent-tls"
+          & "C:\Program Files\Git\bin\bash.exe" .github/agent-tls-test/make_certs.sh ($certs -replace '\\', '/')
+          if ($LASTEXITCODE -ne 0) { Write-Error "sertifikatlar yaratilmadi"; exit 1 }
+          $srv = Start-Process python -ArgumentList ".github/agent-tls-test/tls_servers.py", "`"$certs`"" -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$certs\srv.out" -RedirectStandardError "$certs\srv.err"
+          try {
+            for ($i = 0; $i -lt 40 -and -not (Select-String -Path "$certs\srv.out" -Pattern "ready" -Quiet -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
+            if (-not (Select-String -Path "$certs\srv.out" -Pattern "ready" -Quiet)) { Get-Content "$certs\srv.err"; Write-Error "TLS test serverlari ishga tushmadi"; exit 1 }
+            powershell -NoProfile -ExecutionPolicy Bypass -File .github/agent-tls-test/Test-AgentTls.ps1 -CertDir $certs -Lib deploy/windows_agent_gpo/AgentTls.ps1
+            if ($LASTEXITCODE -ne 0) { Write-Error "AgentTls.ps1 testi muvaffaqiyatsiz"; exit 1 }
+            python .github/agent-tls-test/check_python_agent.py $certs
+            if ($LASTEXITCODE -ne 0) { Write-Error "Python agent HTTPS testi muvaffaqiyatsiz"; exit 1 }
+          } finally {
+            Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Versiyani o'qish (release nomlash uchun)
         id: version
         run: |
@@ -137,6 +160,8 @@ jobs:
           Copy-Item "deploy/windows_agent_gpo/Sync-AgentFromGitHub.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Install-AgentAutoUpdate.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Watchdog-NetworkSecurityAgent.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/AgentTls.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/agent-ca.crt" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Publish-AgentDeployGpoTask.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/ScheduledTasks.template.xml" -Destination $releaseDir
           Compress-Archive -Path $releaseDir -DestinationPath "NetworkSecurityAgent-$($env:AGENT_VERSION).zip" -Force
