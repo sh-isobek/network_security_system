@@ -31,10 +31,11 @@ Keyin brauzer keshini tozalash (Ctrl+Shift+R) kifoya — qayta build kerak emas.
 ## Shriftlar
 
 `Public Sans` (matn), `Archivo` (sarlavhalar), `IBM Plex Mono` (raqamlar,
-IP/MAC/SHA) Google Fonts'dan yuklanadi. Ichki (offline) tarmoqda Google
-Fonts bloklangan bo'lsa, tizim shriftlariga avtomatik qaytadi. To'liq
-offline kerak bo'lsa — shrift fayllarini `dashboard/static/fonts/` ga
-qo'yib, `dashboard.css` boshidagi `@font-face` bilan almashtirish mumkin.
+IP/MAC/SHA) serverning o'zidan beriladi: `dashboard/static/fonts/`
+(`fonts.css` + woff2 fayllar, latin/latin-ext/kirill qismlari). Brauzer
+tashqi internetga (Google Fonts) umuman murojaat qilmaydi — faervol
+bloklasa ham sahifa sekinlashmaydi, foydalanuvchi IP'lari tashqariga
+chiqmaydi. Litsenziya: SIL Open Font License 1.1 (`LICENSE-*.txt`).
 
 ## Eslatma
 

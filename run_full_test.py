@@ -10231,6 +10231,45 @@ def _test_corporate_design_shell():
 
 check("Dizayn: yangi shell barcha sahifalarda, breadcrumb, viewer menyusi, MFA sahifasida til tanlagich", _test_corporate_design_shell)
 
+
+def _test_fonts_served_locally():
+    """
+    Foydalanuvchi talabi: "Shriftlarni serverning o'zida saqla". Hech bir
+    shablon tashqi shrift CDN'iga (Google Fonts) murojaat qilmasligi,
+    `fonts.css`dagi har bir woff2 fayli mavjud bo'lishi va dashboard
+    orqali haqiqiy woff2 sifatida berilishi kerak.
+    """
+    import re
+    from dashboard import app as dash_app
+
+    tpl_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "templates")
+    for name in os.listdir(tpl_dir):
+        with open(os.path.join(tpl_dir, name), encoding="utf-8") as fh:
+            text = fh.read()
+        assert "fonts.googleapis.com" not in text and "fonts.gstatic.com" not in text, \
+            f"{name} hali ham tashqi Google Fonts'ga murojaat qilyapti"
+
+    dash_app.app.secret_key = "test-secret-fonts"
+    client = dash_app.app.test_client()
+    login_html = client.get("/login").get_data(as_text=True)
+    assert "/static/fonts/fonts.css" in login_html, "Login sahifasi mahalliy fonts.css'ni ulamagan"
+
+    r = client.get("/static/fonts/fonts.css")
+    assert r.status_code == 200, f"fonts.css -> {r.status_code}"
+    css = r.get_data(as_text=True)
+    files = sorted(set(re.findall(r"url\(([^)]+\.woff2)\)", css)))
+    families = set(re.findall(r"font-family: '([^']+)'", css))
+    assert {"Archivo", "Public Sans", "IBM Plex Mono"} <= families, families
+    assert len(files) >= 10, files
+    for f in files:
+        assert "://" not in f, f"fonts.css tashqi manzilga ishora qilyapti: {f}"
+        resp = client.get("/static/fonts/" + f)
+        assert resp.status_code == 200 and resp.data[:4] == b"wOF2", f"{f} berilmadi yoki woff2 emas"
+        resp.close()
+
+
+check("Dizayn: shriftlar serverning o'zidan (Google Fonts'siz), barcha woff2 fayllar mavjud", _test_fonts_served_locally)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests
