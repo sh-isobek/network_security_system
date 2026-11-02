@@ -27,8 +27,13 @@ python3 "$HERE/configure_suricata.py" "$CONF" "$CONF.new"
 # -T ham chiqish fayllarini ochadi: haqiqiy /var/log/suricata'da (u yerda
 # hali soxta eve.json papkasi bo'lishi mumkin; root yaratgan eve.json'ga esa
 # keyin `suricata` foydalanuvchisi yoza olmaydi) emas, vaqtinchalik papkada.
+# -S bo'sh qoidalar fayli: -T rejimida qoidalar fayli topilmasa (bu serverda
+# /var/lib/suricata/rules/suricata.rules yo'q) asl sozlama ham "xato" deb
+# chiqadi - ishlayotgan Suricata esa buni faqat ogohlantirish deb biladi.
+# Bu yerda faqat KONFIGURATSIYA tekshiriladi.
 TESTDIR="$(mktemp -d)"
-if ! suricata -T -c "$CONF.new" -l "$TESTDIR" >"$TESTDIR/configtest.log" 2>&1; then
+: >"$TESTDIR/empty.rules"
+if ! suricata -T -c "$CONF.new" -l "$TESTDIR" -S "$TESTDIR/empty.rules" >"$TESTDIR/configtest.log" 2>&1; then
     echo "   XATO: yangi sozlama tekshiruvdan o'tmadi - o'zgartirilmadi:"
     tail -n 15 "$TESTDIR/configtest.log"
     rm -f "$CONF.new"
@@ -64,12 +69,18 @@ if [ -f "$LOGDIR/stats.log" ]; then
 fi
 
 echo "== 4/4 Suricata qayta ishga tushirilmoqda"
-systemctl restart suricata
+systemctl restart suricata || true
 for _ in $(seq 60); do
     [ -f "$LOGDIR/eve.json" ] && break
     sleep 1
 done
-systemctl is-active suricata
+if ! systemctl is-active --quiet suricata; then
+    echo "   XATO: Suricata ishga tushmadi:"
+    journalctl -u suricata -n 20 --no-pager || true
+    echo "   Zaxirani qaytarish: sudo cp -a $CONF.bak-$STAMP $CONF && sudo systemctl restart suricata"
+    exit 1
+fi
+echo "   suricata: active"
 if [ -f "$LOGDIR/eve.json" ]; then
     echo "   OK: $LOGDIR/eve.json fayl sifatida yaratildi"
 else
