@@ -5,14 +5,14 @@
 
 {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-        <div style="padding: 8px 12px; border-radius: 5px; font-size: 13px; margin-bottom: 12px; background: {% if category == 'error' %}#fdecea; color: #c0392b{% else %}#eafaf1; color: #27ae60{% endif %};">{{ message }}</div>
+        <div class="flash {{ category }}">{{ message }}</div>
     {% endfor %}
 {% endwith %}
 
 {% if new_token %}
-<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
-    <strong>⚠️ Yangi token yaratildi — buni HOZIR nusxalab oling, qayta ko'rsatilmaydi:</strong>
-    <div style="font-family: monospace; background: #fff; padding: 10px; border-radius: 4px; margin-top: 8px; word-break: break-all;">{{ new_token }}</div>
+<div class="note note--warning">
+    <strong>Yangi token yaratildi — buni HOZIR nusxalab oling, qayta ko'rsatilmaydi:</strong>
+    <div class="token-value">{{ new_token }}</div>
 </div>
 {% endif %}
 
@@ -63,13 +63,13 @@
 </table></div>
 
 <h1>Yangi token yaratish</h1>
-<form method="POST" action="/api-tokens/create" style="background:#fff; padding: 18px; border-radius: 6px; max-width: 360px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+<form class="form-card" method="POST" action="/api-tokens/create">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label style="display:block; font-size:12px; color:#5a6673; margin-bottom:4px;">Nomi (masalan "ACCOUNTING-PC agent")</label>
-    <input type="text" name="name" required style="width:100%; padding:8px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:12px;">
+    <label class="field-label">Nomi (masalan "ACCOUNTING-PC agent")</label>
+    <input class="field-input" type="text" name="name" required>
 
-    <label style="display:block; font-size:12px; color:#5a6673; margin-bottom:4px;">Muddat (kun, bo'sh = muddatsiz)</label>
-    <input type="number" name="expires_days" style="width:100%; padding:8px; border:1px solid #dde3e8; border-radius:4px; margin-bottom:14px;">
+    <label class="field-label">Muddat (kun, bo'sh = muddatsiz)</label>
+    <input class="field-input" type="number" name="expires_days">
 
     <button class="btn btn-primary" type="submit" style="width:100%">Yaratish</button>
 </form>
