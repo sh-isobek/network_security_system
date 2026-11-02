@@ -2,7 +2,7 @@
 {% block title %}Hodisalar - Xavfsizlik Dashboard{% endblock %}
 {% block content %}
 <h1>Hodisalar (Incidents) ({{ incidents | length }})</h1>
-<p style="color:#5a6673; font-size:13px; margin-top:-8px;">
+<p class="page-lede tight">
     Bir xil qurilmada, qisqa vaqt oralig'ida kelgan alohida alertlar avtomatik bitta hodisaga birlashtiriladi.
 </p>
 
@@ -32,7 +32,7 @@
     {% for inc in incidents %}
     <tr>
         <td class="mono">{{ loop.index }}</td>
-        <td><span class="badge" style="background: {{ inc.severity | severity_color }}">{{ inc.severity | upper }}</span></td>
+        <td><span class="badge badge--{{ inc.severity | lower }}">{{ inc.severity | upper }}</span></td>
         <td><a href="/incidents/{{ inc.id }}">{{ inc.title }}</a></td>
         <td>{{ inc.hostname or inc.ip_address or "Noma'lum" }}</td>
         <td>{{ inc.alert_count }}</td>
