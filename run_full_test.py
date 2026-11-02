@@ -10622,6 +10622,52 @@ def _test_suricata_reader_follow_robust():
 
 check("Suricata reader: papka/yo'q fayl, logrotate, qisqartirish, chala qator - yiqilmaydi va o'qiydi", _test_suricata_reader_follow_robust)
 
+
+def _test_suricata_reader_skips_own_agent_traffic():
+    """
+    Real production topilmasi: Suricata yoqilgach eve.json'dagi 210 ta
+    fileinfo'ning HAMMASI Endpoint Agentlarning o'z serverimizga
+    (API_SERVER_URL, http://<server>:8443) yuborgan heartbeat/watchdog JSON
+    tanalari edi. Ular file_events'ga yozilmasligi, haqiqiy yuklab olingan
+    fayl esa yozilishi kerak.
+    """
+    from unittest.mock import patch
+    from collectors import suricata_reader
+
+    def ev(sha, filename, magic, src, sport, dst, dport, host):
+        return {"event_type": "fileinfo", "src_ip": src, "src_port": sport, "dest_ip": dst, "dest_port": dport,
+                "proto": "TCP", "app_proto": "http", "http": {"hostname": host, "http_method": "POST"},
+                "fileinfo": {"filename": filename, "magic": magic, "sha256": sha, "size": 28}}
+
+    server = ("198.51.100.20", 8443)
+    agent_json = ev("d1" * 32, "/api/v1/agent_heartbeat", "JSON text data", "10.254.248.5", 50111, *server, server[0])
+    agent_upload = ev("d2" * 32, "/api/v1/scan_file", "PE32 executable", "10.254.248.5", 50112, *server, server[0])
+    other_json = ev("d3" * 32, "/config", "JSON text data", "203.0.113.5", 80, "10.254.248.5", 50113, "cdn.example")
+    real_exe = ev("d4" * 32, "/setup.exe", "PE32 executable (GUI) Intel 80386", "203.0.113.5", 80, "10.254.248.5", 50114, "cdn.example")
+
+    with patch.object(suricata_reader, "_OWN_ENDPOINTS", {server}):
+        s = get_session()
+        try:
+            results = [suricata_reader.process_fileinfo_event(s, e) for e in (agent_json, agent_upload, other_json, real_exe)]
+            s.commit()
+        finally:
+            s.close()
+    assert results == [False, False, False, True], results
+    s = get_session()
+    try:
+        shas = {fe.sha256 for fe in s.query(FileEvent).filter(FileEvent.sha256.in_(["d1" * 32, "d2" * 32, "d3" * 32, "d4" * 32]))}
+    finally:
+        s.close()
+    assert shas == {"d4" * 32}, shas
+
+    with patch.dict(os.environ, {"API_SERVER_URL": "http://198.51.100.20:8443", "SURICATA_IGNORE_ENDPOINTS": "proxy.local:3128"}):
+        assert suricata_reader._own_endpoints() == {("198.51.100.20", 8443), ("proxy.local", 3128)}
+    with patch.dict(os.environ, {"API_SERVER_URL": "https://agents.company.local", "SURICATA_IGNORE_ENDPOINTS": ""}):
+        assert suricata_reader._own_endpoints() == {("agents.company.local", 443)}
+
+
+check("Suricata reader: o'z agent serverimiz trafigi va JSON tanalari fayl sifatida yozilmaydi", _test_suricata_reader_skips_own_agent_traffic)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

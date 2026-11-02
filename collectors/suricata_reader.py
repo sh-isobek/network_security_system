@@ -42,6 +42,7 @@ import os
 import stat
 import sys
 import time
+from urllib.parse import urlparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -64,6 +65,47 @@ def _guess_channel(filename: str, dest_ip: str = None) -> str:
     return "web"
 
 
+def _own_endpoints():
+    """O'z agent API serverimiz (host, port) juftliklari - `API_SERVER_URL`
+    va ixtiyoriy `SURICATA_IGNORE_ENDPOINTS` ("host:port,host:port")."""
+    endpoints = set()
+    url = os.getenv("API_SERVER_URL", "").strip()
+    if url:
+        parsed = urlparse(url)
+        if parsed.hostname:
+            endpoints.add((parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)))
+    for item in os.getenv("SURICATA_IGNORE_ENDPOINTS", "").split(","):
+        host, _, port = item.strip().rpartition(":")
+        if host and port.isdigit():
+            endpoints.add((host.lower(), int(port)))
+    return endpoints
+
+
+_OWN_ENDPOINTS = _own_endpoints()
+
+
+def _is_noise(event: dict) -> bool:
+    """Tarmoqdagi haqiqiy fayl emas - o'tkazib yuboriladi.
+
+    Real production topilmasi: Suricata ishga tushgach, eve.json'dagi
+    fileinfo'larning 100%i Endpoint Agentlarning o'z serverimizga
+    (`API_SERVER_URL`) yuboradigan heartbeat/watchdog JSON tanalari edi -
+    ular Fayllar sahifasini to'ldirar va hash tekshiruvlarini behuda
+    sarflardi. Agent serverga yuklagan shubhali fayl esa allaqachon
+    `endpoint_upload` sifatida yozilgan - ikkinchi marta kerak emas.
+    """
+    magic = (event.get("fileinfo") or {}).get("magic") or ""
+    if magic.startswith("JSON"):
+        return True
+    hostname = ((event.get("http") or {}).get("hostname") or "").lower()
+    for host, port in _OWN_ENDPOINTS:
+        if (event.get("dest_ip") == host or hostname == host) and event.get("dest_port") == port:
+            return True
+        if event.get("src_ip") == host and event.get("src_port") == port:
+            return True
+    return False
+
+
 def process_fileinfo_event(session, event: dict) -> bool:
     """Bitta Suricata fileinfo JSON yozuvini file_events jadvaliga yozadi.
     Qaytaradi: True - yangi yozuv qo'shildi, False - o'tkazib yuborildi
@@ -72,6 +114,8 @@ def process_fileinfo_event(session, event: dict) -> bool:
     sha256 = fileinfo.get("sha256")
     if not sha256:
         return False  # hash hisoblanmagan fayl - o'tkazib yuboramiz
+    if _is_noise(event):
+        return False
 
     # Bir xil hash+src_ip juftligi qayta yozilmasligi uchun oddiy tekshiruv
     exists = (
