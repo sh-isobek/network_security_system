@@ -46,7 +46,7 @@
         <td class="mono">{% if e.target_type %}{{ e.target_type }}#{{ e.target_id }}{% else %}-{% endif %}</td>
         <td>{{ e.details or '-' }}</td>
         <td class="mono">{{ e.ip_address or '-' }}</td>
-        <td>{% if e.success %}✅{% else %}❌{% endif %}</td>
+        <td>{% if e.success %}<span class="mark mark-ok" role="img" aria-label="Ha"></span>{% else %}<span class="mark mark-no" role="img" aria-label="Yo'q"></span>{% endif %}</td>
     </tr>
     {% endfor %}
 </table></div>
