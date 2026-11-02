@@ -125,18 +125,31 @@ jobs:
           # AgentTls.ps1 (Deploy/Watchdog) va Python agent ichki CA'ga FAQAT o'z
           # jarayonida ishonishini, begona CA va noto'g'ri nomni rad etishini
           # haqiqiy Windows PowerShell 5.1 va haqiqiy TLS serverlari bilan tekshiradi.
+          # Xato tafsilotlari ::error:: izohi sifatida chiqadi (loglarsiz ham ko'rinadi).
           $certs = Join-Path $env:RUNNER_TEMP "agent-tls"
-          & "C:\Program Files\Git\bin\bash.exe" .github/agent-tls-test/make_certs.sh ($certs -replace '\\', '/')
-          if ($LASTEXITCODE -ne 0) { Write-Error "sertifikatlar yaratilmadi"; exit 1 }
+          New-Item -ItemType Directory -Force -Path $certs | Out-Null
+          function Fail([string]$title, [string]$logFile) {
+            $text = if (Test-Path $logFile) { (Get-Content $logFile -Raw) } else { "(log yo'q)" }
+            Write-Host $text
+            $enc = $text.Replace('%', '%25').Replace("`r", '').Replace("`n", '%0A')
+            Write-Host "::error title=$title::$enc"
+            exit 1
+          }
+          & "C:\Program Files\Git\bin\bash.exe" .github/agent-tls-test/make_certs.sh ($certs -replace '\\', '/') *> "$certs\make.log"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$certs\good.crt")) { Fail "make_certs.sh" "$certs\make.log" }
           $srv = Start-Process python -ArgumentList ".github/agent-tls-test/tls_servers.py", "`"$certs`"" -PassThru -NoNewWindow `
             -RedirectStandardOutput "$certs\srv.out" -RedirectStandardError "$certs\srv.err"
           try {
             for ($i = 0; $i -lt 40 -and -not (Select-String -Path "$certs\srv.out" -Pattern "ready" -Quiet -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
-            if (-not (Select-String -Path "$certs\srv.out" -Pattern "ready" -Quiet)) { Get-Content "$certs\srv.err"; Write-Error "TLS test serverlari ishga tushmadi"; exit 1 }
-            powershell -NoProfile -ExecutionPolicy Bypass -File .github/agent-tls-test/Test-AgentTls.ps1 -CertDir $certs -Lib deploy/windows_agent_gpo/AgentTls.ps1
-            if ($LASTEXITCODE -ne 0) { Write-Error "AgentTls.ps1 testi muvaffaqiyatsiz"; exit 1 }
-            python .github/agent-tls-test/check_python_agent.py $certs
-            if ($LASTEXITCODE -ne 0) { Write-Error "Python agent HTTPS testi muvaffaqiyatsiz"; exit 1 }
+            if (-not (Select-String -Path "$certs\srv.out" -Pattern "ready" -Quiet -ErrorAction SilentlyContinue)) { Fail "tls_servers.py" "$certs\srv.err" }
+            powershell -NoProfile -ExecutionPolicy Bypass -File .github/agent-tls-test/Test-AgentTls.ps1 -CertDir $certs -Lib deploy/windows_agent_gpo/AgentTls.ps1 *> "$certs\ps.log"
+            $psExit = $LASTEXITCODE
+            Get-Content "$certs\ps.log"
+            if ($psExit -ne 0) { Fail "Test-AgentTls.ps1 (PowerShell 5.1)" "$certs\ps.log" }
+            python .github/agent-tls-test/check_python_agent.py $certs *> "$certs\py.log"
+            $pyExit = $LASTEXITCODE
+            Get-Content "$certs\py.log"
+            if ($pyExit -ne 0) { Fail "check_python_agent.py" "$certs\py.log" }
           } finally {
             Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
           }
