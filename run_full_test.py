@@ -10724,6 +10724,48 @@ def _test_agent_https_migration_server_side():
 
 check("Agent HTTPS: X-Real-IP faqat nginx'dan, sozlanadigan TLS port, paketdagi CA, Deploy HTTPS tekshiruvi", _test_agent_https_migration_server_side)
 
+
+def _test_agent_central_uninstall():
+    """
+    Agentlarni markaziy o'chirish: SYSVOL'dagi UNINSTALL belgisi bo'lsa Deploy skripti
+    versiya tekshiruvidan (o'rnatishdan) OLDIN Uninstall'ni chaqirib chiqadi; Uninstall
+    avval watchdog'ni o'chiradi (xizmatni qayta yoqmasin), qayta yoqish buyrug'i yo'q,
+    karantinni saqlaydi; DC skripti belgini skriptlardan KEYIN yozadi; hammasi
+    release paketida va haqiqiy Windows CI testida.
+    """
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy", "windows_agent_gpo")
+
+    def read(name):
+        with open(os.path.join(base, name), encoding="utf-8") as fh:
+            return fh.read()
+
+    deploy = read("Deploy-NetworkSecurityAgent.ps1")
+    kill = deploy.index('Test-Path (Join-Path $ServerShare "UNINSTALL")')
+    assert kill < deploy.index("$installedVersion = Get-InstalledVersion"), "UNINSTALL tekshiruvi o'rnatishdan oldin bo'lishi kerak"
+    assert kill > deploy.index("$ServerShare = $PSScriptRoot"), "UNINSTALL tekshiruvi ServerShare aniqlangandan keyin bo'lishi kerak"
+    assert '"Start-AgentRemoval.ps1", "UNINSTALL")' in deploy, "DC skripti/belgi kompyuterlarga nusxalanmasligi kerak"
+
+    un = read("Uninstall-NetworkSecurityAgent.ps1")
+    assert un.isascii(), "PS 5.1 BOM'siz faylni ANSI deb o'qiydi - Uninstall faqat ASCII bo'lsin"
+    assert un.index('schtasks.exe /Delete') < un.index("Stop-Service"), "watchdog xizmatdan oldin o'chirilishi kerak"
+    low = un.lower()
+    for bad in ("restart-computer", "shutdown", "logoff", "gpupdate"):
+        assert bad not in low, f"Uninstall kompyuterni qayta yoqmasligi/sessiyani uzmasligi kerak ({bad})"
+    assert "Quarantine" in un and 'Remove-Item -LiteralPath $DataDir' not in un, "karantin saqlanishi kerak"
+    assert '-notlike "*NetworkSecurityAgent*"' in un, "begona papkani o'chirishdan himoya yo'q"
+
+    dc = read("Start-AgentRemoval.ps1")
+    assert dc.index("Copy-Item $srcDeploy $SysvolDir") < dc.index("Set-Content -Path $marker"), "belgi eng oxirida yozilishi kerak"
+    assert "-Undo" in dc and "-DryRun" in dc and "/Disable" in dc
+
+    with open(os.path.join(os.path.dirname(base), "..", ".github", "workflows", "build-windows-agent.yml"), encoding="utf-8") as fh:
+        wf = fh.read()
+    for needed in ("Uninstall-NetworkSecurityAgent.ps1", "Start-AgentRemoval.ps1", "Restore-Quarantine.ps1", "Test-AgentUninstall.ps1"):
+        assert needed in wf, f"workflow'da {needed} yo'q"
+
+
+check("Agentni markaziy o'chirish: UNINSTALL belgisi, watchdog avval, qayta yoqmasdan, karantin saqlanadi", _test_agent_central_uninstall)
+
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 from test_upload_scan import run_tests as run_upload_tests

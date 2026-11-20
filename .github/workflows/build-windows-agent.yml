@@ -15,6 +15,7 @@ on:
       - "requirements-agent.txt"
       - "deploy/windows_agent_gpo/**"
       - ".github/agent-tls-test/**"
+      - ".github/agent-uninstall-test/**"
       - ".github/workflows/build-windows-agent.yml"
   workflow_dispatch: {}   # qo'lda ham ishga tushirish mumkin
 
@@ -158,6 +159,23 @@ jobs:
             Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
           }
 
+      - name: Agentni markaziy o'chirish (UNINSTALL belgisi) - haqiqiy xizmat bilan test
+        shell: powershell
+        run: |
+          # Start-AgentRemoval.ps1 -> SYSVOL UNINSTALL belgisi -> Deploy -> Uninstall zanjiri
+          # haqiqiy pywin32 xizmati, Scheduled Task va Machine muhit o'zgaruvchilari bilan.
+          $ErrorActionPreference = 'Continue'
+          $log = Join-Path $env:RUNNER_TEMP "uninstall-test.log"
+          powershell -NoProfile -ExecutionPolicy Bypass -File .github/agent-uninstall-test/Test-AgentUninstall.ps1 -Exe dist\NetworkSecurityAgent.exe -GpoDir deploy\windows_agent_gpo *> $log
+          $rc = $LASTEXITCODE
+          $text = Get-Content $log -Raw
+          Write-Host $text
+          if ($rc -ne 0) {
+            $fails = (Get-Content $log | Where-Object { $_ -like "FAIL *" }) -join '%0A'
+            Write-Host "::error title=Agent uninstall test::$fails"
+            exit 1
+          }
+
       - name: Versiyani o'qish (release nomlash uchun)
         id: version
         run: |
@@ -180,6 +198,9 @@ jobs:
           Copy-Item "deploy/windows_agent_gpo/AgentTls.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/agent-ca.crt" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/Publish-AgentDeployGpoTask.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Uninstall-NetworkSecurityAgent.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Start-AgentRemoval.ps1" -Destination $releaseDir
+          Copy-Item "deploy/windows_agent_gpo/Restore-Quarantine.ps1" -Destination $releaseDir
           Copy-Item "deploy/windows_agent_gpo/ScheduledTasks.template.xml" -Destination $releaseDir
           Compress-Archive -Path $releaseDir -DestinationPath "NetworkSecurityAgent-$($env:AGENT_VERSION).zip" -Force
         env:

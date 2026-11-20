@@ -113,6 +113,29 @@ function Get-AvailableVersion {
     return $null
 }
 
+# --- 0) Markaziy o'chirish: SYSVOL'da UNINSTALL belgisi ---
+# DC'da Start-AgentRemoval.ps1 shu paket papkasiga UNINSTALL faylini qo'yadi. Shunda GPO
+# Startup skripti va NSA-Agent-Deploy vazifasi (har 30 daqiqa) agentni O'RNATISH o'rniga
+# Uninstall-NetworkSecurityAgent.ps1 orqali OLIB TASHLAYDI - kompyuter qayta yoqilmaydi.
+# Belgi olib tashlansa (Start-AgentRemoval.ps1 -Undo) agent keyingi safar qayta o'rnatiladi.
+if (Test-Path (Join-Path $ServerShare "UNINSTALL")) {
+    $wdTaskLeft = $false
+    try { $wdTaskLeft = $null -ne (Get-ScheduledTask -TaskName "NSA-Agent-Watchdog" -ErrorAction SilentlyContinue) } catch { }
+    $somethingLeft = $wdTaskLeft -or (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -or (Test-Path $InstallDir) -or
+        ($null -ne [Environment]::GetEnvironmentVariable("API_SERVER_URL", "Machine"))
+    if (-not $somethingLeft) { exit 0 }   # allaqachon olib tashlangan
+    $uninstallScript = Join-Path $ServerShare "Uninstall-NetworkSecurityAgent.ps1"
+    if (-not (Test-Path $uninstallScript)) {
+        Write-DeployLog "XATOLIK: UNINSTALL belgisi bor, lekin $uninstallScript topilmadi - hech narsa qilinmadi"
+        exit 1
+    }
+    Write-DeployLog "UNINSTALL belgisi topildi ($ServerShare) - agent olib tashlanmoqda"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $uninstallScript -InstallDir $InstallDir -ServiceName $ServiceName | Out-Null
+    $uninstallExit = $LASTEXITCODE
+    Write-DeployLog "Uninstall tugadi (exit $uninstallExit, tafsilot: C:\ProgramData\NetworkSecurityAgent\uninstall.log)"
+    exit $uninstallExit
+}
+
 # --- 1) Versiya tekshiruvi (idempotentlik) ---
 Write-DeployLog "Deploy skripti ishga tushdi (kompyuter: $env:COMPUTERNAME)"
 
@@ -171,7 +194,7 @@ try {
     # -Exclude orqali eski konfiguratsiya fayllarini saqlab qolamiz
     # (agar mahalliy sozlash bo'lsa, ustidan yozilmasin)
     Copy-Item -Path "$ServerShare\*" -Destination $InstallDir -Recurse -Force `
-        -Exclude @("*.local.cfg", "Publish-AgentDeployGpoTask.ps1", "ScheduledTasks.template.xml", "Sync-AgentFromGitHub.ps1", "Install-AgentAutoUpdate.ps1")
+        -Exclude @("*.local.cfg", "Publish-AgentDeployGpoTask.ps1", "ScheduledTasks.template.xml", "Sync-AgentFromGitHub.ps1", "Install-AgentAutoUpdate.ps1", "Start-AgentRemoval.ps1", "UNINSTALL")
     Write-DeployLog "Fayllar nusxalandi: $ServerShare -> $InstallDir"
 } catch {
     Write-DeployLog "XATOLIK: fayllarni nusxalashda muvaffaqiyatsizlik: $_"
